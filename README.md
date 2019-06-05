@@ -1,19 +1,19 @@
-Prerequisites:
-Python libraries:
-cryptography
-cbor2
+* Prerequisites:
+  * Python libraries:
+    * cryptography
+    * cbor2
 
 Using soft_fido2.py
 
 From the cmd line:
 
 attestation:
-python3 soft_fido2.py 'attestation' 'attestation_format' 'attestation_options(as json string)'
+`python3 soft_fido2.py 'attestation' 'attestation_format' 'attestation_options(as json string)'`
 
 prints a json string with the attestation response
 
 assertion:
-python2 soft_fido2.py 'assertion' 'assertion_optsion(as json string)'
+`python2 soft_fido2.py 'assertion' 'assertion_optsion(as json string)'`
 
 prints a json string with the assertion response
 
