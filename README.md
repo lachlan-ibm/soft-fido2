@@ -13,7 +13,7 @@ attestation:
 prints a json string with the attestation response
 
 assertion:
-`python2 soft_fido2.py 'assertion' 'assertion_optsion(as json string)'`
+`python3 soft_fido2.py 'assertion' 'assertion_optsion(as json string)'`
 
 prints a json string with the assertion response
 
