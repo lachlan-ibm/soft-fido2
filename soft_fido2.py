@@ -230,7 +230,7 @@ class CertUtils(object):
                     x509.ExtendedKeyUsage( [ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE)] ),
                     x509.SubjectAlternativeName( [x509.DirectoryName( san )] )
                     ]
-        if aagiud is not None:
+        if aaguid is not None:
             extensions += [CertUtils.AAGUIDExtension(aaguid)]
         if androidKey:
             extensions += [CertUtils.AndroidKeystoreExtension()]
