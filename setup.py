@@ -8,7 +8,7 @@ setup(
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
-    packages=['authenticator'],
+    packages=['fido2_authenticator'],
     url='https://github.ibm.com/ibm-security/fido2_authenticator',
     zip_safe=False
 )
