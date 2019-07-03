@@ -6,4 +6,4 @@ pip install twine wheel
 
 python setup.py sdist bdist_wheel
 
-twine upload - lgleeson@au1.ibm.com -p $ART_API_KEY dist/*
+twine upload --repository-url https://eu.artifactory.swg-devops.com/artifactory/sec-iam-components-pypi-local -u lgleeson@au1.ibm.com -p $ART_API_KEY dist/*
