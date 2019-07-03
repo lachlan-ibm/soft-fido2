@@ -12,12 +12,12 @@ install:
 script: ./compile
 
 stages:
-  - test
+  - test_cases
   - deploy
 
 jobs:
   include:
-    - stage: test
+    - stage: test_cases
       script: 
         - ./unit_test
         - ./scenario_test
