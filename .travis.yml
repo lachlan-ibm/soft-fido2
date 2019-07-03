@@ -12,16 +12,23 @@ install:
 script: ./compile
 
 stages:
-  - test_cases
+  - run_tests
   - deploy
 
 jobs:
   include:
-    - stage: test_cases
+    - stage: run_tests
       script: 
         - ./unit_test
         - ./scenario_test
+      python:
+        - "3.4"
+        - "3.5"
+        - "3.6"
+        - "3.7"
     - stage: deploy
       script: 
         - ./deploy
+      python:
+        - "3.7"
       if: branch = master
