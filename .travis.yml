@@ -11,7 +11,7 @@ install:
 
 stages:
   - compile
-  - test
+  - testing
   - deploy
 
 jobs:
@@ -19,7 +19,7 @@ jobs:
     - stage: compile
       script: 
         - ./compile
-    - stage: test
+    - stage: testing
       script: 
         - ./unit_test
         - ./scenario_test
