@@ -17,10 +17,13 @@ stages:
 jobs:
   include:
     - stage: compile
-      script: ./compile
+      script: 
+        - ./compile
     - stage: test
-      script: ./unit_test
-      script: ./scenario_test
+      script: 
+        - ./unit_test
+        - ./scenario_test
     - stage: deploy
-      script: ./deploy
+      script: 
+        - ./deploy
       if: branch = master
