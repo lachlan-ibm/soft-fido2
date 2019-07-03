@@ -12,7 +12,7 @@ install:
 script: ./compile
 
 stages:
-  - test
+  - test #I would call this compile if I could but I must have a stage called test
   - run_tests
   - deploy
 
