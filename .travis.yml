@@ -9,6 +9,19 @@ python:
 install:
   - pip install -r requirements.txt
 
-script:
-  - sh build.sh
 
+jobs:
+  include:
+    - stage: compile
+      script: ./compile
+    - stage: test
+      script: ./unit_test
+      script: ./scenario_test
+    - stage: deploy
+      script: ./deploy
+
+stages:
+  - compile
+  - test
+  - name: deploy
+    if: branch = master

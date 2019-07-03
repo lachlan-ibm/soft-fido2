@@ -1,2 +1,4 @@
 cbor2
 cryptography
+wheel
+twist
