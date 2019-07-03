@@ -17,7 +17,7 @@ stages:
 
 jobs:
   include:
-    - stage: testing
+    - stage: test
       script: 
         - ./unit_test
         - ./scenario_test
