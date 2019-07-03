@@ -12,6 +12,7 @@ install:
 script: ./compile
 
 stages:
+  - test
   - run_tests
   - deploy
 
@@ -22,9 +23,6 @@ jobs:
         - ./unit_test
         - ./scenario_test
       python:
-        - "3.4"
-        - "3.5"
-        - "3.6"
         - "3.7"
     - stage: deploy
       script: 
