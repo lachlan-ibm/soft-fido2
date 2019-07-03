@@ -19,9 +19,4 @@ jobs:
       script: ./scenario_test
     - stage: deploy
       script: ./deploy
-
-stages:
-  - compile
-  - test
-  - name: deploy
-    if: branch = master
+      if: branch = master
