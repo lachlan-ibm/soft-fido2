@@ -2,4 +2,8 @@
 
 export HOME=$( realpath . )
 
-python setup.py sdist upload -r artifactory
+pip install twine wheel
+
+python setup.py sdist bdist_wheel
+
+twine upload - lgleeson@au1.ibm.com -p $APT_API_KEY
