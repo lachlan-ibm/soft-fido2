@@ -398,7 +398,7 @@ class Fido2Authenticator(object):
 
     def process_attested_credential_data(self, publicKey, credIdBytes):
         attestedCredDataBytes = []
-        attestedCredDataBytes += array.array('B', self.aaguid).tostring()
+        attestedCredDataBytes += array.array('B', self.aaguid).tobytes()
         length = struct.pack('H', len(credIdBytes))
         attestedCredDataBytes += [ length[1],  length[0] ]
         attestedCredDataBytes += credIdBytes
