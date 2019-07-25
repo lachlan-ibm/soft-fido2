@@ -442,7 +442,7 @@ class Fido2Authenticator(object):
         flags = 0x01 # UP
         if not assertion:
             flags |= 0x40 # AT
-        if attStmtFmt is not 'fido-u2f' or uv :
+        if attStmtFmt is not 'fido-u2f' and uv :
             flags |= 0x04 # UV
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8') )
         #Add counter and increment
