@@ -21,7 +21,7 @@ prints a json string with the assertion response
 
 As a python module:
 First install from artifactory (requires artifactory API key, can be generates @ https://eu.artifactory.swg-devops.com/artifactory)
-pip3 install fido2_authenticator --extra-index https://eu.artifactory.swg-devops.com/artifactory/api/pypi/sec-iam-components-pypi-virtual/simple
+* `pip3 install fido2_authenticator --extra-index https://eu.artifactory.swg-devops.com/artifactory/api/pypi/sec-iam-components-pypi-virtual/simple`
 ```python
 from fiod2_authenticator.soft_fido2 import Fido2Authenticatior
 #This will create a Fido2Authenticator with 2048-bit RSA key
