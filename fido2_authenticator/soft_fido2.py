@@ -653,7 +653,7 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = str( bytearray(self.userHandle), 'utf-8')
+            saar['userHandle'] = bytearray(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(
