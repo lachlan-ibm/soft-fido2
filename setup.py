@@ -1,4 +1,4 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 import os
 
 setup(
@@ -8,10 +8,11 @@ setup(
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
-    packages=['fido2_authenticator'],
+    package_dir={"": "python_authenticator"},
+    packages=find_packages(where="python_authenticator"),
     install_requires=[
-        'cbor2',
-        'cryptography'
+        'cbor2>=4.1.2',
+        'cryptography>=2.7'
     ],
     url='https://github.ibm.com/ibm-security/fido2_authenticator',
     zip_safe=False
