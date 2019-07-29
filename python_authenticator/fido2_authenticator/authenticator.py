@@ -9,6 +9,7 @@ import binascii
 import cbor2 as cbor
 import sys
 import array
+import os
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import cryptography.hazmat.primitives.asymmetric.padding as padding
@@ -20,11 +21,13 @@ from cryptography import x509
 try:
     from fido2_authenticator.key_pair import KeyPair
 except:
-    from .key_pair import KeyPair
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from key_pair import KeyPair
 try:
     from fido2_authenticator.cert_utils import CertUtils
 except:
-    from .cert_utils import CertUtils
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from cert_utils import CertUtils
 
 
 
