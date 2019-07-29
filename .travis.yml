@@ -9,18 +9,16 @@ python:
 install:
   - pip install -r requirements.txt
 
-script: ./compile
+script: ./unit_test
 
 stages:
-  - test #I would call this compile if I could but I must have a stage called test
-  - run_tests
+  - scenario_test
   - deploy
 
 jobs:
   include:
-    - stage: run_tests
-      script: 
-        - ./unit_test
+    - stage: scenario_test
+      script:
         - ./scenario_test
       python:
         - "3.7"

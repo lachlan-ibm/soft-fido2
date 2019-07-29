@@ -10,247 +10,15 @@ import cbor2 as cbor
 import sys
 import array
 
-from cryptography import utils
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import cryptography.hazmat.primitives.asymmetric.padding as padding
-from cryptography.hazmat.primitives import serialization, hashes, constant_time
+from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
-from cryptography.x509.oid import ObjectIdentifier
-from cryptography.x509.extensions import Extension, ExtensionType
 from cryptography import x509
 
-#from ibm.autotest.util.logger import Logger
-#logger = Logger(__name__)
 
-class KeyPair(object):
-
-    def __init__(self, privateKey, publicKey):
-        object.__init__(self)
-        self.private = privateKey
-        self.public = publicKey
-
-
-    @classmethod
-    def generate_rsa(cls, e=65537, key_size=2048, backend=default_backend()):
-        privateKey = rsa.generate_private_key(e, key_size, backend)
-        publicKey = privateKey.public_key()
-        return cls(privateKey, publicKey)
-
-
-    @classmethod
-    def generate_ecdsa(cls, curve=ec.SECP256R1(), backend=default_backend()):
-        privateKey = ec.generate_private_key(curve, backend)
-        publicKey = privateKey.public_key()
-        return cls(privateKey, publicKey)
-
-
-    def set_key(self, privateKey):
-        self.private = privateKey
-        self.public = privateKey.get_public()
-
-
-    def get_public(self):
-        return self.public
-
-
-    def get_private(self):
-        return self.private
-
-
-    def get_public_bytes(self):
-        return self.public.public_bytes(encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo)
-
-
-    def get_private_bytes(self):
-        return self.private.private_bytes(encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8, 
-                encryption_algorithm=serialization.NoEncryption())
-
-
-class CertUtils(object):
-    '''
-    Class for generating certificates for FIDO2 Authenticators. methods should be treated as
-    static
-    '''
-    TCG_KP_AIK_CERTIFICATE_ATTRIBUTE = "2.23.133.8.3"
-    TPM_MANUFACTURER = "2.23.133.2.1";
-    TPM_VENDOR = "2.23.133.2.2";
-    TPM_FW_VERSION = "2.23.133.2.3";
-
-    @utils.register_interface(ExtensionType)
-    class AAGUIDExtension(object):
-        oid = ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4")
-
-        def __init__(self, aaguid):
-            self._aaguid = aaguid
-        
-        aaguid = utils.read_only_property("_aaguid")
-
-        def __repr__(self):
-            return "<AAGUIDExtension(aaguid={0!r})>".format(self.aaguid)
-
-        def __eq__(self, other):
-            if not isinstance(other, AAGUIDExtension):
-                return NotImplemented
-            return constant_time.bytes_eq(self.aaguid, other.aaguid)
-
-        def __ne__(self, other):
-            return not self == other
-
-        def __hash__(self):
-            return hash(self.aaguid)
-
-
-    @utils.register_interface(ExtensionType)
-    class AndroidKeystoreExtension(object):
-        oid = ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
-
-        def __init__(self, wrapperFormatVersion, encryptedTransportKey, 
-                initilizationVector, keyDescription, secureKey, tag):
-            self._wrapperFormatVersion = wrapperFormatVersion
-            self._encryptedTransportKey = encryptedTransportKey
-            self._initilizationVector = initilizationVector
-            self._keyDescription = keyDescription
-            self._secureKey = secureKey
-            self._tag = tag
-        
-        wrapperFormatVersion = utils.read_only_property("_wrapperFormatVersion")
-        encryptedTransportKey = utils.read_only_property("_encryptedTransportKey")
-        initilizationVector = utils.read_only_property("_initilizationVecotr")
-        keyDecription = utils.read_only_property("_keyDescription")
-        secureKey = utils.read_only_property("_secureKey")
-        tag = utils.read_only_property("_tag")
-
-        def __repr__(self):
-            return "<AndroidKeystoreExtension(wrapperFormatVersion={0!r},encryptedTransportKey={0!r}," \
-                    "initilizationVector={0!r},keyDecription={0!r},secureKey={0!r},tag={0!r})>".format(
-                    self.wrapperFormatVersion, self.encryptedTransportKey, self.initilizationVector,
-                    self.keyDecription, self.secureKey, self.tag)
-
-        def __eq__(self, other):
-            if not isinstance(other, AndroidKeystoreExtension):
-                return NotImplemented
-            for key in [wrapperFormatVersion, encryptedTransportKey, initilizationVector,
-                    keyDecription, secureKey, tag]:
-                if not constant_time.bytes_eq(self.key, other.key):
-                    return False
-            return True
-
-        def __ne__(self, other):
-            return not self == other
-
-        def __hash__(self):
-            return hash(self.aaguid)
-
-
-    @classmethod
-    def __cert_builder(cls, subject=None, issuer=None, lifetime=265, serial=None, keyPair=None):
-        return x509.CertificateBuilder() \
-                    .subject_name(subject) \
-                    .issuer_name(issuer) \
-                    .public_key(keyPair.get_public()) \
-                    .serial_number(serial) \
-                    .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1)) \
-                    .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=lifetime)) \
-
-
-    @classmethod
-    def __add_extensions(cls, certBuilder, extensions):
-        for extension in extensions:
-            #logger.debug("Adding extension: " + str(extension) )
-            certBuilder = certBuilder.add_extension(extension, critical=False)
-        return certBuilder
-
-
-    @classmethod
-    def get_bytes(cls, cert, encoding=serialization.Encoding.DER):
-        encoded = cls.get_encoded(cert, encoding=encoding)
-        #This is the ASN.1 DER Encoded certificate
-        return base64.b64encode(encoded)
-
-
-    @classmethod
-    def get_encoded(cls, cert, encoding=serialization.Encoding.DER):
-        encoded = cert.public_bytes(encoding)
-        return encoded
-
-
-    @classmethod
-    def gen_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
-            extensions=None, keyPair=None, signKeyPair=None, signer=hashes.SHA256(), backend=default_backend()):
-        '''
-        extension should be tuple (extension, isCritical=False)
-        '''
-        if issuer == None: #Self signed
-            issuer = subject
-        if signKeyPair == None: # self signed
-            signKeyPair = keyPair
-
-        certBuilder = cls.__cert_builder(subject, issuer, lifetime, serial, keyPair)
-        certBuilder = cls.__add_extensions(certBuilder, extensions)
-        #logger.debug("certbuilder extensions: " + str(certBuilder._extensions)) 
-        return certBuilder.sign(signKeyPair.get_private(), signer, backend)
-
-
-    @classmethod
-    def gen_ca_cert(cls, subject=None, lifetime=365, serial=x509.random_serial_number(), 
-            keyPair=None, signer=hashes.SHA256(), backend=default_backend()):
-        '''
-        generate certificate that can be used as a ca certificate for authenticators. This
-        certificate contains the ski extension
-        '''
-
-        certBuilder = cls.__cert_builder(subject, subject, lifetime, serial, keyPair)
-
-        # CA cert requires basic contraint, ski, key usage and san extensions
-        extensions = [ x509.SubjectKeyIdentifier.from_public_key(keyPair.get_public()),
-                        x509.BasicConstraints(True, 2),
-                        x509.KeyUsage(True, False, False, False, False, True, True, False, False),
-                    ]
-        
-        return cls.gen_cert(subject, subject, lifetime, serial, extensions, keyPair, keyPair, signer, backend)
-
-
-    @classmethod
-    def gen_aik_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
-            keyPair=None, signKeyPair=None, aaguid=None, androidKey=False, signer=hashes.SHA256(), 
-            backend=default_backend()):
-        '''
-        Generate Leaf cert in trust chain
-        issuer should match the keyPair used to sign the certificate
-        '''
-        sanId = Fido2Authenticator._long_to_bytes(Fido2Authenticator.TPM_VENDOR_ID)
-        san = x509.name.Name([x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"), 
-                            x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId)) ),
-                            x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
-                            ])
-        extensions = [ x509.BasicConstraints(False, None),
-                    x509.KeyUsage(True, True, False, True, False, True, True, False, False),
-                    x509.ExtendedKeyUsage( [ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE)] ),
-                    x509.SubjectAlternativeName( [x509.DirectoryName( san )] )
-                    ]
-        if aaguid is not None:
-            extensions += [CertUtils.AAGUIDExtension(aaguid)]
-        if androidKey:
-            extensions += [CertUtils.AndroidKeystoreExtension()]
-        
-        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
-
-
-    @classmethod
-    def gen_intermedaite_cert(cls, subject=None, issuer=None, lifetime=365, serial=None, keyPair=None,
-            signer=hashes.SHA256(), backend=default_backend()):
-        '''
-        Generate intermediate certificate in trust chain
-        '''
-        extensions = [ x509.BasicConstraints(False, None),
-                    x509.KeyUsage(True, True, False, True, False, True, True, False, False),
-                    x509.ExtendedKeyUsage( ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE) )
-                    ]
-
-        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signer, backend)
-
+from fido2.key_pair import KeyPair
+from fido2.cert_utils import CertUtils
 
 
 class Fido2Authenticator(object):
@@ -280,7 +48,6 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
-    @classmethod
     def _long_to_bytes(cls, l):
         limit = 256 ** 4 - 1 #max value we can fit into a struct.pack
         parts = []
@@ -653,7 +420,7 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = str( bytearray(self.userHandle), 'utf-8')
+            saar['userHandle'] = bytearray(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(
