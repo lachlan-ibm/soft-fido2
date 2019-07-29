@@ -58,6 +58,11 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
+    def __urlb64_encode(self, byteString):
+        b64String = str(base64.urlsafe_b64encode(byteString), 'utf-8')
+        return re.sub(r'=*$', '', b64String)
+
+
     def _long_to_bytes(cls, l):
         limit = 256 ** 4 - 1 #max value we can fit into a struct.pack
         parts = []
@@ -115,7 +120,7 @@ class Fido2Authenticator(object):
         return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv)
 
 
-    def credential_request(self, jsonOptions, keyPair, uv=True):
+    def credential_request(self, jsonOptions, keyPair=None, uv=True):
         '''
         jsonOptions - json dictionary of options for navigator.credentials.get
         keyPair - private/public key pair to sign the assertion
@@ -362,7 +367,7 @@ class Fido2Authenticator(object):
 
     def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv):
         pk = cco['publicKey']
-        self.userHandle = pk['user']['id']
+        self.userHandle = self.__urlb64_decode(pk['user']['id'])
         clientDataJSON = self.build_client_data_JSON(pk)
         clientDataHash = hashlib.sha256( clientDataJSON.encode('utf-8') ).digest()
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii') )
@@ -430,7 +435,7 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = bytearray(self.userHandle)
+            saar['userHandle'] = self.__urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(

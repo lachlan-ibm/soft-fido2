@@ -18,7 +18,7 @@ The following example takes a JSON dictionary of attestation options provided by
 ```
 ATTESTATION_OPTIONS='{
   "rp": {
-    "id": "www.myidp.ibm.com",
+    "id": "www.myrp.ibm.com",
     "name": "ISAM_Unit_test"
   },
   "user": {
@@ -121,7 +121,7 @@ Once isntalled the FIDO2 authenticator can be imported like any other python mod
 ```python
 import json
 import requests
-from fido2_authenticator.authenticator import Fido2Authenticatior
+from fido2_authenticator.authenticator import Fido2Authenticator
 
 #This will create a Fido2Authenticator with 2048-bit RSA key
 authenticator = Fido2Authenticator()
@@ -177,7 +177,7 @@ attestation_options = {
 }
 
 attestation_response = authenticator.credential_create(attestation_options, atteStmtFmt='packed-self')
-print(json.dumps(attestation_response, indent=4) # print not required but useful for debugging
+print(json.dumps(attestation_response, indent=4)) # print not required but useful for debugging
 
 rp_response = requests.post("https://www.myrp.ibm.com/attestation/result",
                         json=attestation_response)
@@ -191,7 +191,7 @@ assertion_options = {
 }
 
 assertion_response = authenticator.credential_request(assertion_options)
-print(json.dumps(assertion_response, indent=4)
+print(json.dumps(assertion_response, indent=4))
 
 rp_response = requests.post("https://www.myrp.ibm.com/assertion/result",
                         json=assertion_response)
