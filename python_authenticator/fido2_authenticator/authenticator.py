@@ -17,8 +17,15 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 
 
-from fido2.key_pair import KeyPair
-from fido2.cert_utils import CertUtils
+try:
+    from fido2_authenticator.key_pair import KeyPair
+except:
+    from .key_pair import KeyPair
+try:
+    from fido2_authenticator.cert_utils import CertUtils
+except:
+    from .cert_utils import CertUtils
+
 
 
 class Fido2Authenticator(object):
