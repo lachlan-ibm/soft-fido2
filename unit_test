@@ -4,7 +4,7 @@
 python setup.py sdist bdist_wheel
 
 #run tests
-python3 << EOF
+PYTHONPATH="$PYTHONPATH:./build/lib" python3 << EOF
 import json
 import requests
 from fido2_authenticator.authenticator import Fido2Authenticator
