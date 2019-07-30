@@ -367,7 +367,7 @@ class Fido2Authenticator(object):
 
     def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv):
         pk = cco['publicKey']
-        self.userHandle = self.__urlb64_decode(pk['user']['id'])
+        self.userHandle = pk['user']['id']
         clientDataJSON = self.build_client_data_JSON(pk)
         clientDataHash = hashlib.sha256( clientDataJSON.encode('utf-8') ).digest()
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii') )
