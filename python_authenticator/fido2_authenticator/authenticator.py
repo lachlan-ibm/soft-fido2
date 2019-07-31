@@ -100,7 +100,7 @@ class Fido2Authenticator(object):
         """
         result = ''
         if hexString:
-            for x in range(16)
+            for x in range(16):
                 result += binascii.hexlify(
                         bytes( chr( self.aaguid[x]), 'utf-8')).decode('utf-8')
                 if pretty and (x == 3 or x == 5 or x == 7 or x == 9):
