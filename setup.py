@@ -13,6 +13,7 @@ setup(
     install_requires=[
         'cbor2>=4.1.2',
         'cryptography>=2.7'
+        'asn1>=2.2.0'
     ],
     url='https://github.ibm.com/ibm-security/fido2_authenticator',
     zip_safe=False

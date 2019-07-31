@@ -91,13 +91,23 @@ class Fido2Authenticator(object):
         return re.sub(r'[=]+$', '', credId)
 
 
-    def get_aaguid(self):
+    def get_aaguid(self, hexString=True):
+        """If hexString returns in the format:
+            01020304-0506-0708-0900-010203040506
+
+        else returns format:
+            1234567890123456
+        """
         result = ''
-        for x in range(16):
-            result += binascii.hexlify( chr( self.aaguid[x] ))
-            if x == 3 or x == 5 or x == 7 or x == 9:
-                result += '-'
-        return result.encode('utf-8')
+        if hexString:
+            for x in range(16):
+                result += binascii.hexlify(
+                        bytes( chr( self.aaguid[x]), 'utf-8')).decode('utf-8')
+                if pretty and (x == 3 or x == 5 or x == 7 or x == 9):
+                    result += '-'
+        else:
+            result.join( str(x) for x in self.aaguid )
+        return result
 
 
     def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True):
@@ -255,7 +265,7 @@ class Fido2Authenticator(object):
                                     x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                                     x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
                 leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                        signKeyPair=self.caKeyPair, aaguid=self.aaguid)
+                        signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False) )
                 # Final trust chain to add to AttesationObject
                 result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
 
@@ -335,7 +345,7 @@ class Fido2Authenticator(object):
                             x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                signKeyPair=self.caKeyPair, aaguid=self.aaguid)
+                signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False))
         # Final trust chain to add to AttesationObject
         result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
 
