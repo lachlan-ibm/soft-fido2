@@ -9,6 +9,7 @@ import binascii
 import cbor2 as cbor
 import sys
 import array
+import os
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import cryptography.hazmat.primitives.asymmetric.padding as padding
@@ -17,8 +18,17 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 
 
-from fido2.key_pair import KeyPair
-from fido2.cert_utils import CertUtils
+try:
+    from fido2_authenticator.key_pair import KeyPair
+except:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from key_pair import KeyPair
+try:
+    from fido2_authenticator.cert_utils import CertUtils
+except:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from cert_utils import CertUtils
+
 
 
 class Fido2Authenticator(object):
@@ -46,6 +56,11 @@ class Fido2Authenticator(object):
         if pad:
             b64String += b'=' * pad
         return base64.urlsafe_b64decode(b64String)
+
+
+    def __urlb64_encode(self, byteString):
+        b64String = str(base64.urlsafe_b64encode(byteString), 'utf-8')
+        return re.sub(r'=*$', '', b64String)
 
 
     def _long_to_bytes(cls, l):
@@ -76,13 +91,23 @@ class Fido2Authenticator(object):
         return re.sub(r'[=]+$', '', credId)
 
 
-    def get_aaguid(self):
+    def get_aaguid(self, hexString=True):
+        """If hexString returns in the format:
+            01020304-0506-0708-0900-010203040506
+
+        else returns format:
+            1234567890123456
+        """
         result = ''
-        for x in range(16):
-            result += binascii.hexlify( chr( self.aaguid[x] ))
-            if x == 3 or x == 5 or x == 7 or x == 9:
-                result += '-'
-        return result.encode('utf-8')
+        if hexString:
+            for x in range(16)
+                result += binascii.hexlify(
+                        bytes( chr( self.aaguid[x]), 'utf-8')).decode('utf-8')
+                if pretty and (x == 3 or x == 5 or x == 7 or x == 9):
+                    result += '-'
+        else:
+            result.join( str(x) for x in self.aaguid )
+        return result
 
 
     def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True):
@@ -105,7 +130,7 @@ class Fido2Authenticator(object):
         return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv)
 
 
-    def credential_request(self, jsonOptions, keyPair, uv=True):
+    def credential_request(self, jsonOptions, keyPair=None, uv=True):
         '''
         jsonOptions - json dictionary of options for navigator.credentials.get
         keyPair - private/public key pair to sign the assertion
@@ -240,7 +265,7 @@ class Fido2Authenticator(object):
                                     x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                                     x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
                 leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                        signKeyPair=self.caKeyPair, aaguid=self.aaguid)
+                        signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False) )
                 # Final trust chain to add to AttesationObject
                 result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
 
@@ -320,7 +345,7 @@ class Fido2Authenticator(object):
                             x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                signKeyPair=self.caKeyPair, aaguid=self.aaguid)
+                signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False))
         # Final trust chain to add to AttesationObject
         result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
 
@@ -420,7 +445,7 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = bytearray(self.userHandle)
+            saar['userHandle'] = self.__urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(

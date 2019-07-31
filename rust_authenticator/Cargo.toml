@@ -1,5 +1,5 @@
 [package]
-name = "rust_authenticator"
+name = "fido2_authenticator"
 version = "0.1.0"
 authors = ["Lachlan Gleeson <lgleeson@au1.ibm.com>"]
 edition = "2018"

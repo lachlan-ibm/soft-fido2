@@ -7,6 +7,7 @@ import re
 import base64
 import binascii
 import cbor2 as cbor
+import asn1
 import sys
 import array
 
@@ -28,7 +29,9 @@ class CertUtils(object):
     TPM_VENDOR = "2.23.133.2.2";
     TPM_FW_VERSION = "2.23.133.2.3";
 
+    TPM_VENDOR_ID = 0xfffff1d0
 
+    @classmethod
     def _long_to_bytes(cls, l):
         limit = 256 ** 4 - 1 #max value we can fit into a struct.pack
         parts = []
@@ -40,27 +43,10 @@ class CertUtils(object):
 
 
     @utils.register_interface(ExtensionType)
-    class AAGUIDExtension(object):
-        oid = ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4")
+    class AAGUIDExtension(x509.UnrecognizedExtension):
 
-        def __init__(self, aaguid):
-            self._aaguid = aaguid
-        
-        aaguid = utils.read_only_property("_aaguid")
-
-        def __repr__(self):
-            return "<AAGUIDExtension(aaguid={0!r})>".format(self.aaguid)
-
-        def __eq__(self, other):
-            if not isinstance(other, AAGUIDExtension):
-                return NotImplemented
-            return constant_time.bytes_eq(self.aaguid, other.aaguid)
-
-        def __ne__(self, other):
-            return not self == other
-
-        def __hash__(self):
-            return hash(self.aaguid)
+        def __init__(self, aaguid, oid=ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4") ):
+            super().__init__(oid, aaguid)
 
 
     @utils.register_interface(ExtensionType)
@@ -133,8 +119,7 @@ class CertUtils(object):
 
     @classmethod
     def get_encoded(cls, cert, encoding=serialization.Encoding.DER):
-        encoded = cert.public_bytes(encoding=encoding, 
-                format=serialization.PublicFormat.SubjectPublicKeyInfo)
+        encoded = cert.public_bytes(encoding=encoding)
         return encoded
 
 
@@ -182,7 +167,7 @@ class CertUtils(object):
         Generate Leaf cert in trust chain
         issuer should match the keyPair used to sign the certificate
         '''
-        sanId = _long_to_bytes(Fido2Authenticator.TPM_VENDOR_ID)
+        sanId = cls._long_to_bytes(cls.TPM_VENDOR_ID)
         san = x509.name.Name([x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"), 
                             x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId)) ),
                             x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
@@ -193,7 +178,12 @@ class CertUtils(object):
                     x509.SubjectAlternativeName( [x509.DirectoryName( san )] )
                     ]
         if aaguid is not None:
-            extensions += [CertUtils.AAGUIDExtension(aaguid)]
+            encoder = asn1.Encoder()
+            encoder.start()
+            encoder.write(aaguid)
+            encodedAAGUID = encoder.output()
+            print(encodedAAGUID)
+            extensions += [CertUtils.AAGUIDExtension(encodedAAGUID)]
         if androidKey:
             extensions += [CertUtils.AndroidKeystoreExtension()]
         
