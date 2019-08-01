@@ -52,8 +52,8 @@ class CertUtils(object):
     @utils.register_interface(ExtensionType)
     class AndroidKeystoreExtension(x509.UnrecognizedExtension):
 
-        def __init__(self, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17"), wrapperFormatVersion, 
-                encryptedTransportKey, initilizationVector, keyDescription, secureKey, tag):
+        def __init__(self, wrapperFormatVersion, encryptedTransportKey, initilizationVector, 
+                keyDescription, secureKey, tag, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")):
             '''
             self._wrapperFormatVersion = wrapperFormatVersion
             self._encryptedTransportKey = encryptedTransportKey
