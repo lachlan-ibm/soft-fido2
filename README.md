@@ -6,7 +6,8 @@
     * >= Python 3.5
 
 ### Pip modules
-
+    
+    * asn1 >= 2.2.0
     * cryptography >= 2.7
     * cbor2 >= 4.1.2
 
