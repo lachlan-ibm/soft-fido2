@@ -163,10 +163,10 @@ class Fido2Authenticator(object):
             for x in range(16):
                 result += binascii.hexlify(
                         bytes( chr( self.aaguid[x]), 'utf-8')).decode('utf-8')
-                if pretty and (x == 3 or x == 5 or x == 7 or x == 9):
+                if x == 3 or x == 5 or x == 7 or x == 9:
                     result += '-'
         else:
-            result.join( str(x) for x in self.aaguid )
+            result = ''.join( str(x) for x in self.aaguid )
         return result
 
 
