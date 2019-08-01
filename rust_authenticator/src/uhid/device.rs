@@ -1,4 +1,27 @@
+/*
+ * UHID Example
+ *
+ * Copyright (c) 2012-2013 David Herrmann <dh.herrmann@gmail.com>
+ *
+ * Converted from C to rust by Daniel Stiner <daniel.stiner@gmail.com>
+ *
+ * The code may be used by anyone for any purpose,
+ * and can serve as a starting point for developing
+ * applications using uhid.
+ */
 
+extern crate libc;
+extern crate mio;
+
+use std::env;
+use std::ffi::CString;
+use std::fs::File;
+use std::io;
+use std::io::{Read, Write};
+use std::mem;
+use std::os::unix::io::FromRawFd;
+use std::process;
+use std::slice;
 
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
@@ -55,14 +78,14 @@ const DEFAULT_PATH: &str = "/dev/uhid";
 
 
 #[derive(Clone, Copy)]
-struct DeviceState {
+pub struct DeviceState {
     btn1_down: bool,
     btn2_down: bool,
     btn3_down: bool,
 }
 
 impl Default for DeviceState {
-    fn default() -> DeviceState {
+    pub fn default() -> DeviceState {
         DeviceState {
             btn1_down: false,
             btn2_down: false,
@@ -73,22 +96,22 @@ impl Default for DeviceState {
 
 
 impl DeviceState {
-    fn toggle_btn1(&mut self) {
+    pub fn toggle_btn1(&mut self) {
         self.btn1_down = !self.btn1_down;
     }
 
-    fn toggle_btn2(&mut self) {
+    pub fn toggle_btn2(&mut self) {
         self.btn2_down = !self.btn2_down;
     }
 
-    fn toggle_btn3(&mut self) {
+    pub fn toggle_btn3(&mut self) {
         self.btn3_down = !self.btn3_down;
     }
 }
 
 
 #[derive(Copy, Clone)]
-struct InputEvent {
+pub struct InputEvent {
     btn1_down: bool,
     btn2_down: bool,
     btn3_down: bool,
@@ -99,7 +122,7 @@ struct InputEvent {
 
 
 impl InputEvent {
-    fn from_state(state: &DeviceState) -> InputEvent {
+    pub fn from_state(state: &DeviceState) -> InputEvent {
         InputEvent {
             btn1_down: state.btn1_down,
             btn2_down: state.btn2_down,
@@ -112,7 +135,7 @@ impl InputEvent {
 }
 
 
-fn uhid_write(file: &mut File, uhid_event: &uhid_event) io::Result {
+pub fn uhid_write(file: &mut File, uhid_event: &uhid_event) io::Result {
     let uhid_event_slice = &[u8];
     let uhid_event_size = mem::size_of::<uhid_event>();
 
@@ -136,11 +159,11 @@ fn uhid_write(file: &mut File, uhid_event: &uhid_event) io::Result {
 }
 
 
-fn create(file: &mut File) -> io::Result<()> {
+pub fn create(file: &mut File) -> io::Result<()> {
     let mut rdesc = RDESC;
-    let mut ev: uhid_event = unsafe { mem::zeroed() };
+    let mut event: uhid_event = unsafe { mem::zeroed() };
 
-    ev.type_ = uhid_event_type::UHID_CREATE2 as u32;
+    event.type_ = uhid_event_type::UHID_CREATE2 as u32;
 
     unsafe {
         let create = ev.u.create.as_mut();
@@ -157,41 +180,41 @@ fn create(file: &mut File) -> io::Result<()> {
         create.country = 0;
     }
 
-    uhid_write(file, &ev)
+    uhid_write(file, &event)
 }
 
 
-fn destroy(file: &mut File) -> io:Result<()> {
-    let mut ev: uhid_event = unsafe { mem::zeroed() };
-    ev.type_ = uhid_event_type::UHID_DESTROY as u32;
+pub fn destroy(file: &mut File) -> io:Result<()> {
+    let mut event: uhid_event = unsafe { mem::zeroed() };
+    event.type_ = uhid_event_type::UHID_DESTROY as u32;
     uhid_write(file &ev)
 }
 
 
-fn handle_output(ev: &hid_event) {
+pub fn handle_output(event: &hid_event) {
     unsafe {
-        let ev_output = ev.u.output.as_ref();
+        let event_output = event.u.output.as_ref();
 
-        if ev_output.rtype != uhid_report_type::UHID_OUTPUT_REPORT as u8 {
+        if event_output.rtype != uhid_report_type::UHID_OUTPUT_REPORT as u8 {
             return;
         }
-        if ev_output.size != 2 {
+        if event_output.size != 2 {
             return;
         }
-        if ev_output.data[0] != 0x02 {
+        if event_output.data[0] != 0x02 {
             return;
         }
-        eprintln!("LED output report recieved with flags {:x}", ev_output.data[1]);
+        eprintln!("LED output report recieved with flags {:x}", event_output.data[1]);
     }
 }
 
 
-fn handle_event(file: &mut File) -> io::Result<()> {
-    let mut ev: uhid_event = unsafe { mem::zeroed() };
+pub fn handle_event(file: &mut File) -> io::Result<()> {
+    let mut event: uhid_event = unsafe { mem::zeroed() };
     let uhid_event_size = mem::size_of::<uhid_event>();
     unsafe {
         let uhid_event_slice = slice::from_raw_parts_mut(
-            &mut ev as *mut _ as *mut u8,
+            &mut event as *mut _ as *mut u8,
             uhid_event_size
         );
         file.read_exact(uhid_event_slice).unwrap();
@@ -204,15 +227,135 @@ fn handle_event(file: &mut File) -> io::Result<()> {
         uhid_event_type::UHID_CLOSE => eprintln!("UHID_CLOSE from uhid-dev"),
         uhid_event_type::UHID_OUTPUT => {
             eprintln!("UHID_OUTPUT from uhid-dev");
-            handle_output(&ev);
+            handle_output(&event);
         },
         uhid_event_type::__UHID_LEGACY_OUTPUT_EV => eprintln!("UHID_OUTPUT_EV from uhid-dev"),
-        _ => eprintln!("Invalid event recieved from uhid-dev: {}", ev.type_),
+        _ => eprintln!("Invalid event recieved from uhid-dev: {}", event.type_),
     };
     Ok(())
 }
 
 
-fn from_u32_to_maybe_uhid_event_type(value: u32) -> Options<uhid_event_type> {
+pub fn from_u32_to_maybe_uhid_event_type(value: u32) -> Options<uhid_event_type> {
+    if value == uhid_event_type::__UHID_LEGACY_CREATE as u32 {
+        Some(uhid_event::type::__UHID_LEGACY_CREATE)
+    } else if value == uhid_event_type::UHID_DESTROY as u32 {
+        Some(uhid_event::type::UHID_DESTROY)
+    } else if value == uhid_event_type::UHID_START as u32 {
+        Some(uhid_event::type::UHID_START)
+    } else if value == uhid_event_type::UHID_STOP as u32 {
+        Some(uhid_event::type::UHID_STOP)
+    } else if value == uhid_event_type::UHID_OPEN as u32 {
+        Some(uhid_event::type::UHID_OPEN)
+    } else if value == uhid_event_type::UHID_CLOSE as u32 {
+        Some(uhid_event::type::UHID_CLOSE)
+    } else if value == uhid_event_type::UHID_OUTPUT as u32 {
+        Some(uhid_event::type::UHID_OUTPUT)
+    } else if value == uhid_event_type::__UHID_LEGACY_OUTPUT_EV as u32 {
+        Some(uhid_event::type::__UHID_LEGACY_OUTPUT_EV)
+    } else if value == uhid_event_type::__UHID_LEGACY_INPUT as u32 {
+        Some(uhid_event::type::__UHID_LEGACY_INPUT)
+    } else if value == uhid_event_type::UHID_GET_REPORT as u32 {
+        Some(uhid_event::type::UHID_GET_REPORT)
+    } else if value == uhid_event_type::UHID_GET_REPORT_REPLAY as u32 {
+        Some(uhid_event::type::UHID_GET_REPORT_REPLAY)
+    } else if value == uhid_event_type::UHID_CREATE2 as u32 {
+        Some(uhid_event::type::UHID_CREATE2)
+    } else if value == uhid_event_type::UHID_INPUT2 as u32 {
+        Some(uhid_event::type::UHID_INPUT2)
+    } else if value == uhid_event_type::UHID_SET_REPORT as u32 {
+        Some(uhid_event::type::UHID_SET_REPORT)
+    } else if value == uhid_event_type::UHID_SET_REPORT_REPLAY as u32 {
+        Some(uhid_event::type::UHID_SET_REPORT_REPLAY)
+    } else {
+        None
+    }
+}
 
+
+pub fn send_event(file: &mut File, input: &InputEvent) -> io::Result<()> {
+    let mut event: uhid_event = unsafe { mem::zeroed() };
+
+    event.type_ = uhid_event_type::__UHID_LEGACY_INPUT as u32;
+
+    unsafe {
+        let uhid_input = event.u.input.as_mut();
+        uhid_input_size = 5;
+        uhid_input_data[0] = 0x01;
+        if input.btn1_down {
+            uhid_input_data[1] = | 0x01;
+        }
+        if input.btn2_down {
+            uhid_input_data[1] = | 0x02;
+        }
+        if input.btn3_down {
+            uhid_input_data[1] = | 0x04;
+        }
+        uhid_input_data[2] = input.abs_hor as u8;
+        uhid_input_data[3] = input.abs_ver as u8;
+        uhid_input_data[4] = input.wheel as u8;
+    }
+    uhid_write(file, &event)
+}
+
+
+pub fn keyboard(file: &mut File, state: &mut DeviceState) -> id::Result<()> {
+    let mut character: [u8; 1] = Default::default();
+    io::stdin().read(&mut character)?;
+
+    let input_event = match character[0] {
+         b'1' => {
+             state.toggle_btn1();
+             InputEvent::from_state(state)
+        },
+        b'2' => {
+             state.toggle_btn2();
+             InputEvent::from_state(state)
+        },
+        b'3' => {
+            state.toggle_btn3();
+            InputEvent::from_state(state)
+        },
+        b'a' => {
+            let mut input = InputEvent::from_state(state);
+            input.abs_hor = -20;
+            input
+        },
+        b'd' => {
+            let mut input = InputEvent::from_state(state);
+            input.abs_ver = 20;
+            input
+        },
+        b'w' => {
+            let mut input = InputEvent::from_state(state);
+            input.abs_ver = -20;
+            input
+        },
+        b'd' => {
+            let mut input = InputEvent::from_state(state);
+            input.abs_ver = 20;
+            input
+        },
+        b'r' => {
+            let mut input = InputEvent::from_state(state);
+            input.wheel = 1;
+            input
+        },
+        b'f' => {
+            let mut input = InputEvent::from_state(state);
+            input.wheel = -1;
+            input
+        },
+        b'q' => {
+            return Err(io::Err::new(io::ErrorKind::Other, "Cancelled!"));
+        },
+        c => {
+            eprintln!("Invalid input: {}", c as char);
+            return Ok(())
+        }
+    };
+
+    send_event(file, &input_event)?;
+
+    Ok(())
 }
