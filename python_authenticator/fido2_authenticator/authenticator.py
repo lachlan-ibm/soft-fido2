@@ -36,6 +36,17 @@ class Fido2Authenticator(object):
     TPM_VENDOR_ID = 0xfffff1d0
     
     def __init__(self, keyPair=None, aaguid=None, caKeyPair=None, caCert=None):
+        """
+        Args:
+            keyPair (KeyPair): public/private key pair to sign challenges with; 
+                    default = RSA 2048 key
+            aaguid (:obj:`list` of :obj:`int`, optional): aaguid to associate with 
+                    authenticator; default = [0] * 16
+            caKeyPair (KeyPair): public/private key of ca/intermadiate authority 
+                    for BASIC/ATTCA attestation formats; default = None
+            caCert (x509Certificate): certificate to use as a trust anchor; default = None
+
+        """
         self.counter = 0
         if keyPair == None:
             self.kp = KeyPair.generate_rsa()
@@ -52,6 +63,15 @@ class Fido2Authenticator(object):
 
 
     def __urlb64_decode(self, b64String):
+        """Helper function to decode b64 urlencoded strings which may be missing
+        the traling padding that python required
+
+        Args:
+            b64String (str): string to decode
+
+        Returns:
+            str: decoded string
+        """
         pad = len(b64String) % 4
         if pad:
             b64String += b'=' * pad
@@ -59,11 +79,28 @@ class Fido2Authenticator(object):
 
 
     def __urlb64_encode(self, byteString):
+        """Helper function or b64 encode a string then remove the trailing padding
+        which is not required
+
+        Args:
+            byteString (str): string to encode
+
+        Returns:
+            str: b64 url encoded string with trailing '=' stripped
+        """
         b64String = str(base64.urlsafe_b64encode(byteString), 'utf-8')
         return re.sub(r'=*$', '', b64String)
 
 
     def _long_to_bytes(cls, l):
+        """Convert a long to a byte representation
+
+        Args:
+            l (long): long to convert to bytes
+
+        Returns:
+            :obj:`list` of :obj:`bytes`: byte representation of the long value
+        """
         limit = 256 ** 4 - 1 #max value we can fit into a struct.pack
         parts = []
         while l:
@@ -73,7 +110,15 @@ class Fido2Authenticator(object):
         return struct.pack(">" + 'L' * len(parts), *parts)
 
 
-    def __bytes_to_long(self, b):
+    def _bytes_to_long(self, b):
+        """Converts an array of bytes to a long
+
+        Args:
+            b (:obj:`list` of :obj:`byte`): bytes to convert
+
+        Returns:
+            long: value of bytes as a long
+        """
         l = len(b) / 4
         parts = struct.unpack(">" + 'L' * l, b)[::-1]
         result = 0
@@ -85,6 +130,14 @@ class Fido2Authenticator(object):
 
 
     def get_credential_id(self, keyPair=None):
+        """credential ID defaults to the SHA256 of the public key
+
+        Args:
+            keyPair (:obj:`KeyPair`, optional): key pair to get credential id for; default = self.kp
+
+        Returns:
+            str: b64 encoded byte string of credentail id
+        """
         if keyPair == None: keyPair = self.kp
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         credId = base64.urlsafe_b64encode( credIdBytes )
@@ -97,6 +150,13 @@ class Fido2Authenticator(object):
 
         else returns format:
             1234567890123456
+
+        Args:
+            hexString (:obj:`bool`, optional): toggle wether to output a hexstring or a string representation of
+                    aaguid; default = True
+
+        Returns:
+            str: representation of aaguid
         """
         result = ''
         if hexString:
@@ -111,10 +171,48 @@ class Fido2Authenticator(object):
 
 
     def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True):
-        '''
-        jsonOptions - json dictionary of options for navigator.credential.create
-        atteStmtFormat - https://w3c.github.io/webauthn/#defined-attestation-formats
-        keyPair - private/public key pair to sign the attestation
+        '''Reponds to requests to navigator.credentail.create(). jsonOptions should be
+        either a dictionary or a JSON string of the attestation options and usually has the form:
+        {
+            "rp": {
+                "id": "relying.party",
+                "name": "Relying Party"
+            },
+            "user": {
+                "id": "my_unique_id",
+                "name": "Low Key",
+                "displayName": "redacted"
+            },
+            "timeout": 60000,
+            "challenge": "wvhbvWMV5Jsl96WbdZGav6Ifpp8QHnJC0MKhs1vDUes",
+            "excludeCredentials": [],
+            "authenticatorSelection": {
+                "requireResidentKey": true,
+                "authenticatorAttachment": "cross-platform",
+                "userVerification": "preferred"
+            },
+            "attestation": "direct",
+            "pubKeyCredParams": [
+                {
+                    "alg": -7,
+                    "type": "public-key"
+                },
+                {
+                    "alg": -257,
+                    "type": "public-key"
+                }
+            ]
+        }
+
+        Args:
+            jsonOptions (dict) :dictionary of options for navigator.credential.create
+            atteStmtFormat (:obj:`str`, optional): https://w3c.github.io/webauthn/#defined-attestation-formats
+                    default = 'packed-self'
+            keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the attestation; default = self.kp
+            uv (:obj:`bool`, optional): if the authenticator should set the user verification flag; default = True
+
+        Returns:
+            dict: response to navigator.credential.create
         '''
         if keyPair is None:
             keyPair = self.kp
@@ -123,17 +221,31 @@ class Fido2Authenticator(object):
             options = jsonOptions
         else:
             options = json.loads(jsonOptions)
-        #logger.debug("Attestation options:")
-        #logger.debug(json.dumps(options, indent=4) + '\n\n')
         cco = self.attestation_options_response_to_credential_create_options(options)
-        #logger.debug("CCO: " + str(cco) + '\n\n' )
         return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv)
 
 
     def credential_request(self, jsonOptions, keyPair=None, uv=True):
-        '''
-        jsonOptions - json dictionary of options for navigator.credentials.get
-        keyPair - private/public key pair to sign the assertion
+        '''Responds to navigator.credential.get(). jsonOptions should be either a dictionary
+        or a JSON string of the assertion options and usually has the form:
+        {
+            "userId": "my_unique_id",
+            "displayName": "redacted",
+            "authenticatorSelection": {
+                "requireResidentKey": false,
+                "authenticatorAttachment": "cross-platform",
+                "userVerification": "preferred"
+            },
+            "attestation": "direct"
+        }
+
+        Args:
+            jsonOptions (dict): json dictionary of options for navigator.credentials.get
+            keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the assertion; default = self.kp
+            uv (:obj:`bool`, optional): if the authenticator should set hte user verification flag, default = True
+
+        Returns:
+            dict: response to navigator.credential.get
         '''
         if keyPair is None:
             keyPair = self.kp
@@ -147,38 +259,20 @@ class Fido2Authenticator(object):
         return self.process_credential_request_options(cro, keyPair, uv)
 
 
-    def attestation_options_response_to_credential_create_options(self, options):
-        pkcco = {'rp': options['rp'] }
-        user = {'id': self.__urlb64_decode(options['user']['id'].encode('UTF-8'))}
-        pkcco['user'] = user
-        pkcco['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
-        pkcco['pubKeyCredParams'] = options['pubKeyCredParams']
-        if 'timeout' in options:
-            pkcco['timeout'] = options['timeout']
-        
-        if 'excludeCredentials' in options:
-            pkcco['excludeCredentials'] = options['excludeCredentials']
-
-        if 'authenticatorSelection' in options:
-            pkcco['authenticatorSelection'] = options['authenticatorSelection']
-
-        if 'attestation' in options:
-            pkcco['attestation'] = options['attestation']
-
-        if 'extensions' in options:
-            pkcco['extensions'] = options['extensions']
-
-        cco = {'publicKey': pkcco}
-        return cco
-
-
     def build_client_data_JSON(self, pk):
-        rp = None
-        mode = None
-        if 'rpId' in pk:
-            rp = pk['rpId']
-            mode = 'webauthn.get'
-        else:
+        """Creates the ClientDataJSON object for attestation and assertion operations
+
+        Args:
+            pk (dict): public key dictionary from request options,
+                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
+                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
+
+        Returns:
+            dict: clientDataJSON, https://www.w3.org/TR/webauthn/#sec-client-data
+        """
+        rp = pk.get('rpId', None)
+        mode = 'webauthn.get'
+        if not rp:
             rp = pk['rp']['id']
             mode = 'webauthn.create'
 
@@ -189,6 +283,15 @@ class Fido2Authenticator(object):
 
 
     def process_attested_credential_data(self, publicKey, credIdBytes):
+        """create the attested credentail data for attestation requets
+
+        Args:
+            publickey: (PublicKey): RSA | EC public key
+            credIdBytes (str): byte string of credential id, https://www.w3.org/TR/webauthn/#credential-id
+
+        Returns:
+            str: attested credetail data, https://www.w3.org/TR/webauthn/#sec-attested-credential-data
+        """
         attestedCredDataBytes = []
         attestedCredDataBytes += array.array('B', self.aaguid).tobytes()
         length = struct.pack('H', len(credIdBytes))
@@ -212,22 +315,34 @@ class Fido2Authenticator(object):
             raise Exception("Unsupported public key algorithm")
 
         attestedCredDataBytes += cbor.dumps( credPublicKeyCOSE )
-        #logger.debug("attestedCredDataBytes: " + base64.b64encode( ''.join(attestedCredDataBytes) ))
         return attestedCredDataBytes
 
 
     def build_authenticator_data(self, clientDataJSON, pk, attStmtFmt, keyPair, uv):
+        """create the authenticator data for the attestation or assertion request
+
+        Args:
+            clientDataJSON (dict): https://www.w3.org/TR/webauthn/#sec-client-data
+            pk (dict): public key dictionary from request options,
+                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
+                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
+            attStmtFmt (str): attestation statement format, 
+                    https://www.w3.org/TR/webauthn/#defined-attestation-formats
+            keyPair (KeyPair): public/private key pair to use
+            uv (bool): toggle setting the user verification flag
+
+        Returns:
+            str: byte string of authenticator data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+        """
         authDataBytes = []
 
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
-        rpId = None
-        assertion = False
-        if 'rpId' in pk:
-            rpId = pk['rpId']
-            assertion = True
-            # U2F Assertion extension ignored
-        else:
+        rpId = pk.get('rpId', None)
+        assertion = True
+        if not rpId:
             rpId = pk['rp']['id']
+            assertion = False
 
         rpIdHash = hashlib.sha256( rpId.encode('utf-8') ).digest()
         authDataBytes += rpIdHash
@@ -248,13 +363,23 @@ class Fido2Authenticator(object):
 
 
     def build_packed_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statment with the packed format.
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: packed attestation statement,
+                    https://www.w3.org/TR/webauthn/#packed-attestation
+        """
         result = {}
-        toSignBytes = []
-        toSignBytes += authData
-        toSignBytes += clientDataHash
-        #logger.debug("clientDataHash: " + base64.b64encode(clientDataHash) )
-        toSign = bytes(toSignBytes)
-        #logger.debug('toSign: ' + base64.b64encode(toSign))
+        toSign = bytes( [ *authData, *clientDataHash ] )
         sig = ""
         selfAttestation = True if 'self' in atteStmtFmt else False
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
@@ -278,7 +403,6 @@ class Fido2Authenticator(object):
         elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             #ECDAA key identified
             if not selfAttestation:
-                #logger.debug("Can't generate trust chain for ECDAA keys")
                 raise Exception("Not implemented")
 
             else:
@@ -286,17 +410,29 @@ class Fido2Authenticator(object):
             sig = keyPair.get_private().sign( toSign, ec.ECDSA(hashes.SHA256()) )
 
         else:
-            #logger.debug(type(keyPair.get_public()))
             raise Exception("Unsupported key type")
         
         result[u"sig"] = sig
-        #logger.debug("sig: " + base64.b64encode(sig))
-        #logger.debug('privateKey :' + keyPair.get_private_bytes() )
-        #logger.debug('pubKey: ' + keyPair.get_public_bytes() )
         return result
 
 
     def build_fido_u2f_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statement with the U2F format.
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: u2f attestation statement,
+                    https://www.w3.org/TR/webauthn/#fido-u2f-attestation
+
+        """
         if not isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             raise Exception("FIDO U2F only supports ECDSA keys")
         result = {}
@@ -325,18 +461,78 @@ class Fido2Authenticator(object):
 
 
     def build_tpm_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statement with the TPM format
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+        
+        Returns:
+            dict: tpm attestation statement,
+                    https://www.w3.org/TR/webauthn/#fido-u2f-attestation
+        """
         raise Exception("Not yet implemented")
 
 
     def build_none_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statement with the none format
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: none attestation statement,
+                    https://www.w3.org/TR/webauthn/#none-attestation
+        """
         return {}
 
 
     def build_android_safetynet_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statement with the Android Safetynet format
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: Android safetynet attestation statement,
+                    https://www.w3.org/TR/webauthn/#android-safetynet-attestation
+        """
         raise Exception("Not yet implemented")
 
 
     def build_android_key_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Create an attestation statement with the Android Keystore format.
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: Android Keystore attestation statement,
+                    https://www.w3.org/TR/webauthn/#android-key-attestation
+        """
         result = {}
 
         #Add x5c chain
@@ -362,6 +558,21 @@ class Fido2Authenticator(object):
 
 
     def process_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        """Helper function that chooses an attestation statement function based on the atteStmtFmt variable
+
+        Args:
+            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            clientDataHash (str): byte string of clientDataHash,
+                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
+            authData (str): byte string of the authentication data,
+                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            credIdBytes (str): byte string of the credential id
+            keyPair (KeyPair): public/privte key pair to sign data with
+
+        Returns:
+            dict: attestation statement. Type of statement depends on 'atteStmtFmt', see:
+                    https://www.w3.org/TR/webauthn/#defined-attestation-formats
+        """
         try:
             return { "none": self.build_none_attestation_statement,
                     "packed": self.build_packed_attestation_statement,
@@ -375,7 +586,55 @@ class Fido2Authenticator(object):
             raise Exception("Unsupported attestation statement format")
 
 
+    def attestation_options_response_to_credential_create_options(self, options):
+        """Take the options provided by the relyig party and extract required information to
+        generate the attestation
+        
+        Args:
+            options (dict): options from navigator.credential.create
+                    https://www.w3.org/TR/webauthn/#credentialcreationoptions-extension
+        Returns:
+            dict: https://www.w3.org/TR/webauthn/#dictionary-makecredentialoptions
+        """
+        pkcco = {'rp': options['rp'] }
+        user = {'id': self.__urlb64_decode(options['user']['id'].encode('UTF-8'))}
+        pkcco['user'] = user
+        pkcco['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
+        pkcco['pubKeyCredParams'] = options['pubKeyCredParams']
+        if 'timeout' in options:
+            pkcco['timeout'] = options['timeout']
+        
+        if 'excludeCredentials' in options:
+            pkcco['excludeCredentials'] = options['excludeCredentials']
+
+        if 'authenticatorSelection' in options:
+            pkcco['authenticatorSelection'] = options['authenticatorSelection']
+
+        if 'attestation' in options:
+            pkcco['attestation'] = options['attestation']
+
+        if 'extensions' in options:
+            pkcco['extensions'] = options['extensions']
+
+        cco = {'publicKey': pkcco}
+        return cco
+
+
     def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv):
+        """Generate response to parsed credential create request
+
+        Args:
+            cco (dict): Credential Create Options,
+                    https://www.w3.org/TR/credential-management-1/#credentialcreationoptions-dictionary
+            atteStmtFmt (str): required attestation format. see:
+                    https://www.w3.org/TR/webauthn/#defined-attestation-formats
+            keyPair (KeyPair): public/private kye pair to sign with
+            uv (bool): set the user verification flag
+
+        Returns:
+            dict: attestation response to credential create request,
+                    https://www.w3.org/TR/webauthn/#authenticatorattestationresponse
+        """
         pk = cco['publicKey']
         self.userHandle = pk['user']['id']
         clientDataJSON = self.build_client_data_JSON(pk)
@@ -386,15 +645,12 @@ class Fido2Authenticator(object):
         credIdString = base64.urlsafe_b64encode( credIdBytes )
 
         authData = self.build_authenticator_data(clientDataJSON, pk, atteStmtFmt, keyPair, uv)
-        #logger.debug("authData: " + base64.b64encode(authData))
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str( re.sub('-self', '', atteStmtFmt))
-        #logger.debug("fmt: " + attStmtFmt)
         attestationObject = { u'authData': authData,
                             u'fmt': attStmtFmt,
                             u'attStmt': attStmt
                             }
-        #logger.debug("attestationObject " + base64.b64encode( cbor.dumps(attestationObject)))
         saar = { u'clientDataJSON': str(clientDataEncoded, 'utf-8'),
                 u'attestationObject': str(base64.urlsafe_b64encode( cbor.dumps(attestationObject)), 'utf-8')
                 }
@@ -408,6 +664,15 @@ class Fido2Authenticator(object):
 
 
     def assertion_options_response_to_credential_request_options(self, options):
+        """Take the options provided by the relyig party and extract required information to
+        generate the assertion
+        
+        Args:
+            options (dict): options from navigator.credential.get
+                    https://www.w3.org/TR/webauthn/#iface-authenticatorassertionresponse
+        Returns:
+            dict: https://www.w3.org/TR/credential-management-1/#dictdef-credentialrequestoptions
+        """
         cro = {}
         pkcro = {}
 
@@ -435,6 +700,18 @@ class Fido2Authenticator(object):
 
 
     def process_credential_request_options(self, cro, keyPair, uv):
+        """Generate response to parsed credential get request
+
+        Args:
+            cro (dict): Credential Request Options,
+                    https://www.w3.org/TR/credential-management-1/#dictdef-credentialrequestoptions
+            keyPair (KeyPair): public/private key pair to sign with
+            uv (bool): set the user verification flag
+
+        Returns:
+            dict: assertion response to credential get request,
+                    https://www.w3.org/TR/webauthn/#authenticatorassertionresponse
+        """
         spkc = {}
         saar = {}
         pk = cro["publicKey"]
