@@ -50,45 +50,20 @@ class CertUtils(object):
 
 
     @utils.register_interface(ExtensionType)
-    class AndroidKeystoreExtension(object):
-        oid = ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")
+    class AndroidKeystoreExtension(x509.UnrecognizedExtension):
 
-        def __init__(self, wrapperFormatVersion, encryptedTransportKey, 
-                initilizationVector, keyDescription, secureKey, tag):
+        def __init__(self, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17"), wrapperFormatVersion, 
+                encryptedTransportKey, initilizationVector, keyDescription, secureKey, tag):
+            '''
             self._wrapperFormatVersion = wrapperFormatVersion
             self._encryptedTransportKey = encryptedTransportKey
             self._initilizationVector = initilizationVector
             self._keyDescription = keyDescription
             self._secureKey = secureKey
             self._tag = tag
-        
-        wrapperFormatVersion = utils.read_only_property("_wrapperFormatVersion")
-        encryptedTransportKey = utils.read_only_property("_encryptedTransportKey")
-        initilizationVector = utils.read_only_property("_initilizationVecotr")
-        keyDecription = utils.read_only_property("_keyDescription")
-        secureKey = utils.read_only_property("_secureKey")
-        tag = utils.read_only_property("_tag")
-
-        def __repr__(self):
-            return "<AndroidKeystoreExtension(wrapperFormatVersion={0!r},encryptedTransportKey={0!r}," \
-                    "initilizationVector={0!r},keyDecription={0!r},secureKey={0!r},tag={0!r})>".format(
-                    self.wrapperFormatVersion, self.encryptedTransportKey, self.initilizationVector,
-                    self.keyDecription, self.secureKey, self.tag)
-
-        def __eq__(self, other):
-            if not isinstance(other, AndroidKeystoreExtension):
-                return NotImplemented
-            for key in [wrapperFormatVersion, encryptedTransportKey, initilizationVector,
-                    keyDecription, secureKey, tag]:
-                if not constant_time.bytes_eq(self.key, other.key):
-                    return False
-            return True
-
-        def __ne__(self, other):
-            return not self == other
-
-        def __hash__(self):
-            return hash(self.aaguid)
+            '''
+            value = ''
+            super().__init__(oid, value)
 
 
     @classmethod
@@ -105,7 +80,6 @@ class CertUtils(object):
     @classmethod
     def __add_extensions(cls, certBuilder, extensions):
         for extension in extensions:
-            #logger.debug("Adding extension: " + str(extension) )
             certBuilder = certBuilder.add_extension(extension, critical=False)
         return certBuilder
 
@@ -136,7 +110,6 @@ class CertUtils(object):
 
         certBuilder = cls.__cert_builder(subject, issuer, lifetime, serial, keyPair)
         certBuilder = cls.__add_extensions(certBuilder, extensions)
-        #logger.debug("certbuilder extensions: " + str(certBuilder._extensions)) 
         return certBuilder.sign(signKeyPair.get_private(), signer, backend)
 
 
