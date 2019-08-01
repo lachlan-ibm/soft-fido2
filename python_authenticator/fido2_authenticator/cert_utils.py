@@ -155,7 +155,6 @@ class CertUtils(object):
             encoder.start()
             encoder.write(aaguid)
             encodedAAGUID = encoder.output()
-            print(encodedAAGUID)
             extensions += [CertUtils.AAGUIDExtension(encodedAAGUID)]
         if androidKey:
             extensions += [CertUtils.AndroidKeystoreExtension()]
