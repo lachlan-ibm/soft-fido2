@@ -1,6 +1,12 @@
 # Python
 
 ## Prerequisites:
+
+### Python
+    * >= Python 3.5
+
+### Pip modules
+
     * cryptography >= 2.7
     * cbor2 >= 4.1.2
 
