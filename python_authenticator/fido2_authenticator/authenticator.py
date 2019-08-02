@@ -140,7 +140,7 @@ class Fido2Authenticator(object):
         """
         if keyPair == None: keyPair = self.kp
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
-        credId = base64.urlsafe_b64encode( credIdBytes )
+        credId = base64.urlsafe_b64encode( credIdBytes ).decode('utf-8')
         return re.sub(r'[=]+$', '', credId)
 
 
