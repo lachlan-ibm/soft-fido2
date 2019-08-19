@@ -50,7 +50,7 @@ attestation_options = {
                         ]
                     }
 # Credentail Create Options
-cco = authenticator.attestation_options_response_to_credential_create_options(attestation_options)
+cco = authenticator.attestation_options_response_to_credential_create_options(attestation_options).get('publicKey', {})
 assert cco.get('rp') == attestation_options['rp']['id'], "rpId invalid;\n got [{}] expected [{}]".format(
         cco.get('rp'), attestation_options['rp']['id'])
 assert authenticator.urlb64_encode( cco.get('user') ) == attestation_options['user']['id'], "userId invalid;\n got [{}] expected [{}]".format(
