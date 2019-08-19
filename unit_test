@@ -60,12 +60,12 @@ assert authenticator._urlb64_encode( cco.get('challenge') ) == attestation_optio
 
 # Client Data JSON
 clientDataJSON = json.loads( authenticator.build_client_data_JSON( cco ) )
-assert clientDataJSON.get('origin') == 'https://' + cco.get('rp'), "origin not correct"
+assert clientDataJSON.get('origin') == 'https://' + cco.get('rp', {}).get('id', ''), "origin not correct"
 assert clientDataJSON.get('challenge') == attestation_options['challenge'], "challenge incorrect"
 assert clientDataJSON.get('type') == 'webauthn.create'
 
 # Authenticator Data
-auth_data = authenticator.build_authenticator_data( cco['publicKey'], 'packed-self', authenticator.kp, False )
+auth_data = authenticator.build_authenticator_data( cco, 'packed-self', authenticator.kp, False )
 
 
 EOF
