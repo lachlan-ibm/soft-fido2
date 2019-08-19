@@ -33,7 +33,7 @@ attestation_options = {
                             }
                         ],
                         "authenticatorSelection": {
-                            "requireResidentKey": true,
+                            "requireResidentKey": True,
                             "authenticatorAttachment": "cross-platform",
                             "userVerification": "preferred"
                         },
