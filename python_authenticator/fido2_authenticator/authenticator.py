@@ -140,7 +140,7 @@ class Fido2Authenticator(object):
         """
         if keyPair == None: keyPair = self.kp
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
-        credId = base64.urlsafe_b64encode( credIdBytes )
+        credId = base64.urlsafe_b64encode( credIdBytes ).decode('utf-8')
         return re.sub(r'[=]+$', '', credId)
 
 
@@ -318,11 +318,10 @@ class Fido2Authenticator(object):
         return attestedCredDataBytes
 
 
-    def build_authenticator_data(self, clientDataJSON, pk, attStmtFmt, keyPair, uv):
+    def build_authenticator_data(self, pk, attStmtFmt, keyPair, uv):
         """create the authenticator data for the attestation or assertion request
 
         Args:
-            clientDataJSON (dict): https://www.w3.org/TR/webauthn/#sec-client-data
             pk (dict): public key dictionary from request options,
                     https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
                     https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
@@ -337,7 +336,6 @@ class Fido2Authenticator(object):
         """
         authDataBytes = []
 
-        credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         rpId = pk.get('rpId', None)
         assertion = True
         if not rpId:
@@ -357,6 +355,7 @@ class Fido2Authenticator(object):
         self.counter += 1
 
         if not assertion:
+            credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
             authDataBytes += self.process_attested_credential_data(keyPair.get_public(), credIdBytes)
         authData = bytes(authDataBytes)
         return authData
@@ -644,7 +643,7 @@ class Fido2Authenticator(object):
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         credIdString = base64.urlsafe_b64encode( credIdBytes )
 
-        authData = self.build_authenticator_data(clientDataJSON, pk, atteStmtFmt, keyPair, uv)
+        authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str( re.sub('-self', '', atteStmtFmt))
         attestationObject = { u'authData': authData,
@@ -719,7 +718,7 @@ class Fido2Authenticator(object):
         """clientDataBytes = bytearray(clientDataJSON)"""
         saar["clientDataJSON"] = str( base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8')
 
-        authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
+        authData = self.build_authenticator_data(pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
             saar['userHandle'] = self.__urlb64_encode(self.userHandle)

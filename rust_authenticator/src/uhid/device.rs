@@ -23,7 +23,6 @@ use std::os::unix::io::FromRawFd;
 use std::process;
 use std::slice;
 
-
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
 
@@ -85,7 +84,7 @@ pub struct DeviceState {
 }
 
 impl Default for DeviceState {
-    pub fn default() -> DeviceState {
+    fn default() -> DeviceState {
         DeviceState {
             btn1_down: false,
             btn2_down: false,
@@ -135,8 +134,8 @@ impl InputEvent {
 }
 
 
-pub fn uhid_write(file: &mut File, uhid_event: &uhid_event) io::Result {
-    let uhid_event_slice = &[u8];
+pub fn uhid_write(file: &mut File, uhid_event: &uhid_event) -> io::Result<()> {
+    let uhid_event_slice: &[u8];
     let uhid_event_size = mem::size_of::<uhid_event>();
 
     unsafe {
@@ -149,12 +148,12 @@ pub fn uhid_write(file: &mut File, uhid_event: &uhid_event) io::Result {
         Ok(bytes_written) =>
             if bytes_written != uhid_event_size {
                 Err(io::Error::new(
-                        io:ErrorKind::Interrupted, 
-                        format!("Wrong size written to uhid {} != {}", btyes_written, uhid_event_size)))
+                        io::ErrorKind::Interrupted, 
+                        format!("Wrong size written to uhid {} != {}", bytes_written, uhid_event_size)))
             } else {
-                OK(())
+                Ok(())
             },
-        Err(err) => Err(io:Err:new(err.kind(), format!("Cannot write to uhid: {}", err)))
+        Err(err) => Err(io::Error::new(err.kind(), format!("Cannot write to uhid: {}", err)))
     }
 }
 
@@ -163,14 +162,13 @@ pub fn create(file: &mut File) -> io::Result<()> {
     let mut rdesc = RDESC;
     let mut event: uhid_event = unsafe { mem::zeroed() };
 
-    event.type_ = uhid_event_type::UHID_CREATE2 as u32;
+    event.type_ = uhid_event_type::__UHID_LEGACY_CREATE as u32;
 
     unsafe {
-        let create = ev.u.create.as_mut();
+        let create = event.u.create.as_mut();
         create.name.copy_from_slice(
             &[CString::new("mock-uhid-device").unwrap().as_bytes_with_nul(),
-            &[0u8; 111].concat()
-        );
+            &[0u8; 111]].concat());
         create.rd_data = &mut rdesc[0] as *mut u8;
         create.rd_size = rdesc.len() as u16;
         create.bus = BUS_USB as u16;
@@ -184,14 +182,14 @@ pub fn create(file: &mut File) -> io::Result<()> {
 }
 
 
-pub fn destroy(file: &mut File) -> io:Result<()> {
+pub fn destroy(file: &mut File) -> io::Result<()> {
     let mut event: uhid_event = unsafe { mem::zeroed() };
     event.type_ = uhid_event_type::UHID_DESTROY as u32;
-    uhid_write(file &ev)
+    uhid_write(file, &event)
 }
 
 
-pub fn handle_output(event: &hid_event) {
+pub fn handle_output(event: &uhid_event) {
     unsafe {
         let event_output = event.u.output.as_ref();
 
@@ -220,7 +218,7 @@ pub fn handle_event(file: &mut File) -> io::Result<()> {
         file.read_exact(uhid_event_slice).unwrap();
     }
 
-    match from_u32_to_maybe_uhid_event_type(ev.type_).unwrap() {
+    match from_u32_to_maybe_uhid_event_type(event.type_).unwrap() {
         uhid_event_type::UHID_START => eprintln!("UHID_START from uhid-dev"),
         uhid_event_type::UHID_STOP => eprintln!("UHID_STOP from uhid-dev"),
         uhid_event_type::UHID_OPEN => eprintln!("UHID_OPEN from uhid-dev"),
@@ -236,37 +234,37 @@ pub fn handle_event(file: &mut File) -> io::Result<()> {
 }
 
 
-pub fn from_u32_to_maybe_uhid_event_type(value: u32) -> Options<uhid_event_type> {
+pub fn from_u32_to_maybe_uhid_event_type(value: u32) -> Option<uhid_event_type> {
     if value == uhid_event_type::__UHID_LEGACY_CREATE as u32 {
-        Some(uhid_event::type::__UHID_LEGACY_CREATE)
+        Some(uhid_event_type::__UHID_LEGACY_CREATE)
     } else if value == uhid_event_type::UHID_DESTROY as u32 {
-        Some(uhid_event::type::UHID_DESTROY)
+        Some(uhid_event_type::UHID_DESTROY)
     } else if value == uhid_event_type::UHID_START as u32 {
-        Some(uhid_event::type::UHID_START)
+        Some(uhid_event_type::UHID_START)
     } else if value == uhid_event_type::UHID_STOP as u32 {
-        Some(uhid_event::type::UHID_STOP)
+        Some(uhid_event_type::UHID_STOP)
     } else if value == uhid_event_type::UHID_OPEN as u32 {
-        Some(uhid_event::type::UHID_OPEN)
+        Some(uhid_event_type::UHID_OPEN)
     } else if value == uhid_event_type::UHID_CLOSE as u32 {
-        Some(uhid_event::type::UHID_CLOSE)
+        Some(uhid_event_type::UHID_CLOSE)
     } else if value == uhid_event_type::UHID_OUTPUT as u32 {
-        Some(uhid_event::type::UHID_OUTPUT)
+        Some(uhid_event_type::UHID_OUTPUT)
     } else if value == uhid_event_type::__UHID_LEGACY_OUTPUT_EV as u32 {
-        Some(uhid_event::type::__UHID_LEGACY_OUTPUT_EV)
+        Some(uhid_event_type::__UHID_LEGACY_OUTPUT_EV)
     } else if value == uhid_event_type::__UHID_LEGACY_INPUT as u32 {
-        Some(uhid_event::type::__UHID_LEGACY_INPUT)
+        Some(uhid_event_type::__UHID_LEGACY_INPUT)
     } else if value == uhid_event_type::UHID_GET_REPORT as u32 {
-        Some(uhid_event::type::UHID_GET_REPORT)
-    } else if value == uhid_event_type::UHID_GET_REPORT_REPLAY as u32 {
-        Some(uhid_event::type::UHID_GET_REPORT_REPLAY)
+        Some(uhid_event_type::UHID_GET_REPORT)
+    } else if value == uhid_event_type::UHID_GET_REPORT_REPLY as u32 {
+        Some(uhid_event_type::UHID_GET_REPORT_REPLY)
     } else if value == uhid_event_type::UHID_CREATE2 as u32 {
-        Some(uhid_event::type::UHID_CREATE2)
+        Some(uhid_event_type::UHID_CREATE2)
     } else if value == uhid_event_type::UHID_INPUT2 as u32 {
-        Some(uhid_event::type::UHID_INPUT2)
+        Some(uhid_event_type::UHID_INPUT2)
     } else if value == uhid_event_type::UHID_SET_REPORT as u32 {
-        Some(uhid_event::type::UHID_SET_REPORT)
-    } else if value == uhid_event_type::UHID_SET_REPORT_REPLAY as u32 {
-        Some(uhid_event::type::UHID_SET_REPORT_REPLAY)
+        Some(uhid_event_type::UHID_SET_REPORT)
+    } else if value == uhid_event_type::UHID_SET_REPORT_REPLY as u32 {
+        Some(uhid_event_type::UHID_SET_REPORT_REPLY)
     } else {
         None
     }
@@ -280,26 +278,26 @@ pub fn send_event(file: &mut File, input: &InputEvent) -> io::Result<()> {
 
     unsafe {
         let uhid_input = event.u.input.as_mut();
-        uhid_input_size = 5;
-        uhid_input_data[0] = 0x01;
+        uhid_input.size = 5;
+        uhid_input.data[0] = 0x01;
         if input.btn1_down {
-            uhid_input_data[1] = | 0x01;
+            uhid_input.data[1] |= 0x01;
         }
         if input.btn2_down {
-            uhid_input_data[1] = | 0x02;
+            uhid_input.data[1] |= 0x02;
         }
         if input.btn3_down {
-            uhid_input_data[1] = | 0x04;
+            uhid_input.data[1] |= 0x04;
         }
-        uhid_input_data[2] = input.abs_hor as u8;
-        uhid_input_data[3] = input.abs_ver as u8;
-        uhid_input_data[4] = input.wheel as u8;
+        uhid_input.data[2] = input.abs_hor as u8;
+        uhid_input.data[3] = input.abs_ver as u8;
+        uhid_input.data[4] = input.wheel as u8;
     }
     uhid_write(file, &event)
 }
 
 
-pub fn keyboard(file: &mut File, state: &mut DeviceState) -> id::Result<()> {
+pub fn keyboard(file: &mut File, state: &mut DeviceState) -> io::Result<()> {
     let mut character: [u8; 1] = Default::default();
     io::stdin().read(&mut character)?;
 
@@ -323,7 +321,7 @@ pub fn keyboard(file: &mut File, state: &mut DeviceState) -> id::Result<()> {
         },
         b'd' => {
             let mut input = InputEvent::from_state(state);
-            input.abs_ver = 20;
+            input.abs_hor = 20;
             input
         },
         b'w' => {
@@ -331,7 +329,7 @@ pub fn keyboard(file: &mut File, state: &mut DeviceState) -> id::Result<()> {
             input.abs_ver = -20;
             input
         },
-        b'd' => {
+        b's' => {
             let mut input = InputEvent::from_state(state);
             input.abs_ver = 20;
             input
@@ -347,7 +345,7 @@ pub fn keyboard(file: &mut File, state: &mut DeviceState) -> id::Result<()> {
             input
         },
         b'q' => {
-            return Err(io::Err::new(io::ErrorKind::Other, "Cancelled!"));
+            return Err(io::Error::new(io::ErrorKind::Other, "Cancelled!"));
         },
         c => {
             eprintln!("Invalid input: {}", c as char);
