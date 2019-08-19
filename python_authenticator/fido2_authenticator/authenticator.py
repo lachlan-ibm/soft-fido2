@@ -277,7 +277,7 @@ class Fido2Authenticator(object):
             mode = 'webauthn.create'
 
         clientDataDict = { 'origin' : 'https://' + rp,
-                            'challenge' : str(self._urlb64_encode(pk['challenge']), 'ascii'),
+                            'challenge' : self._urlb64_encode(pk['challenge']),
                             'type': mode}
         return json.dumps(clientDataDict)
 
