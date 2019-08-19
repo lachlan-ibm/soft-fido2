@@ -62,6 +62,7 @@ class Fido2Authenticator(object):
         self.caKeyPair = caKeyPair
 
 
+    @classmethod
     def __urlb64_decode(self, b64String):
         """Helper function to decode b64 urlencoded strings which may be missing
         the traling padding that python required
@@ -78,6 +79,7 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
+    @classmethod
     def __urlb64_encode(self, byteString):
         """Helper function or b64 encode a string then remove the trailing padding
         which is not required
