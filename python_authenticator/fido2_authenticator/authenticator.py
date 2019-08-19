@@ -62,8 +62,7 @@ class Fido2Authenticator(object):
         self.caKeyPair = caKeyPair
 
 
-    @classmethod
-    def __urlb64_decode(self, b64String):
+    def _urlb64_decode(self, b64String):
         """Helper function to decode b64 urlencoded strings which may be missing
         the traling padding that python required
 
@@ -79,8 +78,7 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
-    @classmethod
-    def __urlb64_encode(self, byteString):
+    def _urlb64_encode(self, byteString):
         """Helper function or b64 encode a string then remove the trailing padding
         which is not required
 
@@ -598,9 +596,9 @@ class Fido2Authenticator(object):
             dict: https://www.w3.org/TR/webauthn/#dictionary-makecredentialoptions
         """
         pkcco = {'rp': options['rp'] }
-        user = {'id': self.__urlb64_decode(options['user']['id'].encode('UTF-8'))}
+        user = {'id': self._urlb64_decode(options['user']['id'].encode('UTF-8'))}
         pkcco['user'] = user
-        pkcco['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
+        pkcco['challenge'] = self._urlb64_decode(options['challenge'].encode('UTF-8'))
         pkcco['pubKeyCredParams'] = options['pubKeyCredParams']
         if 'timeout' in options:
             pkcco['timeout'] = options['timeout']
@@ -677,7 +675,7 @@ class Fido2Authenticator(object):
         cro = {}
         pkcro = {}
 
-        pkcro['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
+        pkcro['challenge'] = self._urlb64_decode(options['challenge'].encode('UTF-8'))
         if 'timeout' in options:
             pkcro['timeout'] = options['timeout']
 
@@ -723,7 +721,7 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = self.__urlb64_encode(self.userHandle)
+            saar['userHandle'] = self._urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(
