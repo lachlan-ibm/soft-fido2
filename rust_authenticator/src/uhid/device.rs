@@ -9,6 +9,7 @@
  * and can serve as a starting point for developing
  * applications using uhid.
  */
+#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 
 extern crate libc;
 extern crate mio;
@@ -166,6 +167,7 @@ pub fn create(file: &mut File) -> io::Result<()> {
 
     unsafe {
         let create = event.u.create.as_mut();
+        //let mut create = event.u.create;
         create.name.copy_from_slice(
             &[CString::new("mock-uhid-device").unwrap().as_bytes_with_nul(),
             &[0u8; 111]].concat());
@@ -192,6 +194,7 @@ pub fn destroy(file: &mut File) -> io::Result<()> {
 pub fn handle_output(event: &uhid_event) {
     unsafe {
         let event_output = event.u.output.as_ref();
+        //let event_output = event.u.output;
 
         if event_output.rtype != uhid_report_type::UHID_OUTPUT_REPORT as u8 {
             return;
@@ -278,6 +281,7 @@ pub fn send_event(file: &mut File, input: &InputEvent) -> io::Result<()> {
 
     unsafe {
         let uhid_input = event.u.input.as_mut();
+        //let mut uhid_input = event.u.input;
         uhid_input.size = 5;
         uhid_input.data[0] = 0x01;
         if input.btn1_down {
