@@ -15,6 +15,9 @@ fn main() {
         // The input header we would like to generate
         // bindings for.
         .header("wrapper.h")
+        .rustfmt_bindings(true)
+        .rustified_enum(".*")
+        .derive_copy(false)
         // Finish the builder and generate the bindings.
         .generate()
         // Unwrap the Result and panic on failure.

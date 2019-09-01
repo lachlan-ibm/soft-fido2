@@ -62,7 +62,7 @@ class Fido2Authenticator(object):
         self.caKeyPair = caKeyPair
 
 
-    def __urlb64_decode(self, b64String):
+    def _urlb64_decode(self, b64String):
         """Helper function to decode b64 urlencoded strings which may be missing
         the traling padding that python required
 
@@ -78,7 +78,7 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
-    def __urlb64_encode(self, byteString):
+    def _urlb64_encode(self, byteString):
         """Helper function or b64 encode a string then remove the trailing padding
         which is not required
 
@@ -277,7 +277,7 @@ class Fido2Authenticator(object):
             mode = 'webauthn.create'
 
         clientDataDict = { 'origin' : 'https://' + rp,
-                            'challenge' : str(base64.urlsafe_b64encode(pk['challenge']), 'ascii'),
+                            'challenge' : self._urlb64_encode(pk['challenge']),
                             'type': mode}
         return json.dumps(clientDataDict)
 
@@ -318,11 +318,10 @@ class Fido2Authenticator(object):
         return attestedCredDataBytes
 
 
-    def build_authenticator_data(self, clientDataJSON, pk, attStmtFmt, keyPair, uv):
+    def build_authenticator_data(self, pk, attStmtFmt, keyPair, uv):
         """create the authenticator data for the attestation or assertion request
 
         Args:
-            clientDataJSON (dict): https://www.w3.org/TR/webauthn/#sec-client-data
             pk (dict): public key dictionary from request options,
                     https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
                     https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
@@ -337,7 +336,6 @@ class Fido2Authenticator(object):
         """
         authDataBytes = []
 
-        credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         rpId = pk.get('rpId', None)
         assertion = True
         if not rpId:
@@ -349,7 +347,7 @@ class Fido2Authenticator(object):
         flags = 0x01 # UP
         if not assertion:
             flags |= 0x40 # AT
-        if attStmtFmt is not 'fido-u2f' and uv :
+        if attStmtFmt != 'fido-u2f' and uv :
             flags |= 0x04 # UV
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8') )
         #Add counter and increment
@@ -357,6 +355,7 @@ class Fido2Authenticator(object):
         self.counter += 1
 
         if not assertion:
+            credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
             authDataBytes += self.process_attested_credential_data(keyPair.get_public(), credIdBytes)
         authData = bytes(authDataBytes)
         return authData
@@ -597,9 +596,9 @@ class Fido2Authenticator(object):
             dict: https://www.w3.org/TR/webauthn/#dictionary-makecredentialoptions
         """
         pkcco = {'rp': options['rp'] }
-        user = {'id': self.__urlb64_decode(options['user']['id'].encode('UTF-8'))}
+        user = {'id': self._urlb64_decode(options['user']['id'].encode('UTF-8'))}
         pkcco['user'] = user
-        pkcco['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
+        pkcco['challenge'] = self._urlb64_decode(options['challenge'].encode('UTF-8'))
         pkcco['pubKeyCredParams'] = options['pubKeyCredParams']
         if 'timeout' in options:
             pkcco['timeout'] = options['timeout']
@@ -644,7 +643,7 @@ class Fido2Authenticator(object):
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         credIdString = base64.urlsafe_b64encode( credIdBytes )
 
-        authData = self.build_authenticator_data(clientDataJSON, pk, atteStmtFmt, keyPair, uv)
+        authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str( re.sub('-self', '', atteStmtFmt))
         attestationObject = { u'authData': authData,
@@ -663,6 +662,17 @@ class Fido2Authenticator(object):
         return spkc
 
 
+    def assertion_signiture(self, authData, clientDataHash, keyPair):
+        toSign = []
+        toSign += authData
+        toSign += clientDataHash
+        toSignStr = bytes(toSign)
+        sig = keyPair.get_private().sign(toSignStr,
+                padding.PKCS1v15(),
+                hashes.SHA256())
+        return str( base64.urlsafe_b64encode(sig), 'utf-8')
+
+
     def assertion_options_response_to_credential_request_options(self, options):
         """Take the options provided by the relyig party and extract required information to
         generate the assertion
@@ -676,7 +686,7 @@ class Fido2Authenticator(object):
         cro = {}
         pkcro = {}
 
-        pkcro['challenge'] = self.__urlb64_decode(options['challenge'].encode('UTF-8'))
+        pkcro['challenge'] = self._urlb64_decode(options['challenge'].encode('UTF-8'))
         if 'timeout' in options:
             pkcro['timeout'] = options['timeout']
 
@@ -719,10 +729,10 @@ class Fido2Authenticator(object):
         """clientDataBytes = bytearray(clientDataJSON)"""
         saar["clientDataJSON"] = str( base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8')
 
-        authData = self.build_authenticator_data(clientDataJSON, pk, None, keyPair, uv)
+        authData = self.build_authenticator_data(pk, None, keyPair, uv)
         saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
         if self.userHandle != None:
-            saar['userHandle'] = self.__urlb64_encode(self.userHandle)
+            saar['userHandle'] = self._urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
 
         credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(
@@ -732,14 +742,7 @@ class Fido2Authenticator(object):
         if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             raise Exception("Only RSA keys supported")
 
-        toSign = []
-        toSign += authData
-        toSign += clientDataHash
-        toSignStr = bytes(toSign)
-        sig = keyPair.get_private().sign(toSignStr,
-                padding.PKCS1v15(),
-                hashes.SHA256())
-        saar['signature'] = str( base64.urlsafe_b64encode(sig), 'utf-8')
+        saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
         spkc['id'] = spkc['rawId'] = str( base64.urlsafe_b64encode(credIdBytes.digest()), 'utf-8')
         spkc['response'] = saar
