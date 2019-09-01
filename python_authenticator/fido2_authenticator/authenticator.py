@@ -662,7 +662,7 @@ class Fido2Authenticator(object):
         return spkc
 
 
-    def assertion_signiture(self, authData, clientDataHash):
+    def assertion_signiture(self, authData, clientDataHash, keyPair):
         toSign = []
         toSign += authData
         toSign += clientDataHash
@@ -742,7 +742,7 @@ class Fido2Authenticator(object):
         if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             raise Exception("Only RSA keys supported")
 
-        saar['signature'] = self.assertion_signiture(authData, clientDataHash)
+        saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
         spkc['id'] = spkc['rawId'] = str( base64.urlsafe_b64encode(credIdBytes.digest()), 'utf-8')
         spkc['response'] = saar
