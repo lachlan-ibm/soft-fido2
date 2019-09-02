@@ -40,7 +40,7 @@ class Fido2Authenticator(object):
         Args:
             keyPair (KeyPair): public/private key pair to sign challenges with; 
                     default = RSA 2048 key
-            credId (`obj`:str, optional): credential Id to use with authenticator, if None
+            credId (`obj`:str, optional): url base64 encoded credential Id to use with authenticator, if None
                     credential Id will be the sha256 of the public key
             aaguid (:obj:`list` of :obj:`int`, optional): aaguid to associate with 
                     authenticator; default = [0] * 16
@@ -53,8 +53,6 @@ class Fido2Authenticator(object):
         self.userHandle = None
         self.caCertificate = caCert
         self.caKeyPair = caKeyPair
-        if credId != None:
-            self.credId = credId
 
         if credId != None and caKeyPair != None:
             #If we havea credId and a caKeyPair try decode key from credId
@@ -142,26 +140,18 @@ class Fido2Authenticator(object):
         return result
 
 
-    def get_credential_id(self, keyPair=None):
-        """credential ID defaults to the SHA256 of the public key
-
-        Args:
-            keyPair (:obj:`KeyPair`, optional): key pair to get credential id for; default = self.kp
-
-        Returns:
-            str: b64 encoded byte string of credentail id
-        """
-        if keyPair == None: keyPair = self.kp
-        credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
-        credId = base64.urlsafe_b64encode( credIdBytes ).decode('utf-8')
-        return re.sub(r'[=]+$', '', credId)
-
-
     def _get_credential_id_bytes(self, keyPair, caKeyPair):
         """Get the bytes of a credential ID for a given authenticator.
         If a self.caKeyPair is not None, credId is the encoded bytes of self.kp.get_private
 
         else credId is the sha256 of the public key
+        
+        Args:
+            keyPair (KeyPair): key pair to generate Id for
+            caKyePair (KeyPair): ca key pair used for encrypting private key, may be None
+
+        Return:
+            bytes: credential Id for given key pair and ca key pair
         """
         credIdBytes = None
         if caKeyPair != None:
@@ -177,8 +167,33 @@ class Fido2Authenticator(object):
         return credIdBytes
 
 
+    def get_credential_id(self, keyPair=None):
+        """credential ID defaults to the SHA256 of the public key
+
+        Args:
+            keyPair (:obj:`KeyPair`, optional): key pair to get credential id for; default = self.kp
+
+        Returns:
+            str: b64 encoded byte string of credentail id
+        """
+        if keyPair == None: keyPair = self.kp
+        credIdBytes = self.__get_credential_id_bytes(keyPair, self.caKeyPair)
+        credId = base64.urlsafe_b64encode( credIdBytes ).decode('utf-8')
+        return re.sub(r'[=]+$', '', credId)
+
+
     def _get_key_pair_from_credential_id(self, credId, keyPair):
-        private_bytes = keyPair.get_private.decrypt( credId,
+        """Given a credId and caKeyPair attempt to reconstruct the private/public
+        key pair
+
+        Args:
+            credId (str): url safe base64 encoded private key encrypted using keyPair
+            keyPair (KeyPair): key pair usedd to encrypt private key
+
+        Return:
+            KeyPair: original key pair stored in credId
+        """
+        private_bytes = keyPair.get_private.decrypt( self._urlb64_decode(credId),
                                                      padding.OEAP(
                                                         mgf=padding.MGF1(algorithm=hashes.SHA256()),
                                                         algorithm=hashes.SHA256(),
