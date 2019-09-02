@@ -58,7 +58,7 @@ class Fido2Authenticator(object):
             #If we havea credId and a caKeyPair try decode key from credId
             self.kp = self._get_key_pair_from_credential_id(credId, caKeyPair)
 
-        else if keyPair == None:
+        elif keyPair == None:
             #else fall back to creatign key pair
             self.kp = KeyPair.generate_rsa()
 
