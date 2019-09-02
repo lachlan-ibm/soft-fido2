@@ -806,7 +806,7 @@ class Fido2Authenticator(object):
 
         saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
-        spkc['id'] = spkc['rawId'] = str( base64.urlsafe_b64encode(credIdBytes.digest()), 'utf-8')
+        spkc['id'] = spkc['rawId'] = str( base64.urlsafe_b64encode(credIdBytes), 'utf-8')
         spkc['response'] = saar
         spkc['type'] = 'public-key'
 
