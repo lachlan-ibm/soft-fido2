@@ -35,11 +35,13 @@ class Fido2Authenticator(object):
     
     TPM_VENDOR_ID = 0xfffff1d0
     
-    def __init__(self, keyPair=None, aaguid=None, caKeyPair=None, caCert=None):
+    def __init__(self, keyPair=None, credId=None, aaguid=None, caKeyPair=None, caCert=None, counter=0):
         """
         Args:
             keyPair (KeyPair): public/private key pair to sign challenges with; 
                     default = RSA 2048 key
+            credId (`obj`:str, optional): credential Id to use with authenticator, if None
+                    credential Id will be the sha256 of the public key
             aaguid (:obj:`list` of :obj:`int`, optional): aaguid to associate with 
                     authenticator; default = [0] * 16
             caKeyPair (KeyPair): public/private key of ca/intermadiate authority 
@@ -47,19 +49,30 @@ class Fido2Authenticator(object):
             caCert (x509Certificate): certificate to use as a trust anchor; default = None
 
         """
-        self.counter = 0
-        if keyPair == None:
+        self.counter = counter
+        self.userHandle = None
+        self.caCertificate = caCert
+        self.caKeyPair = caKeyPair
+        if credId != None:
+            self.credId = credId
+
+        if credId != None and caKeyPair != None:
+            #If we havea credId and a caKeyPair try decode key from credId
+            self.kp = self._get_key_pair_from_credential_id(credId, caKeyPair)
+
+        else if keyPair == None:
+            #else fall back to creatign key pair
             self.kp = KeyPair.generate_rsa()
+
         else:
+            #If credId passed in then keyPair will be ignored
             self.kp = keyPair
 
         if aaguid == None:
             self.aaguid = [0] * 16
+
         else:
             self.aaguid = aaguid
-        self.userHandle = None
-        self.caCertificate = caCert
-        self.caKeyPair = caKeyPair
 
 
     def _urlb64_decode(self, b64String):
@@ -142,6 +155,42 @@ class Fido2Authenticator(object):
         credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
         credId = base64.urlsafe_b64encode( credIdBytes ).decode('utf-8')
         return re.sub(r'[=]+$', '', credId)
+
+
+    def _get_credential_id_bytes(self, keyPair, caKeyPair):
+        """Get the bytes of a credential ID for a given authenticator.
+        If a self.caKeyPair is not None, credId is the encoded bytes of self.kp.get_private
+
+        else credId is the sha256 of the public key
+        """
+        credIdBytes = None
+        if caKeyPair != None:
+            credIdBytes = caKeyPair.get_public.encrypt( keyPair.get_public_bytes(),
+                                                        padding.OEAP(
+                                                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                                                            algorithm=hashes.SHA256(),
+                                                            label=None
+                                                        )
+                                                      )
+        else:
+            credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
+        return credIdBytes
+
+
+    def _get_key_pair_from_credential_id(self, credId, keyPair):
+        private_bytes = keyPair.get_private.decrypt( credId,
+                                                     padding.OEAP(
+                                                        mgf=padding.MGF1(algorithm=hashes.SHA256()),
+                                                        algorithm=hashes.SHA256(),
+                                                        label=None
+                                                     )
+                                                   )
+        privateKey = serialization.load_pem_private_key(
+                    private_bytes,
+                    password=None,
+                    backend=default_backend() )
+        publicKey = privateKey.public_key()
+        return KeyPair(privateKey, publicKey)
 
 
     def get_aaguid(self, hexString=True):
@@ -355,7 +404,7 @@ class Fido2Authenticator(object):
         self.counter += 1
 
         if not assertion:
-            credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
+            credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
             authDataBytes += self.process_attested_credential_data(keyPair.get_public(), credIdBytes)
         authData = bytes(authDataBytes)
         return authData
@@ -639,8 +688,8 @@ class Fido2Authenticator(object):
         clientDataJSON = self.build_client_data_JSON(pk)
         clientDataHash = hashlib.sha256( clientDataJSON.encode('utf-8') ).digest()
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii') )
-
-        credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
+        
+        credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
         credIdString = base64.urlsafe_b64encode( credIdBytes )
 
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv)
@@ -734,10 +783,8 @@ class Fido2Authenticator(object):
         if self.userHandle != None:
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
-
-        credIdBytes = hashlib.sha256(keyPair.get_public().public_bytes(
-                encoding=serialization.Encoding.PEM, 
-                format=serialization.PublicFormat.SubjectPublicKeyInfo))
+        
+        credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
 
         if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             raise Exception("Only RSA keys supported")
