@@ -58,13 +58,13 @@ class Fido2Authenticator(object):
             #If we havea credId and a caKeyPair try decode key from credId
             self.kp = self._get_key_pair_from_credential_id(credId, caKeyPair)
 
-        elif keyPair == None:
-            #else fall back to creatign key pair
-            self.kp = KeyPair.generate_rsa()
-
-        else:
+        elif keyPair:
             #If credId passed in then keyPair will be ignored
             self.kp = keyPair
+
+        else:
+            #else fall back to creating key pair
+            self.kp = KeyPair.generate_rsa()
 
         if aaguid == None:
             self.aaguid = [0] * 16
@@ -73,7 +73,8 @@ class Fido2Authenticator(object):
             self.aaguid = aaguid
 
 
-    def _urlb64_decode(self, b64String):
+    @classmethod
+    def _urlb64_decode(cls, b64String):
         """Helper function to decode b64 urlencoded strings which may be missing
         the traling padding that python required
 
@@ -89,7 +90,8 @@ class Fido2Authenticator(object):
         return base64.urlsafe_b64decode(b64String)
 
 
-    def _urlb64_encode(self, byteString):
+    @classmethod
+    def _urlb64_encode(cls, byteString):
         """Helper function or b64 encode a string then remove the trailing padding
         which is not required
 
@@ -182,7 +184,8 @@ class Fido2Authenticator(object):
         return re.sub(r'[=]+$', '', credId)
 
 
-    def _get_key_pair_from_credential_id(self, credId, keyPair):
+    @classmethod
+    def _get_key_pair_from_credential_id(cls, credId, keyPair):
         """Given a credId and caKeyPair attempt to reconstruct the private/public
         key pair
 
@@ -193,7 +196,7 @@ class Fido2Authenticator(object):
         Return:
             KeyPair: original key pair stored in credId
         """
-        private_bytes = keyPair.get_private.decrypt( self._urlb64_decode(credId),
+        private_bytes = keyPair.get_private.decrypt( cls._urlb64_decode(credId),
                                                      padding.OEAP(
                                                         mgf=padding.MGF1(algorithm=hashes.SHA256()),
                                                         algorithm=hashes.SHA256(),
