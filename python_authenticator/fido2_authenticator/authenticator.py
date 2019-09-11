@@ -33,7 +33,6 @@ except:
 
 class Fido2Authenticator(object):
     
-    TPM_VENDOR_ID = 0xfffff1d0
     
     def __init__(self, keyPair=None, credId=None, aaguid=None, caKeyPair=None, caCert=None, counter=0):
         """
@@ -501,7 +500,6 @@ class Fido2Authenticator(object):
         """
         if not isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             raise Exception("FIDO U2F only supports ECDSA keys")
-        result = {}
 
         pubKey = ['\x04']
         pubKey += self._long_to_bytes( keyPair.get_public().get_numbers().x )
@@ -510,7 +508,6 @@ class Fido2Authenticator(object):
         subject = x509.Name( [x509.NameAttribute(NameOID.COMMON_NAME, u'root'),
                 x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security') ])
         cert = CertUtils.gen_ca_cert(subject=subject, keyPair=keyPair)
-        result['x5c'] = CertUtils.get_encoded(cert)
         
         rpIdHash = authData[0:32]
         toSign = []
@@ -521,9 +518,19 @@ class Fido2Authenticator(object):
         toSign += pubKey
 
         sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), hashes.SHA256())
-        result['sig'] = sig
+        result = {
+                'sig': sig,
+                'x5c': CertUtils.get_encoded(cert)
+            }
 
         return result
+
+
+    TPM_MANUFACTURER = "2.23.133.2.1";
+    TPM_VENDOR = "2.23.133.2.2";
+    TPM_FW_VERSION = "2.23.133.2.3";
+
+    TPM_VENDOR_ID = 0xfffff1d0
 
 
     def _build_rsa_public_area(self, caKeyPair):
@@ -552,7 +559,7 @@ class Fido2Authenticator(object):
         certInfo += sigHashLength
         certInfo += sigHash
         certInfo += [0] * 17 # clock info
-        vendorId = struct.pack("!H", self.TPM_VENDOR_ID)
+        vendorId = struct.pack("!L", self.TPM_VENDOR_ID)
         certInfo += [0] * ( 8 - len(vendorId) )
         certInfo += vendorId
         attestedName = [0x00, 0x0B] #name_alg
@@ -585,11 +592,27 @@ class Fido2Authenticator(object):
         caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
         caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
         tpmSubj = x509.Name( [] )
-        tpmSan = ""
-        tpmCert = cert_utils.gen_aik_cert(subject, issuer, keyPair, signKeyPair, aaguid, androidKey=False)
+        tpmSan = self.TPM_VENDOR + "=IBMTPB+" + self.TPM_MANUFACTURER + "=id:" + struct.pack("!L", self.TPM_VENDOR_ID) \
+                + "+" + self.TPM_FW_VERSION + "=id:1"
+        tpmCert = cert_utils.gen_aik_cert(subject=tpmSubj, issuer=caCert, keyPair=keyPair, signKeyPair=self.caKeyPair, 
+                aaguid=self.get_aaguid(hexString=False), san=tpmSan, androidKey=False)
 
-        #
-        raise Exception("Not yet implemented")
+        # Build sign data
+        toSign = [*authData, *clientDataHash]
+        pubInfo = self._build_rsa_public_area(self.caKeyPair)
+        certInfo = self_build_rsa_cert_info(toSign, pubInfo)
+        sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), hashes.SHA256())
+
+        # Build attestation
+        result = {
+                u"pubArea": pubArea,
+                u"certInfo": certInfo,
+                u"sig": sig,
+                u"ver": u"2.0",
+                u"alg": -257, # SHA256 /w RSA
+                u"x5c": [CertUtils.get_encoded(tpmCert, CertUtils.get_encoded(caCert)]
+            }
+        return result
 
 
     def build_none_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
@@ -646,27 +669,30 @@ class Fido2Authenticator(object):
             dict: Android Keystore attestation statement,
                     https://www.w3.org/TR/webauthn/#android-key-attestation
         """
-        result = {}
+        if not self.caCertificate:
+            raise RuntimeError("Android Key Attestation requires a CA certificate to be "\
+                    "present when the authenticator is created")
 
-        #Add x5c chain
+        #Build x5c chain
         leafSubj = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'), 
                             x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
                             x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
                 signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False))
-        # Final trust chain to add to AttesationObject
-        result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
+        x5c = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
 
-        
         #Sign data
         toSign = []
         toSign += authData
         toSign += clientDataHash
         toSignBytes = bytes(toSign)
         sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
-        result[u"sig"] = sig
 
+        result = {
+                u"x5c": x5c,
+                u"sig": sig
+            }
         return result
 
 
