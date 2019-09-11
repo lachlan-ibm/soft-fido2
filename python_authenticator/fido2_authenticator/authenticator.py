@@ -586,7 +586,7 @@ class Fido2Authenticator(object):
         caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
         tpmSubj = x509.Name( [] )
         tpmSan = ""
-        tpmCert = cert_utils.gen_aik_cert(subject, issuer, keyPair, signKeyPair, aaguid, androidKey=False
+        tpmCert = cert_utils.gen_aik_cert(subject, issuer, keyPair, signKeyPair, aaguid, androidKey=False)
 
         #
         raise Exception("Not yet implemented")
