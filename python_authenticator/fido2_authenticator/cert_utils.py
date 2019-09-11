@@ -134,17 +134,18 @@ class CertUtils(object):
 
     @classmethod
     def gen_aik_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
-            keyPair=None, signKeyPair=None, aaguid=None, androidKey=False, signer=hashes.SHA256(), 
+            keyPair=None, signKeyPair=None, aaguid=None, san=None, androidKey=False, signer=hashes.SHA256(), 
             backend=default_backend()):
         '''
         Generate Leaf cert in trust chain
         issuer should match the keyPair used to sign the certificate
         '''
         sanId = cls._long_to_bytes(cls.TPM_VENDOR_ID)
-        san = x509.name.Name([x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"), 
-                            x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId)) ),
-                            x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
-                            ])
+        if san is None:
+            san = x509.name.Name([x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"), 
+                                x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId)) ),
+                                x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
+                                ])
         extensions = [ x509.BasicConstraints(False, None),
                     x509.KeyUsage(True, True, False, True, False, True, True, False, False),
                     x509.ExtendedKeyUsage( [ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE)] ),
