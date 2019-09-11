@@ -584,7 +584,7 @@ class Fido2Authenticator(object):
         #Generate TPM certificates
         caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
         caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
-        tpmSubj = x509.Name( x509.RelativeDistinguishedName([]) )
+        tpmSubj = x509.Name( [] )
         tpmSan = ""
         tpmCert = cert_utils.gen_aik_cert(subject, issuer, keyPair, signKeyPair, aaguid, androidKey=False
 
