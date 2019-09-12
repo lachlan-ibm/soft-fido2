@@ -10,6 +10,7 @@ import cbor2 as cbor
 import sys
 import array
 import os
+import jwt
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec
 import cryptography.hazmat.primitives.asymmetric.padding as padding
@@ -352,7 +353,7 @@ class Fido2Authenticator(object):
         """create the attested credentail data for attestation requets
 
         Args:
-            publickey: (PublicKey): RSA | EC public key
+            publickey: (PublicKey): RSA || EC public key
             credIdBytes (str): byte string of credential id, https://www.w3.org/TR/webauthn/#credential-id
 
         Returns:
@@ -462,6 +463,7 @@ class Fido2Authenticator(object):
             else:
                 #Self attestation, only need COSE key ID
                 pass
+
             result[u"alg"] = -257
             sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
 
@@ -471,7 +473,10 @@ class Fido2Authenticator(object):
                 raise Exception("Not implemented")
 
             else:
-                result[u"alg"] = -7
+                #Self attestation, only need COSE key ID
+                pass
+
+            result[u"alg"] = -7
             sig = keyPair.get_private().sign( toSign, ec.ECDSA(hashes.SHA256()) )
 
         else:
@@ -485,7 +490,7 @@ class Fido2Authenticator(object):
         """Create an attestation statement with the U2F format.
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -526,13 +531,6 @@ class Fido2Authenticator(object):
         return result
 
 
-    TPM_MANUFACTURER = "2.23.133.2.1";
-    TPM_VENDOR = "2.23.133.2.2";
-    TPM_FW_VERSION = "2.23.133.2.3";
-
-    TPM_VENDOR_ID = 0xfffff1d0
-
-
     def _build_rsa_public_area(self, caKeyPair):
         pubArea = []
         pubArea += [0, 1] # TPM_ALG_ID = TPM_ALG_RSA
@@ -559,7 +557,7 @@ class Fido2Authenticator(object):
         certInfo += sigHashLength
         certInfo += sigHash
         certInfo += [0] * 17 # clock info
-        vendorId = struct.pack("!L", self.TPM_VENDOR_ID)
+        vendorId = struct.pack("!L", CertUtils.TPM_VENDOR_ID)
         certInfo += [0] * ( 8 - len(vendorId) )
         certInfo += vendorId
         attestedName = [0x00, 0x0B] #name_alg
@@ -576,7 +574,7 @@ class Fido2Authenticator(object):
         """Create an attestation statement with the TPM format
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -592,10 +590,11 @@ class Fido2Authenticator(object):
         caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
         caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
         tpmSubj = x509.Name( [] )
-        tpmSan = self.TPM_VENDOR + "=IBMTPB+" + self.TPM_MANUFACTURER + "=id:" + struct.pack("!L", self.TPM_VENDOR_ID) \
-                + "+" + self.TPM_FW_VERSION + "=id:1"
+        tpmSan = CertUtils.TPM_VENDOR + "=IBMTPB+" + CertUtils.TPM_MANUFACTURER + "=id:" + struct.pack("!L", CertUtils.TPM_VENDOR_ID) \
+                + "+" + CertUtils.TPM_FW_VERSION + "=id:1"
         tpmCert = cert_utils.gen_aik_cert(subject=tpmSubj, issuer=caCert, keyPair=keyPair, signKeyPair=self.caKeyPair, 
                 aaguid=self.get_aaguid(hexString=False), san=tpmSan, androidKey=False)
+        x5c = [CertUtils.get_encoded(tpmCert), CertUtils.get_encoded(caCert)]
 
         # Build sign data
         toSign = [*authData, *clientDataHash]
@@ -610,7 +609,7 @@ class Fido2Authenticator(object):
                 u"sig": sig,
                 u"ver": u"2.0",
                 u"alg": -257, # SHA256 /w RSA
-                u"x5c": [CertUtils.get_encoded(tpmCert, CertUtils.get_encoded(caCert)]
+                u"x5c": x5c
             }
         return result
 
@@ -619,7 +618,7 @@ class Fido2Authenticator(object):
         """Create an attestation statement with the none format
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -638,7 +637,7 @@ class Fido2Authenticator(object):
         """Create an attestation statement with the Android Safetynet format
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -650,14 +649,27 @@ class Fido2Authenticator(object):
             dict: Android safetynet attestation statement,
                     https://www.w3.org/TR/webauthn/#android-safetynet-attestation
         """
-        raise Exception("Not yet implemented")
+        jws = {
+                u'timestampMs': -1,
+                u'nonce': 'nonsense',
+                u'apkPackageName': "com.package.name.of.requesting.app",
+                u"apkCertificateDigestSha256": ["b64 encoded sha256 of cert"],
+                u"ctsProfileMatch": True,
+                "basicIntegrity": True
+            }
+        jwtResponse = jwt.encode(jws, keyPair.get_private_bytes(), algorithm="RS256")
+        result = {
+                u'ver': u'some version',
+                u'response': jwtResponse
+            }
+        return result
 
 
     def build_android_key_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
         """Create an attestation statement with the Android Keystore format.
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -700,7 +712,7 @@ class Fido2Authenticator(object):
         """Helper function that chooses an attestation statement function based on the atteStmtFmt variable
 
         Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
+            atteStmtFmt (str): statement format
             clientDataHash (str): byte string of clientDataHash,
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
             authData (str): byte string of the authentication data,
@@ -722,7 +734,7 @@ class Fido2Authenticator(object):
                     "tpm": self.build_tpm_attestation_statement
                     }.get(atteStmtFmt)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         except KeyError:
-            raise Exception("Unsupported attestation statement format")
+            raise Exception("Unsupported attestation statement format [{}]".format(atteStmtFmt) )
 
 
     def attestation_options_response_to_credential_create_options(self, options):
