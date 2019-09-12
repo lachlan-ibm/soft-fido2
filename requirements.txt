@@ -1,6 +1,6 @@
 cbor2
 cryptography
 asn1
-jwt
+PyJwt
 wheel
 twine
