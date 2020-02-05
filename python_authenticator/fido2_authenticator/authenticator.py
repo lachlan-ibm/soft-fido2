@@ -233,7 +233,7 @@ class Fido2Authenticator(object):
                 if x == 3 or x == 5 or x == 7 or x == 9:
                     result += '-'
         else:
-            result = ''.join( str(x) for x in self.aaguid )
+            result = bytes(self.aaguid)
         return result
 
 
@@ -296,6 +296,7 @@ class Fido2Authenticator(object):
         '''Responds to navigator.credential.get(). jsonOptions should be either a dictionary
         or a JSON string of the assertion options and usually has the form:
         {
+            "rpID": "www.my-relying-party.com"
             "userId": "my_unique_id",
             "displayName": "redacted",
             "authenticatorSelection": {
@@ -448,34 +449,22 @@ class Fido2Authenticator(object):
         toSign = bytes( [ *authData, *clientDataHash ] )
         sig = ""
         selfAttestation = True if 'self' in atteStmtFmt else False
+        if not selfAttestation:
+            leafSubj = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'), 
+                                x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
+                                x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
+                                x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
+            leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
+                    signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False) )
+            # Final trust chain to add to AttesationObject
+            result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
+        
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            #RSA key identified
-            if not selfAttestation:
-                leafSubj = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'), 
-                                    x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-                                    x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
-                                    x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
-                leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                        signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False) )
-                # Final trust chain to add to AttesationObject
-                result['x5c'] = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
-
-            else:
-                #Self attestation, only need COSE key ID
-                pass
 
             result[u"alg"] = -257
             sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
 
         elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            #ECDAA key identified
-            if not selfAttestation:
-                raise Exception("Not implemented")
-
-            else:
-                #Self attestation, only need COSE key ID
-                pass
-
             result[u"alg"] = -7
             sig = keyPair.get_private().sign( toSign, ec.ECDSA(hashes.SHA256()) )
 
@@ -809,7 +798,7 @@ class Fido2Authenticator(object):
                 u'rawId': str(credIdString, 'utf-8'),
                 u'response': saar,
                 u'type': u'public-key',
-                u'getClientExtensionResults': str(base64.urlsafe_b64encode(cbor.dumps( {})), 'utf-8')
+                u'getClientExtensionResults': {}
                 }
         return spkc
 
@@ -874,15 +863,12 @@ class Fido2Authenticator(object):
             dict: assertion response to credential get request,
                     https://www.w3.org/TR/webauthn/#authenticatorassertionresponse
         """
-        spkc = {}
-        saar = {}
         pk = cro["publicKey"]
         clientDataJSON = self.build_client_data_JSON(pk)
-        """clientDataBytes = bytearray(clientDataJSON)"""
-        saar["clientDataJSON"] = str( base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8')
-
         authData = self.build_authenticator_data(pk, None, keyPair, uv)
-        saar['authenticatorData'] = str(base64.urlsafe_b64encode(authData), 'utf-8')
+        saar = {"clientDataJSON":  str( base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8'),
+                "authenticatorData": str(base64.urlsafe_b64encode(authData), 'utf-8')
+            }
         if self.userHandle != None:
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
@@ -894,10 +880,12 @@ class Fido2Authenticator(object):
 
         saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
-        spkc['id'] = spkc['rawId'] = str( base64.urlsafe_b64encode(credIdBytes), 'utf-8')
-        spkc['response'] = saar
-        spkc['type'] = 'public-key'
-
+        spkc = {'id': str( base64.urlsafe_b64encode(credIdBytes), 'utf-8'),
+                'rawId': str( base64.urlsafe_b64encode(credIdBytes), 'utf-8'),
+                'response': saar,
+                'type': 'public-key',
+                'getClientExtensionResults': {}
+            }
         return spkc
 
 ############################# MAIN ##############################

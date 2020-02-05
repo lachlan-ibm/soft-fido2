@@ -4,3 +4,5 @@ asn1
 PyJwt
 wheel
 twine
+fido2
+pytest

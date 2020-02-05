@@ -1,0 +1,1 @@
+from fido2_authenticator.authenticator import Fido2Authenticator
