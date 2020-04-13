@@ -526,6 +526,45 @@ class Fido2Authenticator(object):
         return result
 
 
+    def _build_rsa_public_area(self, caKeyPair):
+        pubArea = []
+        pubArea += [0, 1] # TPM_ALG_ID = TPM_ALG_RSA
+        pubArea += [0, 11] # name_alg = TPM_ALG_SHA256
+        pubArea += [0] * 4 # TPMA_OBJECT
+        pubArea += [0] * 2 # authPolicy
+        pubArea += [0, 1] # symetric = TPM_ALG_NULL
+        pubArea += [4, 0] # keySize
+        pubArea += [0] * 4 # exponent
+        unique = self._long_to_bytes( caKeyPair.get_public.public_numbers().n )
+        uniqueLength = struct.pack("!H", len(unique))
+        pubArea += unqiueLength
+        pubArea += unique
+
+        return bytes(pubArea)
+
+
+    def _build_rsa_cert_info(self, attsToSign, pubInfo):
+        certInfo = [0xFF, 0x54, 0x43, 0x47] # TPM_GENERATED
+        certInfo += [ 0x80, 0x17] # TPM_ST_ATTEST_CERTIFY
+        certInfo += [0] * 2 # qualified signer length
+        sigHash = hashlib.sha256( attsToSign ).digest()
+        sigHashLength = struct.pack("!H", len(sigHash))
+        certInfo += sigHashLength
+        certInfo += sigHash
+        certInfo += [0] * 17 # clock info
+        vendorId = struct.pack("!H", self.TPM_VENDOR_ID)
+        certInfo += [0] * ( 8 - len(vendorId) )
+        certInfo += vendorId
+        attestedName = [0x00, 0x0B] #name_alg
+        attestedName += hashes.sha256(pubInfo).digest()
+        attestedNameLength = struct.pack("!H", len(attestedName))
+        certInfo += attestedNameLength
+        certInfo += attestedName
+        certInfo += [0] * 2 # attested qualified name length
+
+        return bytes(certInfo)
+
+
     def build_tpm_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
         """Create an attestation statement with the TPM format
 
@@ -542,6 +581,14 @@ class Fido2Authenticator(object):
             dict: tpm attestation statement,
                     https://www.w3.org/TR/webauthn/#fido-u2f-attestation
         """
+        #Generate TPM certificates
+        caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
+        caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
+        tpmSubj = x509.Name( [] )
+        tpmSan = ""
+        tpmCert = cert_utils.gen_aik_cert(subject, issuer, keyPair, signKeyPair, aaguid, androidKey=False)
+
+        #
         raise Exception("Not yet implemented")
 
 
