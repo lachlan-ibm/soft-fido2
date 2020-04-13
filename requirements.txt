@@ -1,5 +1,8 @@
 cbor2
 cryptography
 asn1
+PyJwt
 wheel
 twine
+fido2
+pytest

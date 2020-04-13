@@ -13,17 +13,22 @@ before_install:
 install:
   - pip install -r requirements.txt
 
-script: ./unit_test
+script: 
+  - ./build.sh
 
 stages:
+  - unit_test
   - scenario_test
   - deploy
 
 jobs:
   include:
+    - stage: unit_test
+      script:
+        - ./python_authenticator/tests/unit_test.sh
     - stage: scenario_test
       script:
-        - ./scenario_test
+        - ./python_authenticator/tests/scenario_test.sh
       python:
         - "3.7"
     - stage: deploy

@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 
 setup(
-    name='fido2_authenticator',
+    name='soft_FIDO2',
     version='0.1.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
     description='Software based FIDO2 Authenticator',
     author='Lachlan Gleeson',
@@ -12,8 +12,9 @@ setup(
     packages=find_packages(where="python_authenticator"),
     install_requires=[
         'cbor2>=4.1.2',
-        'cryptography>=2.7'
-        'asn1>=2.2.0'
+        'cryptography>=2.7',
+        'asn1>=2.2.0',
+        'PyJwt>=0.6.1'
     ],
     url='https://github.ibm.com/ibm-security/fido2_authenticator',
     zip_safe=False

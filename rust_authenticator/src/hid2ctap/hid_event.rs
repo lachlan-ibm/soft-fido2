@@ -1,6 +1,6 @@
 use std:collections::HashMap;
 
-pub enum CTAP_API {
+pub enum CTAP_EVENT {
     AUTHENTICATOR_MAKE_CRED = 0x01,
     AUTHENTICATOR_GET_ASSERT = 0x02,
     AUTHENTICATOR_CANCEL = 0x03,
@@ -64,82 +64,4 @@ pub enum CTAP_ERROR {
     CTAP2_ERR_EXTENSION_LAST = 0xEF // Extension
     CTAP2_ERR_VENDOR_FIRST = 0xF0 // Vendor
     CTAP2_ERR_VENDOR_LAST = 0xFF // Vendor
-}
-
-pub enum MODE {
-    PACKED,
-    PACKED-SELF,
-    TPM,
-    U2F,
-    ANDROID-KEY,
-    ANDROID-SAFETYNET,
-}
-
-
-#[derive(Hash, Eq, PartialEq, Debug, Copy)]
-struct Options {
-    rk: bool,
-    uv: bool,
-    up: bool,
-    plat: bool,
-    clietnPin: bool
-}
-
-
-pub struct MakeCredential {
-    clientDataHash: Vec<u8>,
-    rp: String,
-    user: String,
-    pubKeyCredParams: Vec<u8>,
-    excludeList: Vec<String>,
-    options: Options,
-    pinAuth: Vec<u8>,
-    pimProtocal: Vec<u8>,
-}
-
-pub struct AttestationObject {
-    authData: Vec<u8>,
-    fmt: String,
-    attStmt: Vec<u8>,
-}
-
-pub struct GetAssertion {
-    rpId: String,
-    clientDataHash: Vec<u8>,
-    allowList: Vec<u8>,
-    options: Options,
-    pinAuth: Vec<u8>,
-    pinProtocol: u8,
-}
-
-pub struct AssertionObject {
-    credential: Vec<u8>,
-    authData: Vec<u8>,
-    signiture: Vec<u8>,
-    user: Vec<u8>,
-    numberOfCredentials: u8,
-}
-
-pub struct AuthenticatorInfo {
-    versions: Vec<String>,
-    extensions <Vec<String>,
-    aaguid: Vec<u8>,
-    options: Options,
-    maxMsgSize: u8,
-    pinProtocols: Vec<u8>,
-}
-
-pub struct ClientPin {
-    pinProtocol: u8,
-    subCommand: u8,
-    keyAggreement: Vec<u8>,
-    pinAuth: Vec<u8>,
-    getKeyAggreement: bool,
-    getRetries: bool,
-}
-
-pub struct PinInfo {
-    keyAgreement: vec<u8>,
-    pinToken: Vec<u8>,
-    retries: u8,
 }

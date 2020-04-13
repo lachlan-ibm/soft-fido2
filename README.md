@@ -75,7 +75,7 @@ ATTESTATION_OPTIONS='{
   "errorMessage": ""
 }'
 
-python3 python_authenticator/fido2_authenticator/authenticator.py 'attestation' 'packed-self' ${ATTESTATION_OPTIONS}
+python3 python_authenticator/soft_FIDO2/authenticator.py 'attestation' 'packed-self' ${ATTESTATION_OPTIONS}
 > {
 >   "id": "EyOlQBLvCZUK96Z9DpCKYBw_aLOh4FikSd3h-1fKukk=",
 >   "rawId": "EyOlQBLvCZUK96Z9DpCKYBw_aLOh4FikSd3h-1fKukk=",
@@ -104,7 +104,7 @@ ASSERTION_OPTIONS='{
   "extensions": {},
 }'
 
-python3 python_authenticator/fido2_authenticator/authenticator.py 'assertion' ${ASSERTION_OPTIONS}
+python3 python_authenticator/soft_FIDO2/authenticator.py 'assertion' ${ASSERTION_OPTIONS}
 > {
 >     "id": "EyOlQBLvCZUK96Z9DpCKYBw_aLOh4FikSd3h-1fKukk=",
 >     "rawId": "EyOlQBLvCZUK96Z9DpCKYBw_aLOh4FikSd3h-1fKukk=",
@@ -121,14 +121,14 @@ python3 python_authenticator/fido2_authenticator/authenticator.py 'assertion' ${
 
 First install from artifactory (requires IBM W3 login details)
 
-* `pip3 install fido2_authenticator --extra-index https://{username}:{password}@eu.artifactory.swg-devops.com/artifactory/api/pypi/sec-iam-components-pypi-virtual/simple`
+* `pip3 install soft_FIDO2 --extra-index https://{username}:{password}@eu.artifactory.swg-devops.com/artifactory/api/pypi/sec-iam-components-pypi-virtual/simple`
 
 Once isntalled the FIDO2 authenticator can be imported like any other python module. The following example shows how to use the authenticator to generate an attestation (registration) with the 'packed-self' format then subsequently use the same authenticator to perform an assertion.
 
 ```python
 import json
 import requests
-from fido2_authenticator.authenticator import Fido2Authenticator
+from soft_FIDO2 import Fido2Authenticator
 
 #This will create a Fido2Authenticator with 2048-bit RSA key
 authenticator = Fido2Authenticator()
