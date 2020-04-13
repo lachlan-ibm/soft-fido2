@@ -1,1 +1,0 @@
-from soft_FIDO2.authenticator import Fido2Authenticator
