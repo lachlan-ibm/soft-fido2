@@ -2,7 +2,7 @@ from setuptools import find_packages, setup
 import os
 
 setup(
-    name='fido2_authenticator',
+    name='soft_FIDO2',
     version='0.1.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
     description='Software based FIDO2 Authenticator',
     author='Lachlan Gleeson',
