@@ -9,7 +9,7 @@ python setup.py sdist bdist_wheel
 PYTHONPATH="$PYTHONPATH:./build/lib" python3 << EOF
 import json
 import requests
-from fido2_authenticator.authenticator import Fido2Authenticator
+from soft_FIDO2 import Fido2Authenticator
 
 #This will create a Fido2Authenticator with 2048-bit RSA key
 authenticator = Fido2Authenticator()
@@ -74,7 +74,7 @@ EOF
 PYTHONPATH="$PYTHONPATH:./build/lib" python3 << EOF
 import json
 import requests
-from fido2_authenticator.authenticator import Fido2Authenticator
+from soft_FIDO2 import Fido2Authenticator
 
 #This will create a Fido2Authenticator with 2048-bit RSA key
 authenticator = Fido2Authenticator()
