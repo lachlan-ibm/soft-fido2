@@ -1,6 +1,6 @@
 #!/bin/python3
 
-from fido2_authenticator import Fido2Authenticator
+from soft_FIDO2 import Fido2Authenticator
 import pytest
 
 server = fido2.Fido2Server(rp)
