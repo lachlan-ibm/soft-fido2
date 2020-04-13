@@ -4,8 +4,6 @@ from soft_FIDO2 import Fido2Authenticator
 import pytest
 from fido2.server import Fido2Server
 
-server = Fido2Server(rp)
-
 
 def E2E_Unit_Test(fido2_server, fido2_rp, fido2_user):
     attestation_options = fido2_server.register_begin(fido2_user)
