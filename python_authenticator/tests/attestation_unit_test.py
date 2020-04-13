@@ -4,7 +4,7 @@ from soft_FIDO2 import Fido2Authenticator
 import pytest
 import fido2
 
-server = fido2.Fido2Server(rp)
+server = fido2.server.Fido2Server(rp)
 
 
 def E2E_Unit_Test(fido2_server, fido2_rp, fido2_user):
