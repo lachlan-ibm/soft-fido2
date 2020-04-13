@@ -2,6 +2,7 @@
 
 from soft_FIDO2 import Fido2Authenticator
 import pytest
+import fido2
 
 server = fido2.Fido2Server(rp)
 
