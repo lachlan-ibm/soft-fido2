@@ -23,8 +23,8 @@ def Authenticator_Data_Test(fido2_server, fido2_authenticator):
             base64.urlsafe_b64decode(attestaton.get('attestationObject')))
     from fido2.ctap2 import ClientData
     serverClientData = ClientData(base64.urlsafe_b64decode(attestation["clientDataJSON"]))
-    verifier.verify(fido2_server.rp.id_hash, serverAttestationObject.att_statement, 
-            serverAttestationObject.auth_data, serverClientData.hash,
+    #verifier.verify(fido2_server.rp.id_hash, serverAttestationObject.att_statement, 
+    #        serverAttestationObject.auth_data, serverClientData.hash,
 
 
 def Client_Data_JSON_Test(fido2_sever, fido2_authenticator):
