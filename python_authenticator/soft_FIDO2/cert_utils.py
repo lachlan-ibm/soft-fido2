@@ -66,6 +66,13 @@ class CertUtils(object):
             super().__init__(oid, value)
 
 
+    @utils.register_interface(ExtensionType)
+    class AppleNonceExtension(x509.UnrecognizedExtension):
+
+        def __init__(self, nonce, oid=ObjectIdentifier("1.2.840.113635.100.8.2")):
+            super().__init__(oid, nonce)
+
+
     @classmethod
     def __cert_builder(cls, subject=None, issuer=None, lifetime=265, serial=None, keyPair=None):
         return x509.CertificateBuilder() \
@@ -177,3 +184,20 @@ class CertUtils(object):
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signer, backend)
 
 
+    @classmethod
+    def gen_apple_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
+            keyPair=None, signKeyPair=None, nonce=None, signer=hashes.SHA256(), backend=default_backend()):
+        '''
+        Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
+        which I am sure is very useful to apple.
+        '''
+        encoder = asn1.Encoder()
+        encoder.start()
+        encoder.enter(asn1.Numbers.Sequence)
+        encoder.enter(0, asn1.Classes.Context)
+        encoder.write(nonce)
+        encoder.leave()
+        encoder.leave()
+        encodedNonce = encoder.output()
+        extensions = [CertUtils.AppleNonceExtension(encodedNonce)]
+        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
