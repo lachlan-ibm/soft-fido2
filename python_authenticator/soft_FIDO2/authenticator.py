@@ -155,18 +155,7 @@ class Fido2Authenticator(object):
         Return:
             bytes: credential Id for given key pair and ca key pair
         """
-        credIdBytes = None
-        if caKeyPair != None:
-            credIdBytes = caKeyPair.get_public.encrypt( keyPair.get_public_bytes(),
-                                                        padding.OEAP(
-                                                            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-                                                            algorithm=hashes.SHA256(),
-                                                            label=None
-                                                        )
-                                                      )
-        else:
-            credIdBytes = hashlib.sha256( keyPair.get_public_bytes() ).digest()
-        return credIdBytes
+        return hashlib.sha256( keyPair.get_public_bytes() ).digest()
 
 
     def get_credential_id(self, keyPair=None):
