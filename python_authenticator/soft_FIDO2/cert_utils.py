@@ -99,6 +99,11 @@ class CertUtils(object):
 
 
     @classmethod
+    def load_der_certificate(cls, certBytes):
+        return x509.load_der_x509_certificate(certBytes, default_backend())
+
+
+    @classmethod
     def get_encoded(cls, cert, encoding=serialization.Encoding.DER):
         encoded = cert.public_bytes(encoding=encoding)
         return encoded

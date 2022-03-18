@@ -39,6 +39,13 @@ class KeyPair(object):
         return cls(privateKey, publicKey)
 
 
+    @classmethod
+    def load_key_pair(cls, pk, password=None):
+        privateKey = serialization.load_pem_private_key(pk, password=password, backend=default_backend())
+        publicKey = privateKey.public_key()
+        return cls(privateKey, publicKey)
+
+    
     def set_key(self, privateKey):
         self.private = privateKey
         self.public = privateKey.get_public()
