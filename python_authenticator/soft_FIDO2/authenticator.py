@@ -505,7 +505,7 @@ class Fido2Authenticator(object):
         toSign += credIdBytes
         toSign += pubKey
 
-        sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), hashes.SHA256())
+        sig = keyPair.get_private().sign(toSign, hashes.SHA256())
         result = {
                 'sig': sig,
                 'x5c': CertUtils.get_encoded(cert)
