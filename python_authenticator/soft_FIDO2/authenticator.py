@@ -12,8 +12,7 @@ import array
 import os
 import jwt
 
-from cryptography.hazmat.primitives.asymmetric import rsa, ec
-import cryptography.hazmat.primitives.asymmetric.padding as padding
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography import x509
@@ -64,7 +63,8 @@ class Fido2Authenticator(object):
 
         else:
             #else fall back to creating key pair
-            self.kp = KeyPair.generate_rsa()
+            self.kp = KeyPair.generate_ecdsa()
+            #self.kp = KeyPair.generate_rsa()
 
         if aaguid == None:
             self.aaguid = [0] * 16
@@ -460,7 +460,9 @@ class Fido2Authenticator(object):
 
         elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             result[u"alg"] = -7
-            sig = keyPair.get_private().sign( toSign, ec.ECDSA(hashes.SHA256()) )
+            digest = hashes.Hash(hashes.SHA256())
+            digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
+            sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
 
         else:
             raise Exception("Unsupported key type")
@@ -493,10 +495,10 @@ class Fido2Authenticator(object):
         pubKey += self._long_to_bytes( keyPair.get_public().public_numbers().x )
         pubKey += self._long_to_bytes( keyPair.get_public().public_numbers().y )
 
-        subject = x509.Name( [x509.NameAttribute(NameOID.COMMON_NAME, u'root'),
-                x509.NameAttribute(NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security') ])
+        subject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root'),
+                x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security') ])
         cert = CertUtils.gen_ca_cert(subject=subject, keyPair=keyPair)
-        
+
         rpIdHash = authData[0:32]
         toSign = []
         toSign += ['\x00']
@@ -504,11 +506,12 @@ class Fido2Authenticator(object):
         toSign += clientDataHash
         toSign += credIdBytes
         toSign += pubKey
-
-        sig = keyPair.get_private().sign(toSign, hashes.SHA256())
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
+        sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())))
         result = {
                 'sig': sig,
-                'x5c': CertUtils.get_encoded(cert)
+                'x5c': [ CertUtils.get_encoded(cert) ]
             }
 
         return result
