@@ -63,7 +63,7 @@ class Fido2Authenticator(object):
 
         else:
             #else fall back to creating key pair
-            self.kp = KeyPair.generate_ecdsa()
+            self.kp = KeyPair.generate_rsa()
 
         if aaguid == None:
             self.aaguid = [0] * 16
