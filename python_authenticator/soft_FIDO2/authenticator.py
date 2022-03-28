@@ -64,7 +64,6 @@ class Fido2Authenticator(object):
         else:
             #else fall back to creating key pair
             self.kp = KeyPair.generate_ecdsa()
-            #self.kp = KeyPair.generate_rsa()
 
         if aaguid == None:
             self.aaguid = [0] * 16
@@ -528,7 +527,7 @@ class Fido2Authenticator(object):
         pubArea += [0] * 4 # exponent
         unique = self._long_to_bytes( caKeyPair.get_public.public_numbers().n )
         uniqueLength = struct.pack("!H", len(unique))
-        pubArea += unqiueLength
+        pubArea += uniqueLength
         pubArea += unique
 
         return bytes(pubArea)
@@ -574,18 +573,18 @@ class Fido2Authenticator(object):
         """
         #Generate TPM certificates
         caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
-        caCert = cert_utils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
+        caCert = CertUtils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
         tpmSubj = x509.Name( [] )
         tpmSan = CertUtils.TPM_VENDOR + "=IBMTPB+" + CertUtils.TPM_MANUFACTURER + "=id:" + struct.pack("!L", CertUtils.TPM_VENDOR_ID) \
                 + "+" + CertUtils.TPM_FW_VERSION + "=id:1"
-        tpmCert = cert_utils.gen_aik_cert(subject=tpmSubj, issuer=caCert, keyPair=keyPair, signKeyPair=self.caKeyPair, 
+        tpmCert = CertUtils.gen_aik_cert(subject=tpmSubj, issuer=caCert, keyPair=keyPair, signKeyPair=self.caKeyPair,
                 aaguid=self.get_aaguid(hexString=False), san=tpmSan, androidKey=False)
         x5c = [CertUtils.get_encoded(tpmCert), CertUtils.get_encoded(caCert)]
 
         # Build sign data
         toSign = [*authData, *clientDataHash]
         pubInfo = self._build_rsa_public_area(self.caKeyPair)
-        certInfo = self_build_rsa_cert_info(toSign, pubInfo)
+        certInfo = self._build_rsa_cert_info(toSign, pubInfo)
         sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), hashes.SHA256())
 
         # Build attestation
