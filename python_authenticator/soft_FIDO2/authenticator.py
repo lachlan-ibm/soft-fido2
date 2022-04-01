@@ -825,8 +825,7 @@ class Fido2Authenticator(object):
         spkc = { u'id': self.get_credential_id(keyPair),
                 u'rawId': self.get_credential_id(keyPair),
                 u'response': saar,
-                u'type': u'public-key',
-                u'getClientExtensionResults': str(base64.urlsafe_b64encode( json.dumps({}).encode('utf-8') ))
+                u'type': u'public-key'
                 }
         return spkc
 
@@ -912,8 +911,7 @@ class Fido2Authenticator(object):
         spkc = {'id': self.get_credential_id(keyPair),
                 'rawId': self.get_credential_id(keyPair),
                 'response': saar,
-                'type': 'public-key',
-                'getClientExtensionResults': str( base64.urlsafe_b64encode( json.dumps({}).encode('utf-8') ), 'utf-8')
+                'type': 'public-key'
             }
         return spkc
 
