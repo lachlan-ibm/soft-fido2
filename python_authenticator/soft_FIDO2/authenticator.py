@@ -811,7 +811,6 @@ class Fido2Authenticator(object):
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii') )
         
         credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
-        credIdString = self.get_credential_id(keyPair)
 
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
@@ -823,8 +822,8 @@ class Fido2Authenticator(object):
         saar = { u'clientDataJSON': str(clientDataEncoded, 'utf-8'),
                 u'attestationObject': str(base64.urlsafe_b64encode( cbor.dumps(attestationObject)), 'utf-8')
                 }
-        spkc = { u'id': str(credIdString, 'utf-8'),
-                u'rawId': str(credIdString, 'utf-8'),
+        spkc = { u'id': self.get_credential_id(keyPair),
+                u'rawId': self.get_credential_id(keyPair),
                 u'response': saar,
                 u'type': u'public-key',
                 u'getClientExtensionResults': str(base64.urlsafe_b64encode( json.dumps({}).encode('utf-8') ))
@@ -904,15 +903,14 @@ class Fido2Authenticator(object):
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8') ).digest())
         
         credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
-        credIdStr = self.get_credential_id(keyPair)
 
         if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             raise Exception("Only RSA keys supported")
 
         saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
-        spkc = {'id': str( credIdStr, 'utf-8'),
-                'rawId': str( credIdStr, 'utf-8'),
+        spkc = {'id': str( self.get_credential_id(keyPair),
+                'rawId': str( self.get_credential_id(keyPair),
                 'response': saar,
                 'type': 'public-key',
                 'getClientExtensionResults': str( base64.urlsafe_b64encode( json.dumps({}).encode('utf-8') ), 'utf-8')
