@@ -132,9 +132,6 @@ class CertUtils(object):
         generate certificate that can be used as a ca certificate for authenticators. This
         certificate contains the ski extension
         '''
-
-        certBuilder = cls.__cert_builder(subject, subject, lifetime, serial, keyPair)
-
         # CA cert requires basic contraint, ski, key usage and san extensions
         extensions = [ x509.SubjectKeyIdentifier.from_public_key(keyPair.get_public()),
                         x509.BasicConstraints(True, 2),
@@ -146,14 +143,14 @@ class CertUtils(object):
 
     @classmethod
     def gen_aik_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
-            keyPair=None, signKeyPair=None, aaguid=None, san=None, androidKey=False, signer=hashes.SHA256(), 
+            keyPair=None, signKeyPair=None, aaguid=None, san=None, androidKey=None, signer=hashes.SHA256(), 
             backend=default_backend()):
         '''
         Generate Leaf cert in trust chain
         issuer should match the keyPair used to sign the certificate
         '''
-        sanId = cls._long_to_bytes(cls.TPM_VENDOR_ID)
         if san is None:
+            sanId = cls._long_to_bytes(cls.TPM_VENDOR_ID)
             san = x509.name.Name([x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"), 
                                 x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId)) ),
                                 x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
@@ -169,8 +166,16 @@ class CertUtils(object):
             encoder.write(aaguid)
             encodedAAGUID = encoder.output()
             extensions += [CertUtils.AAGUIDExtension(encodedAAGUID)]
-        if androidKey:
-            extensions += [CertUtils.AndroidKeystoreExtension()]
+        if androidKey is not None::
+            encoder = asn1.Encoder()
+            encoder.start()
+            encoder.enter(asn1.Numbers.Sequence)
+            encoder.enter(0, asn1.Classes.Context)
+            encoder.write(androidKey['nonce'])
+            encoder.leave()
+            encoder.leave()
+            encodedAndroidKey = encoder.output()
+            extensions += [CertUtils.AndroidKeystoreExtension(encodedAndroidKey)]
         
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 

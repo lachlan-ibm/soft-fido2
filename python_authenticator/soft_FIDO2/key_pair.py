@@ -10,7 +10,7 @@ import cbor2 as cbor
 import sys
 import array
 
-from cryptography.hazmat.primitives.asymmetric import rsa, ec
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 import cryptography.hazmat.primitives.asymmetric.padding as padding
 from cryptography.hazmat.primitives import serialization, hashes, constant_time
 from cryptography.hazmat.backends import default_backend
@@ -35,6 +35,13 @@ class KeyPair(object):
     @classmethod
     def generate_ecdsa(cls, curve=ec.SECP256R1(), backend=default_backend()):
         privateKey = ec.generate_private_key(curve, backend)
+        publicKey = privateKey.public_key()
+        return cls(privateKey, publicKey)
+
+
+    @classmethod
+    def generate_ed25519(cls):
+        privateKey = ed25519.Ed25519PrivateKey.generate()
         publicKey = privateKey.public_key()
         return cls(privateKey, publicKey)
 
