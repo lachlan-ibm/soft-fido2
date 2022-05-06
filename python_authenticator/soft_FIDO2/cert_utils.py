@@ -28,7 +28,6 @@ class CertUtils(object):
     TPM_MANUFACTURER = "2.23.133.2.1";
     TPM_VENDOR = "2.23.133.2.2";
     TPM_FW_VERSION = "2.23.133.2.3";
-
     TPM_VENDOR_ID = 0xfffff1d0
 
     @classmethod
@@ -46,31 +45,146 @@ class CertUtils(object):
     class AAGUIDExtension(x509.UnrecognizedExtension):
 
         def __init__(self, aaguid, oid=ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4") ):
-            super().__init__(oid, aaguid)
+            encoder = asn1.Encoder()
+            encoder.start()
+            encoder.write(aaguid, nr=asn1.Numbers.OctetString)
+            encodedAAGUID = encoder.output()
+            super().__init__(oid, encodedAAGUID)
 
 
     @utils.register_interface(ExtensionType)
     class AndroidKeystoreExtension(x509.UnrecognizedExtension):
+        '''
+        KeyDescription ::= SEQUENCE 
+        {
+          attestationVersion         INTEGER,
+          attestationSecurityLevel   SecurityLevel,
+          keymasterVersion           INTEGER,
+          keymasterSecurityLevel     SecurityLevel,
+          attestationChallenge       OCTET_STRING,
+          uniqueId                   OCTET_STRING,
+          softwareEnforced           AuthorizationList,
+          teeEnforced                AuthorizationList
+        }
+        SecurityLevel ::= ENUMERATED 
+        {
+          software,
+          trustedenvironment,
+          strongbox
+        }
+        AuthorizationList ::= SEQUENCE {
+          purpose                     [1] EXPLICIT SET OF INTEGER OPTIONAL,
+          algorithm                   [2] EXPLICIT INTEGER OPTIONAL,
+          keySize                     [3] EXPLICIT INTEGER OPTIONAL,
+          digest                      [5] EXPLICIT SET OF INTEGER OPTIONAL,
+          padding                     [6] EXPLICIT SET OF INTEGER OPTIONAL,
+          ecCurve                     [10] EXPLICIT INTEGER OPTIONAL,
+          rsaPublicExponent           [200] EXPLICIT INTEGER OPTIONAL,
+          rollbackResistance          [303] EXPLICIT NULL OPTIONAL,
+          activeDateTime              [400] EXPLICIT INTEGER OPTIONAL,
+          originationExpireDateTime   [401] EXPLICIT INTEGER OPTIONAL,
+          usageExpireDateTime         [402] EXPLICIT INTEGER OPTIONAL,
+          noAuthRequired              [503] EXPLICIT NULL OPTIONAL,
+          userAuthType                [504] EXPLICIT INTEGER OPTIONAL,
+          authTimeout                 [505] EXPLICIT INTEGER OPTIONAL,
+          allowWhileOnBody            [506] EXPLICIT NULL OPTIONAL,
+          trustedUserPresenceRequired [507] EXPLICIT NULL OPTIONAL,
+          trustedConfirmationRequired [508] EXPLICIT NULL OPTIONAL,
+          unlockedDeviceRequired      [509] EXPLICIT NULL OPTIONAL,
+          allApplications             [600] EXPLICIT NULL OPTIONAL,
+          applicationId               [601] EXPLICIT OCTET_STRING OPTIONAL,
+          creationDateTime            [701] EXPLICIT INTEGER OPTIONAL,
+          origin                      [702] EXPLICIT INTEGER OPTIONAL,
+          rollbackResistant           [703] EXPLICIT NULL OPTIONAL,
+          rootOfTrust                 [704] EXPLICIT RootOfTrust OPTIONAL,
+          osVersion                   [705] EXPLICIT INTEGER OPTIONAL,
+          osPatchLevel                [706] EXPLICIT INTEGER OPTIONAL,
+          attestationApplicationId    [709] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdBrand          [710] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdDevice         [711] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdProduct        [712] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdSerial         [713] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdImei           [714] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdMeid           [715] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdManufacturer   [716] EXPLICIT OCTET_STRING OPTIONAL,
+          attestationIdModel          [717] EXPLICIT OCTET_STRING OPTIONAL,
+          vendorPatchLevel            [718] EXPLICIT INTEGER OPTIONAL,
+          bootPatchLevel              [719] EXPLICIT INTEGER OPTIONAL
+        }
+        RootOfTrust ::= SEQUENCE 
+        {
+          verifiedBootKey            OCTET_STRING,
+          deviceLocked               BOOLEAN,
+          verifiedBootState          VerifiedBootState,
+          verifiedBootHash           OCTET_STRING
+        }
+        VerifiedBootState ::= ENUMERATED 
+        {
+          verified,
+          selfsigned,
+          unverified,
+          failed
+        }
+        '''
 
-        def __init__(self, wrapperFormatVersion, encryptedTransportKey, initilizationVector, 
-                keyDescription, secureKey, tag, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")):
-            '''
-            self._wrapperFormatVersion = wrapperFormatVersion
-            self._encryptedTransportKey = encryptedTransportKey
-            self._initilizationVector = initilizationVector
-            self._keyDescription = keyDescription
-            self._secureKey = secureKey
-            self._tag = tag
-            '''
-            value = ''
-            super().__init__(oid, value)
+        def __init__(self, nonce, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")):
+            # https://source.android.com/security/keystore/attestation#attestation-extension
+            encoder = asn1.Encoder()
+            encoder.start()
+            encoder.enter(asn1.Numbers.Sequence)
+            encoder.write(3, nr=asn1.Numbers.Integer) # Sequence[0] == attestationVersion
+            encoder.write(0, nr=asn1.Numbers.Enumerated) # Sequence[1] == attestationSecurityLevel
+            encoder.write(1, nr=asn1.Numbers.Integer) # Sequence[2] == keymasterVersion
+            encoder.write(1, nr=asn1.Numbers.Enumerated) # Sequence[3] == keymasterSecurityLevel
+            encoder.write(nonce, nr=asn1.Numbers.OctetString) # Sequece[4] == attestationChallenge
+            encoder.write(b'9001', nr=asn1.Numbers.OctetString) # Sequece[5] == uniqueId
+            encoder.enter(asn1.Numbers.Sequence) # Sequence[6] == softwareEnforced
+            encoder.enter(400, asn1.Classes.Context)
+            encoder.write(123456, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.enter(401, asn1.Classes.Context)
+            encoder.write(654321, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.enter(701, asn1.Classes.Context)
+            encoder.write(3152425, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.leave() # end Sequence[7]
+            encoder.enter(asn1.Numbers.Sequence) # Sequence[7] == teeEnforced
+            encoder.enter(1, asn1.Classes.Context)
+            encoder.enter(asn1.Numbers.Set)
+            encoder.write(2, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.leave() #end set
+            encoder.enter(3, asn1.Classes.Context)
+            encoder.write(256, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.enter(504, asn1.Classes.Context)
+            encoder.write(23, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.enter(505, asn1.Classes.Context)
+            encoder.write(30, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.enter(702, asn1.Classes.Context)
+            encoder.write(0, nr=asn1.Numbers.Integer)
+            encoder.leave()
+            encoder.leave() # end Sequence[7]
+            encoder.leave() # end androidKey asn1
+            super().__init__(oid, encoder.output())
 
 
     @utils.register_interface(ExtensionType)
     class AppleNonceExtension(x509.UnrecognizedExtension):
 
         def __init__(self, nonce, oid=ObjectIdentifier("1.2.840.113635.100.8.2")):
-            super().__init__(oid, nonce)
+            encoder = asn1.Encoder()
+            encoder.start()
+            encoder.enter(asn1.Numbers.Sequence)
+            encoder.enter(0, asn1.Classes.Context)
+            encoder.write(nonce)
+            encoder.leave()
+            encoder.leave()
+            encodedNonce = encoder.output()
+            super().__init__(oid, encodedNonce)
 
 
     @classmethod
@@ -87,7 +201,8 @@ class CertUtils(object):
     @classmethod
     def __add_extensions(cls, certBuilder, extensions):
         for extension in extensions:
-            certBuilder = certBuilder.add_extension(extension, critical=False)
+            certBuilder = certBuilder.add_extension(extension, 
+                    critical=True if extension.oid._name == 'subjectAltName' else False)
         return certBuilder
 
 
@@ -143,7 +258,7 @@ class CertUtils(object):
 
     @classmethod
     def gen_aik_cert(cls, subject=None, issuer=None, lifetime=365, serial=x509.random_serial_number(), 
-            keyPair=None, signKeyPair=None, aaguid=None, san=None, androidKey=None, signer=hashes.SHA256(), 
+            keyPair=None, signKeyPair=None, aaguid=None, san=None, androidKeyNonce=None, signer=hashes.SHA256(), 
             backend=default_backend()):
         '''
         Generate Leaf cert in trust chain
@@ -161,22 +276,10 @@ class CertUtils(object):
                     x509.SubjectAlternativeName( [x509.DirectoryName( san )] )
                     ]
         if aaguid is not None:
-            encoder = asn1.Encoder()
-            encoder.start()
-            encoder.write(aaguid)
-            encodedAAGUID = encoder.output()
-            extensions += [CertUtils.AAGUIDExtension(encodedAAGUID)]
-        if androidKey is not None::
-            encoder = asn1.Encoder()
-            encoder.start()
-            encoder.enter(asn1.Numbers.Sequence)
-            encoder.enter(0, asn1.Classes.Context)
-            encoder.write(androidKey['nonce'])
-            encoder.leave()
-            encoder.leave()
-            encodedAndroidKey = encoder.output()
-            extensions += [CertUtils.AndroidKeystoreExtension(encodedAndroidKey)]
-        
+            extensions += [CertUtils.AAGUIDExtension(aaguid)]
+        if androidKeyNonce is not None: 
+            extensions += [CertUtils.AndroidKeystoreExtension(androidKeyNonce)]
+
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
 
@@ -201,13 +304,5 @@ class CertUtils(object):
         Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
         which I am sure is very useful to apple.
         '''
-        encoder = asn1.Encoder()
-        encoder.start()
-        encoder.enter(asn1.Numbers.Sequence)
-        encoder.enter(0, asn1.Classes.Context)
-        encoder.write(nonce)
-        encoder.leave()
-        encoder.leave()
-        encodedNonce = encoder.output()
-        extensions = [CertUtils.AppleNonceExtension(encodedNonce)]
+        extensions = [CertUtils.AppleNonceExtension(nonce)]
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)

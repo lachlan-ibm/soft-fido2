@@ -553,18 +553,19 @@ class Fido2Authenticator(object):
         return result
 
 
-    def _build_rsa_public_area(self, caKeyPair):
+    def _build_rsa_public_area(self, keyPair):
         pubArea = []
         pubArea += [0, 1] # TPM_ALG_ID = TPM_ALG_RSA
         pubArea += [0, 11] # name_alg = TPM_ALG_SHA256
         pubArea += [0] * 4 # TPMA_OBJECT
         pubArea += [0] * 2 # authPolicy
         pubArea += [0, 1] # symetric = TPM_ALG_NULL
+        pubArea += [1, 4] # scheme = TMP_ALG_RSASSA (PKCS1-v1.5)
         pubArea += [4, 0] # keySize
         pubArea += [0] * 4 # exponent
-        unique = self._long_to_bytes( caKeyPair.get_public().public_numbers().n )
+        unique = self._long_to_bytes( keyPair.get_public().public_numbers().n )
         uniqueLength = struct.pack("!H", len(unique))
-        pubArea += uniqueLength
+        pubArea += [uniqueLength[0], uniqueLength[1]]
         pubArea += unique
 
         return bytes(pubArea)
@@ -577,8 +578,9 @@ class Fido2Authenticator(object):
         digest = hashes.Hash(hashes.SHA256())
         digest.update(attsToSign)
         sigHash = digest.finalize()
+        #certInfo += [ int((len(sigHash) - (len(sigHash) & 0xFF)) / 256), len(sigHash) & 0xFF ]
         sigHashLength = struct.pack("!H", len(sigHash))
-        certInfo += sigHashLength
+        certInfo += [sigHashLength[0], sigHashLength[1]]
         certInfo += sigHash
         certInfo += [0] * 17 # clock info
         vendorId = struct.pack("!L", CertUtils.TPM_VENDOR_ID)
@@ -589,7 +591,7 @@ class Fido2Authenticator(object):
         digest.update(pubInfo)
         attestedName += digest.finalize()
         attestedNameLength = struct.pack("!H", len(attestedName))
-        certInfo += attestedNameLength
+        certInfo += [ attestedNameLength[0], attestedNameLength[1] ]
         certInfo += attestedName
         certInfo += [0] * 2 # attested qualified name length
 
@@ -616,22 +618,19 @@ class Fido2Authenticator(object):
             raise RuntimeError("TPM Attestation requires a CA certificate to be "\
                     "present when the authenticator is created")
         #Generate TPM certificates
-        #caSubject = x509.Name( [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root')])
-        #caCert = CertUtils.gen_ca_cert(subject=caSubject, keyPair=self.caKeyPair)
-        tpmSubj = x509.Name( [] )
-        sanId = CertUtils._long_to_bytes(CertUtils.TPM_VENDOR_ID);
-        tpmSan = x509.name.Name([x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_MANUFACTURER), u"IBM"),
-                            x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId))),
+        vendorId = CertUtils._long_to_bytes(CertUtils.TPM_VENDOR_ID).hex()
+        tpmSan = x509.name.Name([x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_MANUFACTURER), u"id:{}".format(vendorId)),
+                            x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
                             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")])
-        tpmCert = CertUtils.gen_aik_cert(subject=tpmSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, signKeyPair=self.caKeyPair,
-                            aaguid=self.get_aaguid(hexString=False), san=tpmSan)
+        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name( [] ), issuer=self.caCertificate.issuer, keyPair=keyPair, 
+                            signKeyPair=self.caKeyPair, aaguid=self.get_aaguid(hexString=False), san=tpmSan)
         x5c = [CertUtils.get_encoded(tpmCert), CertUtils.get_encoded(self.caCertificate)]
 
         # Build sign data
         toSign = bytes([*authData, *clientDataHash])
-        pubArea = self._build_rsa_public_area(self.caKeyPair)
+        pubArea = self._build_rsa_public_area(keyPair)
         certInfo = self._build_rsa_cert_info(toSign, pubArea)
-        sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), hashes.SHA256())
+        sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
 
         # Build attestation
         result = {
@@ -732,7 +731,7 @@ class Fido2Authenticator(object):
                             x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
                             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj, issuer=self.caCertificate.issuer, keyPair=keyPair, 
-                signKeyPair=self.caKeyPair, androidKey={})
+                signKeyPair=self.caKeyPair, androidKeyNonce=bytes(clientDataHash))
         x5c = [ CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate) ]
         #Sign data
         toSign = [*authData, *clientDataHash]
