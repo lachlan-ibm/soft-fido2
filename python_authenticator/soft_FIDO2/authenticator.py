@@ -38,7 +38,8 @@ class Fido2Authenticator(object):
                  caKeyPair=None,
                  caCert=None,
                  counter=0,
-                 hashingAlg=hashes.SHA256()):
+                 hashingAlg=hashes.SHA256(),
+                 transports=None):
         """
         Args:
             keyPair (KeyPair): public/private key pair to sign challenges with;
@@ -53,6 +54,7 @@ class Fido2Authenticator(object):
             counter (`int`): Internal counter of token.
             hashingAlg (`cryptography.hazmat.primitives.hashes.HashAlgorithm`): Hashing algorithm to use for "packed"
                         attesttation format.
+            transports (list, optional): a list of support transports; default = None
 
         """
         self.counter = counter
@@ -60,6 +62,7 @@ class Fido2Authenticator(object):
         self.caCertificate = caCert
         self.caKeyPair = caKeyPair
         self.hashAlg = hashingAlg
+        self.transports = transports
 
         if credId != None and caKeyPair != None:
             #If we havea credId and a caKeyPair try decode key from credId
@@ -238,13 +241,7 @@ class Fido2Authenticator(object):
             return -8
         return 0
 
-    def credential_create(self,
-                          jsonOptions,
-                          atteStmtFmt='packed-self',
-                          keyPair=None,
-                          uv=True,
-                          up=True,
-                          transports=None):
+    def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True, up=True):
         '''Reponds to requests to navigator.credentail.create(). jsonOptions should be
         either a dictionary or a JSON string of the attestation options and usually has the form:
         {
@@ -285,7 +282,6 @@ class Fido2Authenticator(object):
             keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the attestation; default = self.kp
             uv (:obj:`bool`, optional): if the authenticator should set the user verification flag; default = True
             up (:obj:`bool`, optional): if the authenticator should set the user presence flag; default = True
-            transports (list, optional): a list of support transports; default = None
 
         Returns:
             dict: response to navigator.credential.create
@@ -298,7 +294,7 @@ class Fido2Authenticator(object):
         else:
             options = json.loads(jsonOptions)
         cco = self.attestation_options_response_to_credential_create_options(options)
-        return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv, up, transports)
+        return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv, up)
 
     def credential_request(self, jsonOptions, keyPair=None, uv=True, up=True):
         '''Responds to navigator.credential.get(). jsonOptions should be either a dictionary
@@ -838,7 +834,7 @@ class Fido2Authenticator(object):
         cco = {'publicKey': pkcco}
         return cco
 
-    def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv, up=True, transports=None):
+    def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv, up=True):
         """Generate response to parsed credential create request
 
         Args:
@@ -849,7 +845,6 @@ class Fido2Authenticator(object):
             keyPair (KeyPair): public/private kye pair to sign with
             uv (bool): set the user verification flag
             up (bool): set the user presence flag
-            transports (list, optional): a list of support transports; default = None
 
         Returns:
             dict: attestation response to credential create request,
@@ -878,8 +873,8 @@ class Fido2Authenticator(object):
             u'type': u'public-key',
             u'getClientExtensionResults': {}
         }
-        if transports is not None:
-            spkc['getTransports'] = transports
+        if self.transports is not None:
+            spkc['getTransports'] = self.transports
         return spkc
 
     def assertion_signiture(self, authData, clientDataHash, keyPair):
