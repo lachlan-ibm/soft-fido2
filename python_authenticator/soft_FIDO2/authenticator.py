@@ -875,7 +875,8 @@ class Fido2Authenticator(object):
             u'id': self.get_credential_id(keyPair),
             u'rawId': self.get_credential_id(keyPair),
             u'response': saar,
-            u'type': u'public-key'
+            u'type': u'public-key',
+            u'getClientExtensionResults': {}
         }
         if transports is not None:
             spkc['getTransports'] = transports
@@ -919,6 +920,9 @@ class Fido2Authenticator(object):
         if 'userVerifation' in options:
             pkcro['userVerification'] = options['userVerification']
 
+        if 'extensions' in options:
+            pkcro['extensions'] = options['extensions']
+
         cro['publicKey'] = pkcro
         return cro
 
@@ -958,7 +962,8 @@ class Fido2Authenticator(object):
             'id': self.get_credential_id(keyPair),
             'rawId': self.get_credential_id(keyPair),
             'response': saar,
-            'type': 'public-key'
+            'type': 'public-key',
+            'getClientExtensionResults': {}
         }
         return spkc
 
