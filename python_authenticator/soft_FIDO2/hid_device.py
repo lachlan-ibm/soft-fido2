@@ -3,9 +3,9 @@
 # CTAP2HID reads bytes from endpoint 1,building the frames into a CTAPMsg. A CTAPMsg is used to initalize a 
 #FIDO2Transaction thread which will reply on endpoint 2 when the transaction is complete.
 
-import base64, datetime, threading, os, sys
+import base64, datetime, threading, os, sys, random
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from usb_ip import BaseStucture, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer
+from usb_ip import BaseStucture, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer, USBIPCMDSubmit
 
 class bcolors:
     HEADER = '\033[95m'
@@ -45,17 +45,23 @@ class FIDO2Transaction():
         self.usb_req = usb_req
         #Mandatory commands
         fptr = {
-                CTAPHID_PING: ping, #CTAPHID_PING (0x01)
-                CTAPHID_MSG: u2f_msg, #CTAPHID_MSG (0x03)
-                CTAPHID_INIT: cid_init, #CTAPHID_INIT (0x06)
-                CTAPHID_CBOR: cbor_msg, #CTAPHID_CBOR (0x10)
-                CTAPHID_CANCEL: cancel, #CTAPHID_CANCEL (0x11)
-                CTAPHID_KEEPALIVE: keep_alive, #CTAPHID_KEEPALIVE (0x3B)
-                CTAPHID_ERROR: error #CTAPHID_ERROR (0x3F)
-            }.get(msg.cmd)
+                CTAPHID_PING: self.ping, #CTAPHID_PING (0x01)
+                CTAPHID_MSG: self.u2f_msg, #CTAPHID_MSG (0x03)
+                CTAPHID_INIT: self.cid_init, #CTAPHID_INIT (0x06)
+                CTAPHID_CBOR: self.cbor_msg, #CTAPHID_CBOR (0x10)
+                CTAPHID_CANCEL: self.cancel, #CTAPHID_CANCEL (0x11)
+                CTAPHID_KEEPALIVE: self.keep_alive, #CTAPHID_KEEPALIVE (0x3B)
+                CTAPHID_ERROR: self.error #CTAPHID_ERROR (0x3F)
+            }.get(msg.cmd, self.error)
         if not fptr:
-            raise RuntimeError("cmd not found")
+            print('[' + bcolors.FAIL + 'FIDO2Transaction' + bcolors.ENDC + '] command not found {} '.format(msg.cmd))
         fptr()
+
+
+    def error(self):
+        #TODO
+        return
+
 
     def u2f_msg(self):
         #TODO
@@ -94,10 +100,13 @@ class CTAPMsg():
     complete = False
 
     def __init__(self, usb_req):
+        print('[' + bcolors.OKGREEN + 'CTAPMsg' + bcolors.ENDC + '] __init__ [{}]'.format(
+            ', '.join( hex(x) for x in list(usb_req) )))
         self.cid = usb_req[:8]
-        self.data_len = usb_req[8:10]
+        self.data_len = int.from_bytes(usb_req[8:10], 'big')
         self.cbor_data += usb_req[10: min(self.data_len, 64)]
         self._is_complete()
+        print('[' + bcolors.OKGREEN + 'CTAPMsg' + bcolors.ENDC + '] _is_complete() {} '.format(self.complete))
 
 
     def _is_complete(self):
@@ -212,26 +221,36 @@ class CTAP2HID(USBDevice):
         return bytes(arr) 
 
 
-    def handle_data(self, usb_req):
+    def handle_data(self, control_req, data):
         #TODO
-        cid = usb_req[:8]
-        if cid in cids:
-            cids[cid]['msg'] = cids[cid]['msg'].update(usb_req)
-        elif cid == CTAPHID_BROADCAST_CHANNEL:
+        print('[' + bcolors.WARNING + 'CTAP2HIDevice' + bcolors.ENDC + '] Request data [{}] '.format(
+            ', '.join( hex(x) for x in list(data) )))
+        cid = control_req.start_frame.to_bytes(4, 'big')
+        print('[' + bcolors.WARNING + 'CTAP2HIDevice' + bcolors.ENDC + '] CID [{}]'.format(
+            ', '.join( hex(x) for x in list(cid) )))
+        if cid in self.cids:
+            self.cids[cid]['msg'] = self.cids[cid]['msg'].update(data)
+        elif int.from_bytes(cid, 'big') == CTAPHID_BROADCAST_CHANNEL:
             cid = random.randbytes(4)
+            print('[' + bcolors.OKGREEN + 'CTAP2HIDevice' + bcolors.ENDC + '] assign CID [{}]'.format(
+                ', '.join( hex(x) for x in list(cid) )))
             new_cid = {
                     "cid": cid,
-                    "msg": CTAPMsg(usb_req)
+                    "msg": CTAPMsg(control_req.data)
                 }
-            cids[cid] = new_cid
+            self.cids[cid] = new_cid
         else:
-            print(base64.b64encode(usb_req.data).decode())
-            raise RuntimeError("invalid frame")
-        cid_state = cids[cid]
+            print('[' + bcolors.FAIL + 'CTAP2HIDevice' + bcolors.ENDC + '] Don\'t know what to do')
+            #print(base64.b64encode(data).decode())
+            #raise RuntimeError("invalid frame")
+            self.send_usb_req(usb_req, '', 0,0)
+            #self.send_usb_req(usb_req, b"\x01\x00",2)
+            return
+        cid_state = self.cids[cid]
         if not cid_state:
             raise RuntimeError("message lost for cid {}".format(base64.b64encode(cid).decode()))
         if cid_state['msg'].complete == True:
-            cid_state['txn'] = FIDO2Transaction(cid_state['msg'], usb_req)
+            cid_state['txn'] = FIDO2Transaction(cid_state['msg'], data)
 
 
     def handle_unknown_control(self, control_req, usb_req):

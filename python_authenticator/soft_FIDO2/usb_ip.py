@@ -378,7 +378,7 @@ class USBDevice():
         self.all_configurations = _str
 
 
-    def send_usb_req(self, usb_req, usb_res, usb_len,  status=0):
+    def send_usb_req(self, usb_req, usb_res, usb_len,  status=0, ep=0):
         print('[' + bcolors.FAIL + 'USBDevice(send_usb_req)' + bcolors.ENDC + '] setup data [{}]'.format(
             ', '.join( hex(x) for x in list(usb_req.setup.to_bytes(8, 'big')) )))
         print('[' + bcolors.FAIL + 'USBDevice(send_usb_req)' + bcolors.ENDC + '] received data [{}]'.format(
@@ -387,7 +387,7 @@ class USBDevice():
             ', '.join( hex(x) for x in list(usb_res) )))
         self.connection.sendall(USBIPRETSubmit(command=0x3,
                                                    seqnum=usb_req.seqnum,
-                                                   ep=0,
+                                                   ep=ep,
                                                    status=status,
                                                    actual_length=usb_len,
                                                    start_frame=0x0,
@@ -443,7 +443,6 @@ class USBDevice():
         if control_req.bmRequestType == 0x00: # Host Request
             if control_req.bRequest == 0x09: # Set Configuration
                 handled = self.handle_set_configuration(control_req, usb_req)
-
         if not handled:
             self.handle_unknown_control(control_req, usb_req)
 
@@ -454,7 +453,10 @@ class USBDevice():
                 self.handle_usb_control(usb_req)
             else:
                 print('[' + bcolors.OKBLUE + 'USBDevice' + bcolors.ENDC + '] Data request')
-                self.handle_data(usb_req)
+                cmd = USBIPCMDSubmit()
+                cmd.unpack(usb_req.data)
+                cmd.data = usb_req.data
+                self.handle_data(cmd, usb_req.data[cmd.size():])
         except Exception as e:
             print(e)
             traceback.print_exc()
@@ -588,20 +590,15 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                     else :
                         cmd = USBIPCMDSubmit()
                         data = self.request.recv(cmd.size())
-                        print("usbip data {}".format(data, 'x'))
+                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP request [{}]'.format(
+                            ', '.join( hex(x) for x in list(data) )))
                         if len(data) == 0:
                             break
                         cmd.unpack(data)
-                        #print("usbip cmd {}".format(cmd.command,'x'))
-                        print("usbip seqnum {}".format(cmd.seqnum,'x'))
-                        print("usbip devid {}".format(cmd.devid,'x'))
-                        print("usbip direction {}".format(cmd.direction,'x'))
-                        print("usbip ep {}".format(cmd.ep,'x'))
-                        print("usbip flags {}".format(cmd.transfer_flags,'x'))
-                        print("usbip number of packets {}".format(cmd.number_of_packets,'x'))
-                        print("usbip interval {}".format(cmd.interval,'x'))
-                        print("usbip setup {}".format(cmd.setup,'x'))
-                        print("usbip buffer length  {}".format(cmd.transfer_buffer_length,'x'))
+                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP Command:: seqnum: {}; devid: {};'\
+                                'direction: {}; ep: {}; flags: {}; no. of pkts: {}; interval: {}; setup: {}; buff: {}'.format(
+                            cmd.seqnum,cmd.devid,cmd.direction,cmd.ep,cmd.transfer_flags,cmd.number_of_packets,
+                            cmd.interval,cmd.setup,cmd.transfer_buffer_length))
                         usb_req = USBRequest(seqnum=cmd.seqnum,
                                              devid=cmd.devid,
                                              direction=cmd.direction,
