@@ -1,1 +1,7 @@
 *.swp
+build/
+dist/
+soft_FIDO2.egg-info/
+__pycache__
+.DS_Store
+*.pyc
