@@ -1,10 +1,9 @@
 dist: xenial
 language: python
 python:
-  - "3.5"
-  - "3.6"
   - "3.7"
-  - "3.8-dev"
+  - "3.8"
+  - "3.9"
 
 before_install:
   - sudo apt-get update
@@ -26,6 +25,8 @@ jobs:
     - stage: unit_test
       script:
         - ./python_authenticator/tests/unit_test.sh
+      python:
+        - "3.7"
     - stage: scenario_test
       script:
         - ./python_authenticator/tests/scenario_test.sh
