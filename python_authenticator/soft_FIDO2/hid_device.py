@@ -221,11 +221,12 @@ class CTAP2HID(USBDevice):
         return bytes(arr) 
 
 
-    def handle_data(self, control_req, data):
+    def handle_data(self, usb_req):
         #TODO
+        '''
         print('[' + bcolors.WARNING + 'CTAP2HIDevice' + bcolors.ENDC + '] Request data [{}] '.format(
             ', '.join( hex(x) for x in list(data) )))
-        cid = control_req.start_frame.to_bytes(4, 'big')
+        cid = usb_req.start_frame.to_bytes(4, 'big')
         print('[' + bcolors.WARNING + 'CTAP2HIDevice' + bcolors.ENDC + '] CID [{}]'.format(
             ', '.join( hex(x) for x in list(cid) )))
         if cid in self.cids:
@@ -243,7 +244,6 @@ class CTAP2HID(USBDevice):
             print('[' + bcolors.FAIL + 'CTAP2HIDevice' + bcolors.ENDC + '] Don\'t know what to do')
             #print(base64.b64encode(data).decode())
             #raise RuntimeError("invalid frame")
-            self.send_usb_req(usb_req, '', 0,0)
             #self.send_usb_req(usb_req, b"\x01\x00",2)
             return
         cid_state = self.cids[cid]
@@ -251,6 +251,8 @@ class CTAP2HID(USBDevice):
             raise RuntimeError("message lost for cid {}".format(base64.b64encode(cid).decode()))
         if cid_state['msg'].complete == True:
             cid_state['txn'] = FIDO2Transaction(cid_state['msg'], data)
+        '''
+        self.send_usb_req(usb_req, b'\x06', 1)
 
 
     def handle_unknown_control(self, control_req, usb_req):

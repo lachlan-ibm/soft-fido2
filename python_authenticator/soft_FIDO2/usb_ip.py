@@ -456,7 +456,7 @@ class USBDevice():
                 cmd = USBIPCMDSubmit()
                 cmd.unpack(usb_req.data)
                 cmd.data = usb_req.data
-                self.handle_data(cmd, usb_req.data[cmd.size():])
+                self.handle_data(usb_req)
         except Exception as e:
             print(e)
             traceback.print_exc()
