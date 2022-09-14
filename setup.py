@@ -12,7 +12,7 @@ setup(
     packages=find_packages(where="python_authenticator"),
     install_requires=[
         'cbor2>=4.1.2',
-        'cryptography>=2.7',
+        'cryptography>=38.0.1',
         'asn1>=2.2.0',
         'PyJwt>=0.6.1'
     ],
