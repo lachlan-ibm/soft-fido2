@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import ObjectIdentifier
 from cryptography.x509.extensions import ExtensionType
-from cryptography import utils, x509
+from cryptography import x509
 
 
 class CertUtils(object):
@@ -33,7 +33,6 @@ class CertUtils(object):
         parts = parts[::-1]
         return struct.pack(">" + 'L' * len(parts), *parts)
 
-    @utils.register_interface(ExtensionType)
     class AAGUIDExtension(x509.UnrecognizedExtension):
 
         def __init__(self, aaguid, oid=ObjectIdentifier("1.3.6.1.4.1.45724.1.1.4")):
@@ -43,7 +42,6 @@ class CertUtils(object):
             encodedAAGUID = encoder.output()
             super().__init__(oid, encodedAAGUID)
 
-    @utils.register_interface(ExtensionType)
     class AndroidKeystoreExtension(x509.UnrecognizedExtension):
         '''
         KeyDescription ::= SEQUENCE
@@ -162,7 +160,6 @@ class CertUtils(object):
             encoder.leave()  # end androidKey asn1
             super().__init__(oid, encoder.output())
 
-    @utils.register_interface(ExtensionType)
     class AppleNonceExtension(x509.UnrecognizedExtension):
 
         def __init__(self, nonce, oid=ObjectIdentifier("1.2.840.113635.100.8.2")):
