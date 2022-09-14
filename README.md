@@ -3,7 +3,7 @@
 ## Prerequisites:
 
 ### Python
-    * >= Python 3.5
+    * >= Python 3.7
 
 ### Pip modules
 
