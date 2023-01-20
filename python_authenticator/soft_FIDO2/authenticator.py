@@ -541,7 +541,7 @@ class Fido2Authenticator(object):
         pubArea += [0, 11]  # name_alg = TPM_ALG_SHA256
         pubArea += [0] * 4  # TPMA_OBJECT
         pubArea += [0] * 2  # authPolicy
-        pubArea += [0, 1]  # symetric = TPM_ALG_NULL
+        pubArea += [0, 0x10]  # symetric = TPM_ALG_NULL
         pubArea += [1, 4]  # scheme = TMP_ALG_RSASSA (PKCS1-v1.5)
         pubArea += [4, 0]  # keySize
         pubArea += [0] * 4  # exponent
@@ -875,6 +875,10 @@ class Fido2Authenticator(object):
         }
         if self.transports is not None:
             spkc['getTransports'] = self.transports
+        if(cco['extensions'] != None 
+                and isinstance(cco['extensions'], dict) 
+                and "devicePubKey" in cco['extensions'].keys()):
+            raise RuntimeError("TODO")
         return spkc
 
     def assertion_signiture(self, authData, clientDataHash, keyPair):
@@ -944,6 +948,8 @@ class Fido2Authenticator(object):
         }
         if self.userHandle != None:
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
+        if "attestation" in cro.keys():
+            raise RuntimeError("TODO")
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8')).digest())
 
         credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
@@ -960,6 +966,10 @@ class Fido2Authenticator(object):
             'type': 'public-key',
             'getClientExtensionResults': {}
         }
+        if(cro['extensions'] != None 
+                and isinstance(cro['extensions'], dict) 
+                and "devicePubKey" in cro['extensions'].keys()):
+            raise RuntimeError("TODO")
         return spkc
 
 
