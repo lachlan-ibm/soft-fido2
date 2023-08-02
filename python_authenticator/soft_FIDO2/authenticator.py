@@ -65,12 +65,9 @@ class Fido2Authenticator(object):
         self.transports = transports
         self.cred_id_bytes = None
 
-        elif keyPair:
-            #If credId passed in then keyPair will be ignored
+        if keyPair:
             self.kp = keyPair
-
-        else:
-            #else fall back to creating key pair
+        else: #fall back to creating key pair
             self.kp = KeyPair.generate_rsa()
 
         if credId != None:
