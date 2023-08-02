@@ -189,7 +189,7 @@ class Fido2Authenticator(object):
         Return:
             KeyPair: original key pair stored in credId
         """
-        private_bytes = keyPair.get_private.decrypt(
+        private_bytes = keyPair.get_private().decrypt(
             cls._urlb64_decode(credId),
             padding.OEAP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
         privateKey = serialization.load_pem_private_key(private_bytes, password=None, backend=default_backend())
@@ -422,8 +422,8 @@ class Fido2Authenticator(object):
             flags |= 0x01  # UP
         if not assertion:
             flags |= 0x40  # AT
-        if attStmtFmt != 'fido-u2f' and uv:
-            flags |= 0x04  # UV
+        #if attStmtFmt != 'fido-u2f' and uv:
+        #    flags |= 0x04  # UV
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8'))
         #Add counter and increment
         authDataBytes += struct.pack("I", self.counter)
@@ -875,7 +875,7 @@ class Fido2Authenticator(object):
         }
         if self.transports is not None:
             spkc['getTransports'] = self.transports
-        if(cco['extensions'] != None 
+        if(cco.get('extensions') != None 
                 and isinstance(cco['extensions'], dict) 
                 and "devicePubKey" in cco['extensions'].keys()):
             raise RuntimeError("TODO")
