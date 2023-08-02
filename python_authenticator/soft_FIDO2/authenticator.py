@@ -966,7 +966,7 @@ class Fido2Authenticator(object):
             'type': 'public-key',
             'getClientExtensionResults': {}
         }
-        if(cro['extensions'] != None 
+        if(cro.get('extensions', None) != None 
                 and isinstance(cro['extensions'], dict) 
                 and "devicePubKey" in cro['extensions'].keys()):
             raise RuntimeError("TODO")
