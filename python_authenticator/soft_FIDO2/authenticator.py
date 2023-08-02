@@ -63,10 +63,10 @@ class Fido2Authenticator(object):
         self.caKeyPair = caKeyPair
         self.hashAlg = hashingAlg
         self.transports = transports
+        self.cred_id_bytes = None
 
-        if credId != None and caKeyPair != None:
-            #If we havea credId and a caKeyPair try decode key from credId
-            self.kp = self._get_key_pair_from_credential_id(credId, caKeyPair)
+        if credId != None:
+            self.cred_id_bytes = self._urlb64_decode(credId)
 
         elif keyPair:
             #If credId passed in then keyPair will be ignored
@@ -160,7 +160,10 @@ class Fido2Authenticator(object):
         Return:
             bytes: credential Id for given key pair and ca key pair
         """
-        return hashlib.sha256(keyPair.get_public_bytes()).digest()
+        if self.cred_id_bytes == None:
+            return hashlib.sha256(keyPair.get_public_bytes()).digest()
+        else:
+            return self.cred_id_bytes
 
     def get_credential_id(self, keyPair=None):
         """credential ID defaults to the SHA256 of the public key
