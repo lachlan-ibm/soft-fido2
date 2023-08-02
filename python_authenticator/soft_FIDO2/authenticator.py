@@ -65,9 +65,6 @@ class Fido2Authenticator(object):
         self.transports = transports
         self.cred_id_bytes = None
 
-        if credId != None:
-            self.cred_id_bytes = self._urlb64_decode(credId)
-
         elif keyPair:
             #If credId passed in then keyPair will be ignored
             self.kp = keyPair
@@ -75,6 +72,9 @@ class Fido2Authenticator(object):
         else:
             #else fall back to creating key pair
             self.kp = KeyPair.generate_rsa()
+
+        if credId != None:
+            self.cred_id_bytes = self._urlb64_decode(credId)
 
         if aaguid == None:
             self.aaguid = [0] * 16
