@@ -6,14 +6,14 @@ import uuid
 from cryptography.fernet import Fernet
 
 
-def Cred_id_Consturctor_Test():
+def test_Cred_id_Consturctor():
     u = str(uuid.uuid4())
     kp = KeyPair.generate_rsa()
     authenticator = Fido2Authenticator(keyPair=kp, credId=u)
     assert authenticator.get_credential_id() == u, "Cred Id does not match original"
 
 
-def Cred_Id_As_Encrypted_Key_Test():
+def test_Cred_Id_As_Encrypted_Key():
     fk = Fernet(Fernet.generate_key())
     kp = KeyPair.generate_ecdsa()
     authenticator = Fido2Authenticator(keyPair=kp, fKey=fk)

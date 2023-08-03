@@ -5,7 +5,7 @@ import pytest
 from fido2.server import Fido2Server
 
 
-def E2E_Unit_Test(fido2_server, fido2_authenticator):
+def test_E2E(fido2_server, fido2_authenticator):
     assertion_options = fido2_server.authenticate_begin(fido2_user)
     assertion = authenticator.credential_request(assertion_options)
     fido2_server.authenticate_complete(assertion)

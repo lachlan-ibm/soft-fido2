@@ -5,14 +5,14 @@ import pytest
 from fido2.server import Fido2Server
 
 
-def E2E_Unit_Test(fido2_server, fido2_rp, fido2_user):
+def test_E2E(fido2_server, fido2_rp, fido2_user):
     attestation_options = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     fido2_server.register_complete(attesation)
 
 
-def Authenticator_Data_Test(fido2_server, fido2_authenticator):
+def test_Authenticator_Data(fido2_server, fido2_authenticator):
     attestation_options = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
@@ -26,7 +26,7 @@ def Authenticator_Data_Test(fido2_server, fido2_authenticator):
     #        serverAttestationObject.auth_data, serverClientData.hash,
 
 
-def Client_Data_JSON_Test(fido2_sever, fido2_authenticator):
+def test_Client_Data_JSON(fido2_sever, fido2_authenticator):
     attestation_options = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
@@ -34,7 +34,7 @@ def Client_Data_JSON_Test(fido2_sever, fido2_authenticator):
     serverClientData = ClientData(attestation["clientDataJSON"])
 
 
-def Signing_Test(fido2_server, fido2_authenticator):
+def test_Signing(fido2_server, fido2_authenticator):
     attestation_options = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
@@ -49,7 +49,7 @@ def Signing_Test(fido2_server, fido2_authenticator):
     pubKey.verify(attStmt.get('sig'), authData + clientDataHash, padding.PKCS1v15(), hashes.SHA256())
 
 
-def Attestation_Object_Test(fido2_server, fido2_authenticator):
+def test_Attestation_Object(fido2_server, fido2_authenticator):
     attestation_options = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
