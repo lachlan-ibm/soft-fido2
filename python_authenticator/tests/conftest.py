@@ -1,8 +1,8 @@
 import pytest
+from from fido2.webauthn import PublicKeyCredentialRpEntity
 
-rp = "https://fido2.authenticator.test"
-
-user = 'example_user'
+user = {"id": b"example_user", "name": "Example User"}
+rp = PublicKeyCredentialRpEntity("Fido2 Authenticator Test", "fido2.authenticator.test")
 
 @pytest.fixture(scope='module', autouse=True)
 def fido2_rp():
