@@ -20,7 +20,7 @@ def fido2_server():
 @pytest.fixture(scope='module')
 def fido2_authenticator(fido2_server, fido2_user):
     from soft_FIDO2 import Fido2Authenticator
-    attestation_options = fido2_server().register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     fido2_server.register_complete(attesation)

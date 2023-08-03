@@ -6,7 +6,7 @@ from fido2.server import Fido2Server
 
 
 def test_E2E(fido2_server, fido2_rp, fido2_user):
-    attestation_options = fido2_server.register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     print(attestation_options)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
@@ -14,7 +14,7 @@ def test_E2E(fido2_server, fido2_rp, fido2_user):
 
 
 def test_Authenticator_Data(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.attestation import PackedAttestation
@@ -28,7 +28,7 @@ def test_Authenticator_Data(fido2_server, fido2_authenticator):
 
 
 def test_Client_Data_JSON(fido2_sever, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.ctap2 import ClientData
@@ -36,7 +36,7 @@ def test_Client_Data_JSON(fido2_sever, fido2_authenticator):
 
 
 def test_Signing(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     cdj = base64.urlsafe_b64decode(attestation.get("clientDataJSON"))
@@ -51,7 +51,7 @@ def test_Signing(fido2_server, fido2_authenticator):
 
 
 def test_Attestation_Object(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.ctap2 import AttestationObject
