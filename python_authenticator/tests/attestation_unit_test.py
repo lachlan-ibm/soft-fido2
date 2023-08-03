@@ -7,6 +7,7 @@ from fido2.server import Fido2Server
 
 def test_E2E(fido2_server, fido2_rp, fido2_user):
     attestation_options = fido2_server.register_begin(fido2_user)
+    print(attestation_options)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     fido2_server.register_complete(attesation)
