@@ -889,7 +889,7 @@ class Fido2Authenticator(object):
             raise RuntimeError("TODO")
         return spkc
 
-    def assertion_signiture(self, authData, clientDataHash, keyPair):
+    def assertion_signature(self, authData, clientDataHash, keyPair):
         toSign = []
         toSign += authData
         toSign += clientDataHash
@@ -972,7 +972,7 @@ class Fido2Authenticator(object):
 
         credIdBytes = self._get_credential_id_bytes(keyPair)
 
-        saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
+        saar['signature'] = self.assertion_signature(authData, clientDataHash, keyPair)
 
         spkc = {
             'id': self.get_credential_id(keyPair),
