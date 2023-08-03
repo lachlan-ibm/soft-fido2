@@ -167,7 +167,8 @@ class Fido2Authenticator(object):
             return self.cred_id_bytes
         elif self.fKey != None and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             keyBytes  = keyPair.get_private_bytes()
-            return self.fKey.encrypt(keyPair.get_private_bytes())
+            self.cred_id_bytes = self.fKey.encrypt(keyPair.get_private_bytes())
+            return self.cred_id_bytes
         else:
             return hashlib.sha256(keyPair.get_public_bytes()).digest()
 
