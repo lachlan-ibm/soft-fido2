@@ -894,7 +894,18 @@ class Fido2Authenticator(object):
         toSign += authData
         toSign += clientDataHash
         toSignStr = bytes(toSign)
-        sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), hashes.SHA256())
+        sig = b''
+        if isinstance(keyPair.get_public(), rsa.RSAPublicKey) == True:
+            sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), hashes.SHA256())
+        elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey) == True:
+            hasher = hashes.Hash(self.hashAlg)
+            hasher.update(toSignStr)
+            digest = hasher.finalize()
+            sig = keyPair.get_private().sign(hasher.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
+        elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
+            sig = keyPair.get_private().sign(toSign)
+        else:
+            raise Exception("Unsupported key alg")
         return str(base64.urlsafe_b64encode(sig), 'utf-8')
 
     def assertion_options_response_to_credential_request_options(self, options):
@@ -961,9 +972,6 @@ class Fido2Authenticator(object):
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8')).digest())
 
         credIdBytes = self._get_credential_id_bytes(keyPair)
-
-        if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            raise Exception("Only RSA keys supported")
 
         saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
 
