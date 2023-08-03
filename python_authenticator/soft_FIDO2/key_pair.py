@@ -1,6 +1,34 @@
+import struct
+import cbor2 as cbor
+
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.backends import default_backend
+
+
+class KeyUtils(object):
+
+    @classmethod
+    def _long_to_bytes(cls, l):
+        limit = 256**4 - 1  #max value we can fit into a struct.pack
+        parts = []
+        while l:
+            parts.append(l & limit)
+            l >>= 32
+        parts = parts[::-1]
+        return struct.pack(">" + 'L' * len(parts), *parts)
+
+
+    @classmethod
+    def _bytes_to_long(self, b):
+        l = len(b) / 4
+        parts = struct.unpack(">" + 'L' * l, b)[::-1]
+        result = 0
+        for i in range(len(parts)):
+            temp = parts[i] << (32 * i)
+            result += temp
+
+        return result
 
 
 class KeyPair(object):
