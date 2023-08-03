@@ -1,5 +1,5 @@
 import pytest
-from from fido2.webauthn import PublicKeyCredentialRpEntity
+from fido2.webauthn import PublicKeyCredentialRpEntity
 
 user = {"id": b"example_user", "name": "Example User"}
 rp = PublicKeyCredentialRpEntity("Fido2 Authenticator Test", "fido2.authenticator.test")
