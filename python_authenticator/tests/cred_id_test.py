@@ -18,11 +18,12 @@ def Cred_Id_As_Encrypted_Key_Test():
     kp = KeyPair.generate_ecdsa()
     authenticator = Fido2Authenticator(keyPair=kp, fKey=fk)
 
+    credIdBytes = authenticator._get_credential_id_bytes()
     credId = authenticator.get_credential_id()
     new_authenticator = Fido2Authenticator(credId=credId, fKey=fk)
 
-    original_key = kp.get_private()
-    rebuilt_key = new_authenticator.kp.get_private()
+    original_key = kp.get_private_bytes()
+    rebuilt_key = new_authenticator.kp.get_private_bytes()
 
     assert original_key == rebuilt_key
-    assert credId == new_authenticator.get_credential_id()
+    assert credIdBytes == new_authenticator._get_credential_id_bytes()

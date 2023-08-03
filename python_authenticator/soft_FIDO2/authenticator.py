@@ -199,8 +199,9 @@ class Fido2Authenticator(object):
         Return:
             KeyPair: original key pair stored in credId
         """
+        encBytes = self._urlb64_decode(credId)
         #decrypt the bytes using the Fernet key
-        keyBytes = fKey.decrypt(credId)
+        keyBytes = fKey.decrypt(encBytes)
         #Finally reconstruct the key
         return KeyPair.load_key_pair(keyBytes)
 
