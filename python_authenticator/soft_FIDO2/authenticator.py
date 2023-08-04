@@ -71,12 +71,16 @@ class Fido2Authenticator(object):
 
         if self.kp == None and credId != None and fKey != None:
             try:
-                self.kp = _get_key_pair_from_credential_id(credId, fKey)
-            except:
+                self.kp = self._get_key_pair_from_credential_id(credId, fKey)
+            except Exception as e:
+                print(e)
                 #set the bytes as the cred_id and generate a key
                 self.cred_id_bytes = self._urlb64_decode(credId)
         if self.kp == None:
             self.kp = KeyPair.generate_rsa()
+
+        if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
+            self.cred_id_bytes = self._urlb64_decode(credId)
 
 
         if aaguid == None:
@@ -199,7 +203,7 @@ class Fido2Authenticator(object):
         Return:
             KeyPair: original key pair stored in credId
         """
-        encBytes = self._urlb64_decode(credId)
+        encBytes = cls._urlb64_decode(credId)
         #decrypt the bytes using the Fernet key
         keyBytes = fKey.decrypt(encBytes)
         #Finally reconstruct the key

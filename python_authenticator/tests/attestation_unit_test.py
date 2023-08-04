@@ -3,14 +3,18 @@
 from soft_FIDO2 import Fido2Authenticator
 import pytest
 from fido2.server import Fido2Server
+import base64
 
 
 def test_E2E(fido2_server, fido2_rp, fido2_user):
     attestation_options, state = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
     print(attestation_options)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
-    fido2_server.register_complete(attesation)
+    fido2_server.register_complete(attestation)
 
 
 def test_Authenticator_Data(fido2_server, fido2_authenticator):
