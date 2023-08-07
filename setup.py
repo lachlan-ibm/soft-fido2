@@ -3,7 +3,7 @@ import os
 
 setup(
     name='soft_FIDO2',
-    version='0.1.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
+    version='0.2.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
     description='Software based FIDO2 Authenticator',
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
@@ -12,7 +12,7 @@ setup(
     packages=find_packages(where="python_authenticator"),
     install_requires=[
         'cbor2>=4.1.2',
-        'cryptography>=2.7',
+        'cryptography>=38.0.1',
         'asn1>=2.2.0',
         'PyJwt>=0.6.1'
     ],

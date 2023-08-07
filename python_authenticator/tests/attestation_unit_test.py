@@ -3,17 +3,22 @@
 from soft_FIDO2 import Fido2Authenticator
 import pytest
 from fido2.server import Fido2Server
+import base64
 
 
-def E2E_Unit_Test(fido2_server, fido2_rp, fido2_user):
-    attestation_options = fido2_server.register_begin(fido2_user)
+def test_E2E(fido2_server, fido2_rp, fido2_user):
+    attestation_options, state = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    print(attestation_options)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
-    fido2_server.register_complete(attesation)
+    fido2_server.register_complete(attestation)
 
 
-def Authenticator_Data_Test(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+def test_Authenticator_Data(fido2_server, fido2_authenticator):
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.attestation import PackedAttestation
@@ -26,16 +31,16 @@ def Authenticator_Data_Test(fido2_server, fido2_authenticator):
     #        serverAttestationObject.auth_data, serverClientData.hash,
 
 
-def Client_Data_JSON_Test(fido2_sever, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+def test_Client_Data_JSON(fido2_sever, fido2_authenticator):
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.ctap2 import ClientData
     serverClientData = ClientData(attestation["clientDataJSON"])
 
 
-def Signing_Test(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+def test_Signing(fido2_server, fido2_authenticator):
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     cdj = base64.urlsafe_b64decode(attestation.get("clientDataJSON"))
@@ -49,8 +54,8 @@ def Signing_Test(fido2_server, fido2_authenticator):
     pubKey.verify(attStmt.get('sig'), authData + clientDataHash, padding.PKCS1v15(), hashes.SHA256())
 
 
-def Attestation_Object_Test(fido2_server, fido2_authenticator):
-    attestation_options = fido2_server.register_begin(fido2_user)
+def test_Attestation_Object(fido2_server, fido2_authenticator):
+    attestation_options, state = fido2_server.register_begin(fido2_user)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
     from fido2.ctap2 import AttestationObject

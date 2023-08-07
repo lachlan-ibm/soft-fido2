@@ -18,10 +18,10 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 
 try:
-    from soft_FIDO2.key_pair import KeyPair
+    from soft_FIDO2.key_pair import KeyPair, KeyUtils
 except:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from key_pair import KeyPair
+    from key_pair import KeyPair, KeyUtils
 try:
     from soft_FIDO2.cert_utils import CertUtils
 except:
@@ -39,7 +39,8 @@ class Fido2Authenticator(object):
                  caCert=None,
                  counter=0,
                  hashingAlg=hashes.SHA256(),
-                 transports=None):
+                 transports=None,
+                 fKey=None):
         """
         Args:
             keyPair (KeyPair): public/private key pair to sign challenges with;
@@ -55,7 +56,8 @@ class Fido2Authenticator(object):
             hashingAlg (`cryptography.hazmat.primitives.hashes.HashAlgorithm`): Hashing algorithm to use for "packed"
                         attesttation format.
             transports (list, optional): a list of support transports; default = None
-
+            fKey (cryptography.fernet.Fernet, optional): An optional symmetric key to generate 
+                        the cred id with. Can be used to reconstruct private EC key for assertions.
         """
         self.counter = counter
         self.userHandle = None
@@ -63,18 +65,23 @@ class Fido2Authenticator(object):
         self.caKeyPair = caKeyPair
         self.hashAlg = hashingAlg
         self.transports = transports
+        self.cred_id_bytes = None
+        self.kp = keyPair
+        self.fKey = fKey
 
-        if credId != None and caKeyPair != None:
-            #If we havea credId and a caKeyPair try decode key from credId
-            self.kp = self._get_key_pair_from_credential_id(credId, caKeyPair)
-
-        elif keyPair:
-            #If credId passed in then keyPair will be ignored
-            self.kp = keyPair
-
-        else:
-            #else fall back to creating key pair
+        if self.kp == None and credId != None and fKey != None:
+            try:
+                self.kp = self._get_key_pair_from_credential_id(credId, fKey)
+            except Exception as e:
+                print(e)
+                #set the bytes as the cred_id and generate a key
+                self.cred_id_bytes = self._urlb64_decode(credId)
+        if self.kp == None:
             self.kp = KeyPair.generate_rsa()
+
+        if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
+            self.cred_id_bytes = self._urlb64_decode(credId)
+
 
         if aaguid == None:
             self.aaguid = [0] * 16
@@ -147,7 +154,7 @@ class Fido2Authenticator(object):
 
         return result
 
-    def _get_credential_id_bytes(self, keyPair, caKeyPair):
+    def _get_credential_id_bytes(self, keyPair):
         """Get the bytes of a credential ID for a given authenticator.
         If a self.caKeyPair is not None, credId is the encoded bytes of self.kp.get_private
 
@@ -160,7 +167,14 @@ class Fido2Authenticator(object):
         Return:
             bytes: credential Id for given key pair and ca key pair
         """
-        return hashlib.sha256(keyPair.get_public_bytes()).digest()
+        if self.cred_id_bytes != None:
+            return self.cred_id_bytes
+        elif self.fKey != None and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
+            keyBytes  = keyPair.get_private_bytes()
+            self.cred_id_bytes = self.fKey.encrypt(keyPair.get_private_bytes())
+            return self.cred_id_bytes
+        else:
+            return hashlib.sha256(keyPair.get_public_bytes()).digest()
 
     def get_credential_id(self, keyPair=None):
         """credential ID defaults to the SHA256 of the public key
@@ -173,12 +187,12 @@ class Fido2Authenticator(object):
         """
         if keyPair == None:
             keyPair = self.kp
-        credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
-        credId = base64.urlsafe_b64encode(credIdBytes).decode('utf-8')
-        return re.sub(r'[=]+$', '', credId)
+        credIdBytes = self._get_credential_id_bytes(keyPair)
+        return self._urlb64_encode(credIdBytes)
+
 
     @classmethod
-    def _get_key_pair_from_credential_id(cls, credId, keyPair):
+    def _get_key_pair_from_credential_id(cls, credId, fKey):
         """Given a credId and caKeyPair attempt to reconstruct the private/public
         key pair
 
@@ -189,12 +203,11 @@ class Fido2Authenticator(object):
         Return:
             KeyPair: original key pair stored in credId
         """
-        private_bytes = keyPair.get_private.decrypt(
-            cls._urlb64_decode(credId),
-            padding.OEAP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None))
-        privateKey = serialization.load_pem_private_key(private_bytes, password=None, backend=default_backend())
-        publicKey = privateKey.public_key()
-        return KeyPair(privateKey, publicKey)
+        encBytes = cls._urlb64_decode(credId)
+        #decrypt the bytes using the Fernet key
+        keyBytes = fKey.decrypt(encBytes)
+        #Finally reconstruct the key
+        return KeyPair.load_key_pair(keyBytes)
 
     def get_aaguid(self, hexString=True):
         """If hexString returns in the format:
@@ -371,14 +384,14 @@ class Fido2Authenticator(object):
         credPublicKeyCOSE["3"] = self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg)
         if isinstance(publicKey, rsa.RSAPublicKey):
             credPublicKeyCOSE["1"] = 3
-            credPublicKeyCOSE["-1"] = self._long_to_bytes(publicKey.public_numbers().n)
-            credPublicKeyCOSE["-2"] = self._long_to_bytes(publicKey.public_numbers().e)
+            credPublicKeyCOSE["-1"] = KeyUtils._long_to_bytes(publicKey.public_numbers().n)
+            credPublicKeyCOSE["-2"] = KeyUtils._long_to_bytes(publicKey.public_numbers().e)
 
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             credPublicKeyCOSE["1"] = 2
             credPublicKeyCOSE["-1"] = 1
-            credPublicKeyCOSE["-2"] = self._long_to_bytes(publicKey.public_numbers().x)
-            credPublicKeyCOSE["-3"] = self._long_to_bytes(publicKey.public_numbers().y)
+            credPublicKeyCOSE["-2"] = KeyUtils._long_to_bytes(publicKey.public_numbers().x)
+            credPublicKeyCOSE["-3"] = KeyUtils._long_to_bytes(publicKey.public_numbers().y)
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             credPublicKeyCOSE["1"] = 6
             credPublicKeyCOSE["-1"] = 6
@@ -422,7 +435,7 @@ class Fido2Authenticator(object):
             flags |= 0x01  # UP
         if not assertion:
             flags |= 0x40  # AT
-        if attStmtFmt != 'fido-u2f' and uv:
+        if attStmtFmt != 'fido-u2f' and uv != None and uv == True:
             flags |= 0x04  # UV
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8'))
         #Add counter and increment
@@ -430,7 +443,7 @@ class Fido2Authenticator(object):
         self.counter += 1
 
         if not assertion:
-            credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
+            credIdBytes = self._get_credential_id_bytes(keyPair)
             authDataBytes += self.process_attested_credential_data(keyPair.get_public(), credIdBytes)
         authData = bytes(authDataBytes)
         return authData
@@ -541,7 +554,7 @@ class Fido2Authenticator(object):
         pubArea += [0, 11]  # name_alg = TPM_ALG_SHA256
         pubArea += [0] * 4  # TPMA_OBJECT
         pubArea += [0] * 2  # authPolicy
-        pubArea += [0, 1]  # symetric = TPM_ALG_NULL
+        pubArea += [0, 0x10]  # symetric = TPM_ALG_NULL
         pubArea += [1, 4]  # scheme = TMP_ALG_RSASSA (PKCS1-v1.5)
         pubArea += [4, 0]  # keySize
         pubArea += [0] * 4  # exponent
@@ -856,7 +869,7 @@ class Fido2Authenticator(object):
         clientDataHash = hashlib.sha256(clientDataJSON.encode('utf-8')).digest()
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii'))
 
-        credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
+        credIdBytes = self._get_credential_id_bytes(keyPair)
 
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
@@ -875,14 +888,28 @@ class Fido2Authenticator(object):
         }
         if self.transports is not None:
             spkc['getTransports'] = self.transports
+        if(cco.get('extensions') != None 
+                and isinstance(cco['extensions'], dict) 
+                and "devicePubKey" in cco['extensions'].keys()):
+            raise RuntimeError("TODO")
         return spkc
 
-    def assertion_signiture(self, authData, clientDataHash, keyPair):
+    def assertion_signature(self, authData, clientDataHash, keyPair):
         toSign = []
         toSign += authData
         toSign += clientDataHash
         toSignStr = bytes(toSign)
-        sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), hashes.SHA256())
+        sig = b''
+        if isinstance(keyPair.get_public(), rsa.RSAPublicKey) == True:
+            sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), self.hashAlg)
+        elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey) == True:
+            hasher = hashes.Hash(self.hashAlg)
+            hasher.update(toSignStr)
+            sig = keyPair.get_private().sign(hasher.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
+        elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
+            sig = keyPair.get_private().sign(toSign)
+        else:
+            raise Exception("Unsupported key alg")
         return str(base64.urlsafe_b64encode(sig), 'utf-8')
 
     def assertion_options_response_to_credential_request_options(self, options):
@@ -944,14 +971,13 @@ class Fido2Authenticator(object):
         }
         if self.userHandle != None:
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
+        if "attestation" in cro.keys():
+            raise RuntimeError("TODO")
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8')).digest())
 
-        credIdBytes = self._get_credential_id_bytes(keyPair, self.caKeyPair)
+        credIdBytes = self._get_credential_id_bytes(keyPair)
 
-        if not isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            raise Exception("Only RSA keys supported")
-
-        saar['signature'] = self.assertion_signiture(authData, clientDataHash, keyPair)
+        saar['signature'] = self.assertion_signature(authData, clientDataHash, keyPair)
 
         spkc = {
             'id': self.get_credential_id(keyPair),
@@ -960,6 +986,10 @@ class Fido2Authenticator(object):
             'type': 'public-key',
             'getClientExtensionResults': {}
         }
+        if(cro.get('extensions', None) != None 
+                and isinstance(cro['extensions'], dict) 
+                and "devicePubKey" in cro['extensions'].keys()):
+            raise RuntimeError("TODO")
         return spkc
 
 
