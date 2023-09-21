@@ -428,11 +428,10 @@ class USBDevice():
         control_req = StandardDeviceRequest()
         control_req.unpack(usb_req.setup.to_bytes(8, 'big'))
         handled = False
-        print("  UC Request Type {}".format(control_req.bmRequestType))
-        print("  UC Request {}".format(control_req.bRequest))
-        print("  UC Value  {}".format(control_req.wValue))
-        print("  UCIndex  {}".format(control_req.wIndex))
-        print("  UC Length {}".format(control_req.wLength))
+        print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_control)' + bcolors.ENDC + "] UC Request Type {}; UC " + \
+                "Request {}; UC Value  {}; UCIndex  {}; UC Length {}".format(
+                control_req.bmRequestType, control_req.bRequest, control_req.wValue, control_req.wIndex,
+                control_req.wLength))
         if control_req.bmRequestType == 0x80: # Host Request
             if control_req.bRequest == 0x06: # Get Descriptor
                 handled = self.handle_get_descriptor(control_req, usb_req)
@@ -449,13 +448,16 @@ class USBDevice():
     def handle_usb_request(self, usb_req):
         try:
             if usb_req.ep == 0:
-                print('[' + bcolors.OKBLUE + 'USBDevice' + bcolors.ENDC + '] Control request')
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] Control request')
                 self.handle_usb_control(usb_req)
             else:
-                print('[' + bcolors.OKBLUE + 'USBDevice' + bcolors.ENDC + '] Data request')
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] Data request for ep {}'.format(usb_req.ep))
                 cmd = USBIPCMDSubmit()
                 cmd.unpack(usb_req.data)
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] header len {}'.format(len(cmd.pack())))
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] maybe data {}'.format(usb_req.data[len(cmd.pack()):]))
                 cmd.data = usb_req.data
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] USB/IP Command Submit [{}]'.format(cmd.data))
                 self.handle_data(usb_req)
         except Exception as e:
             print(e)
@@ -576,10 +578,10 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                     self.request.close()
                     break
                 else:
-                    print('----------------')
                     print('handles requests')
                     command = self.request.recv(4)
-                    print('{}'.format(list(command)))
+                    print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP command [{}]'.format(
+                            ', '.join( hex(x) for x in list(command) )))
                     if (command == 0x00000003):
                         cmd = USBIPCMDUnlink()
                         data = self.request.recv(cmd.size())
@@ -590,12 +592,12 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                     else :
                         cmd = USBIPCMDSubmit()
                         data = self.request.recv(cmd.size())
-                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP request [{}]'.format(
+                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP data [{}]'.format(
                             ', '.join( hex(x) for x in list(data) )))
                         if len(data) == 0:
                             break
                         cmd.unpack(data)
-                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP Command:: seqnum: {}; devid: {};'\
+                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP Command:: seqnum: {}; devid: {}; '\
                                 'direction: {}; ep: {}; flags: {}; no. of pkts: {}; interval: {}; setup: {}; buff: {}'.format(
                             cmd.seqnum,cmd.devid,cmd.direction,cmd.ep,cmd.transfer_flags,cmd.number_of_packets,
                             cmd.interval,cmd.setup,cmd.transfer_buffer_length))

@@ -252,7 +252,7 @@ class CTAP2HID(USBDevice):
         if cid_state['msg'].complete == True:
             cid_state['txn'] = FIDO2Transaction(cid_state['msg'], data)
         '''
-        self.send_usb_req(usb_req, b'\x06', 1)
+        self.send_usb_req(usb_req, b'\x06', 1, ep=usb_req.ep)
 
 
     def handle_unknown_control(self, control_req, usb_req):
@@ -281,6 +281,18 @@ class CTAP2HID(USBDevice):
             pass
         return handled
 
+
+'''
+To run:
+    on CLIENT::
+    $ python hid_device.py
+
+    on SERVER::
+    sudo modprobe vhci-hcd
+    sudo usbip -d list -r 127.0.0.1
+    sudo usbip -d attach -r 127.0.0.1 -b 1-1.1
+    lsusb -v -d 1337:1337
+'''
 
 usb_dev = CTAP2HID()
 usb_container = USBContainer()
