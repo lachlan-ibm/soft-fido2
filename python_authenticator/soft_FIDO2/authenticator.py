@@ -439,7 +439,7 @@ class Fido2Authenticator(object):
             flags |= 0x04  # UV
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8'))
         #Add counter and increment
-        authDataBytes += struct.pack("I", self.counter)
+        authDataBytes += struct.pack(">I", self.counter)
         self.counter += 1
 
         if not assertion:
