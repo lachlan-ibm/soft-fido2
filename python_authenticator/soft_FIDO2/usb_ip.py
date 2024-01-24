@@ -537,6 +537,7 @@ class USBContainer:
 
 
     def run(self, ip='0.0.0.0', port=3240):
+        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] Starting server')
         socketserver.TCPServer.allow_reuse_address = True
         self.server = socketserver.ThreadingTCPServer((ip, port), USBIPConnection)
         self.server.usbcontainer = self

@@ -206,6 +206,28 @@ rp_response = requests.post("https://www.myrp.ibm.com/assertion/result",
 ```
 
 
+# Python / USBIP
+Requires:
+- USB/IP
+- Python
+  - usb_ip
+
+
+### Start the python usbip server
+```
+python hid_device.py
+```
+
+### List the device
+```
+usbip list -r 127.0.0.1
+```
+
+### Attach to a device
+```
+usbpi attach -r 127.0.0.1 -b <bus_id, 1-1.1>
+```
+
 # Rust
 
 ## Not yet implemented
