@@ -212,6 +212,11 @@ Requires:
 - Python
   - usb_ip
 
+Python server is hard coded to listen on the default USB/IP port (3240)
+
+Users can use `lsusb` to list the devices known to the client.
+
+Users can use `dmesg` to debug USB packed recieved by the client.
 
 ### Start the python usbip server
 ```
