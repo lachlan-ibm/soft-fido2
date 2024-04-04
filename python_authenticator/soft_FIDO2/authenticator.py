@@ -77,7 +77,9 @@ class Fido2Authenticator(object):
                 #set the bytes as the cred_id and generate a key
                 self.cred_id_bytes = self._urlb64_decode(credId)
         if self.kp == None:
-            self.kp = KeyPair.generate_rsa()
+            #self.kp = KeyPair.generate_rsa()
+            #self.kp = KeyPair.generate_ed25519()
+            self.kp = KeyPair.generate_ecdsa()
 
         if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
             self.cred_id_bytes = self._urlb64_decode(credId)
@@ -907,7 +909,7 @@ class Fido2Authenticator(object):
             hasher.update(toSignStr)
             sig = keyPair.get_private().sign(hasher.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
         elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
-            sig = keyPair.get_private().sign(toSign)
+            sig = keyPair.get_private().sign(toSignStr)
         else:
             raise Exception("Unsupported key alg")
         return str(base64.urlsafe_b64encode(sig), 'utf-8')

@@ -29,7 +29,7 @@ advised of the possibility of such damage.
 Update 2022 by Lachlan Gleeson for python 3
 '''
 
-import socketserver, datetime, struct, traceback
+import socketserver, datetime, struct, traceback, re
 
 
 # Hey StackOverflow !
@@ -37,13 +37,44 @@ class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
     OKGREEN = '\033[92m'
+    OKPINK = '\033[95m'
+    OKYELLOW = '\033[93m'
+    OKCYAN = '\003[1;36m'
+    OKPURPLE = '\033[35m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-class BaseStucture:
+
+def colour_print(colour=bcolors.OKBLUE, component='USB/IP', msg=''):
+    print('[' + colour + component + bcolors.ENDC + '] ' + msg)
+
+
+def print_bytes(*args):
+    result = ""
+    count = 0
+    for ba in args:
+        for x in ba:
+            result += "%02X " % x
+            count += 1
+            if count == 8 :
+                result += " "
+            elif count == 16:
+                print("\t" + result)
+                result = ""
+                count = 0
+    print('\t' + result + '\n')
+
+def dump_bytes(*args, colour=bcolors.OKPURPLE, component='USB/IP CONTROLLER', msg=''):
+    #Print bytes in nice format
+    c = colour if colour != None else bcolors.OKPURPLE
+    colour_print(colour=colour, component=component, msg=msg)
+    print_bytes(*args)
+
+
+class BaseStructure(object):
     _fields_ = []
 
     def __init__(self, **kwargs):
@@ -61,10 +92,9 @@ class BaseStucture:
         return struct.calcsize(self.format())
 
     def format(self):
-
         pack_format = '>'
         for field in self._fields_:
-            if isinstance(field[1], BaseStucture):
+            if isinstance(field[1], BaseStructure):
                 pack_format += str(field[1].size()) + 's'
             elif 'si' == field[1]:
                 pack_format += 'c'
@@ -82,7 +112,7 @@ class BaseStucture:
         for field in self._fields_:
             if (i == devicesCount + 2):
                 break
-            if isinstance(field[1], BaseStucture):
+            if isinstance(field[1], BaseStructure):
                 pack_format += str(field[1].size()) + 's'
             elif 'si' == field[1]:
                 pack_format += 'c'
@@ -98,8 +128,11 @@ class BaseStucture:
         values = []
         for field in self._fields_:
             #print("Field: {}".format(field))
-            if isinstance(field[1], BaseStucture):
+            if isinstance(field[1], BaseStructure):
                 values.append(getattr(self, field[0], 0).pack())
+            elif re.match(r'\d*x', field[1]):
+                #Skipp padding
+                continue
             else:
                 if 'si' == field[1]:
                     values.append(chr(getattr(self, field[0], 0)))
@@ -118,7 +151,7 @@ class BaseStucture:
         for field in self._fields_:
             if (i == devicesCount + 2):
                 break
-            if isinstance(field[1], BaseStucture):
+            if isinstance(field[1], BaseStructure):
                 values.append(getattr(self, field[0], 0).pack())
             else:
                 if 'si' == field[1]:
@@ -137,11 +170,11 @@ class BaseStucture:
                 val = struct.unpack('<' +self._fields_[i][1][1], struct.pack('>' + self._fields_[i][1][1], val))[0]
             keys_vals[self._fields_[i][0]]=val
             i+=1
-        print(keys_vals)
+        #print(keys_vals)
         self.init_from_dict(**keys_vals)
 
 
-class USBIPHeader(BaseStucture):
+class USBIPHeader(BaseStructure):
     _fields_ = [
         ('version', 'H', 273),
         ('command', 'H'),
@@ -149,8 +182,7 @@ class USBIPHeader(BaseStucture):
     ]
 
 
-
-class USBInterface(BaseStucture):
+class USBInterface(BaseStructure):
     _fields_ = [
         ('bInterfaceClass', 'B'),
         ('bInterfaceSubClass', 'B'),
@@ -158,7 +190,7 @@ class USBInterface(BaseStucture):
         ('align', 'B', 0)
     ]
 
-class USBIPDevice(BaseStucture):
+class USBIPDevice(BaseStructure):
     _fields_ = [
         ('usbPath', '256s'),
         ('busID', '32s'),
@@ -177,7 +209,7 @@ class USBIPDevice(BaseStucture):
         ('interfaces', USBInterface())
     ]
 
-class OPREPDevList(BaseStucture):
+class OPREPDevList(BaseStructure):
 
     def __init__(self, dictArg, count):
         self._fields_ = [
@@ -194,7 +226,7 @@ class OPREPDevList(BaseStucture):
                 if not hasattr(self, field[0]):
                     setattr(self, field[0], field[2])
 
-class OPREPImport(BaseStucture):
+class OPREPImport(BaseStructure):
     _fields_ = [
         ('base', USBIPHeader()),
         ('usbPath', '256s'),
@@ -213,7 +245,18 @@ class OPREPImport(BaseStucture):
         ('bNumInterfaces', 'B')
     ]
 
-class USBIPRETSubmit(BaseStucture):
+# https://www.kernel.org/doc/html/v5.14/usb/usbip_protocol.html
+
+class USBIPRETSubmit(BaseStructure):
+
+    '''
+    def __init__(self, **kwargs):
+        if 'data_frame' in kwargs:
+            self._fields_ += [('data_frame', "%ds" % len(kwargs['data_frame']))]
+            print(self._fields_)
+        super(USBIPRETSubmit, self).__init__(**kwargs)
+    '''
+
     _fields_ = [
         ('command', 'I'),
         ('seqnum', 'I'),
@@ -225,19 +268,19 @@ class USBIPRETSubmit(BaseStucture):
         ('start_frame', 'I'),
         ('number_of_packets', 'I'),
         ('error_count', 'I'),
-        ('setup', 'Q')
+        ('padding', 'Q')
     ]
 
     def pack(self):
-        packed_data = BaseStucture.pack(self)
+        packed_data = BaseStructure.pack(self)
         #print("packed_data: [{}]".format(packed_data))
         #print("self.data: [{}]".format(self.data))
-        if isinstance(self.data, str):
-            self.data = self.data.encode()
-        packed_data += self.data
+        if isinstance(self.data_frame, str):
+            self.data_frame = self.data_frame.encode()
+        packed_data += self.data_frame
         return packed_data
 
-class USBIPCMDUnlink(BaseStucture):
+class USBIPCMDUnlink(BaseStructure):
     _fields_ = [
         ('seqnum', 'I'),
         ('devid', 'I'),
@@ -246,8 +289,20 @@ class USBIPCMDUnlink(BaseStucture):
         ('seqnum2', 'I'),
     ]
 
-class USBIPCMDSubmit(BaseStucture):
+'''
+class USBIBCMDBasic(BaseStructure):
     _fields_ = [
+        ('command', 'I'), #0x1
+        ('seqnum', 'I'),
+        ('devid', 'I'),
+        ('direction', 'I'),
+        ('ep', 'I')
+    ]
+'''
+
+class USBIPCMDSubmit(BaseStructure):
+    _fields_ = [
+        ('command', 'I'),
         ('seqnum', 'I'),
         ('devid', 'I'),
         ('direction', 'I'),
@@ -260,25 +315,29 @@ class USBIPCMDSubmit(BaseStucture):
         ('setup', 'Q')
     ]
 
-class USBIPUnlinkReq(BaseStucture):
+class USBIPUnlinkReq(BaseStructure):
     _fields_ = [
-        ('command', 'I', 0x2),
+        ('seqnum', 'I'),
+        ('devid', 'I'),
+        ('direction', 'I'),
+        ('ep', 'I'),
+        ('unlink_seqnum', 'I'),
+        ('padding', '24x')
+    ]
+
+class USBIPUnlinkRet(BaseStructure):
+    _fields_ = [
+        ('command', 'I', 0x4),
         ('seqnum', 'I'),
         ('devid', 'I', 0x2),
         ('direction', 'I'),
         ('ep', 'I'),
-        ('transfer_flags', 'I'),
-        ('transfer_buffer_length', 'I'),
-        ('start_frame', 'I'),
-        ('number_of_packets', 'I'),
-        ('interval', 'I'),
-        ('setup', 'Q')
+        ('status', 'I'),
+        ('padding', '24x')
     ]
 
 
-
-
-class StandardDeviceRequest(BaseStucture):
+class StandardDeviceRequest(BaseStructure):
     _fields_ = [
         ('bmRequestType', 'B'),
         ('bRequest', 'B'),
@@ -287,7 +346,7 @@ class StandardDeviceRequest(BaseStucture):
         ('wLength', '<H')
     ]
 
-class DeviceDescriptor(BaseStucture):
+class DeviceDescriptor(BaseStructure):
     _fields_ = [
         ('bLength', 'B', 18),
         ('bDescriptorType', 'B', 1),
@@ -305,7 +364,7 @@ class DeviceDescriptor(BaseStucture):
         ('bNumConfigurations', 'B')
     ]
 
-class DeviceConfigurations(BaseStucture):
+class DeviceConfigurations(BaseStructure):
     _fields_ = [
         ('bLength', 'B', 9),
         ('bDescriptorType', 'B', 2),
@@ -318,7 +377,7 @@ class DeviceConfigurations(BaseStucture):
     ]
 
 
-class InterfaceDescriptor(BaseStucture):
+class InterfaceDescriptor(BaseStructure):
     _fields_ = [
         ('bLength', 'B', 9),
         ('bDescriptorType', 'B', 4),
@@ -332,7 +391,7 @@ class InterfaceDescriptor(BaseStucture):
     ]
 
 
-class EndPoint(BaseStucture):
+class EndPoint(BaseStructure):
     _fields_ = [
         ('bLength', 'B', 7),
         ('bDescriptorType', 'B', 0x5),
@@ -378,22 +437,23 @@ class USBDevice():
         self.all_configurations = _str
 
 
-    def send_usb_req(self, usb_req, usb_res, usb_len,  status=0, ep=0):
-        print('[' + bcolors.FAIL + 'USBDevice(send_usb_req)' + bcolors.ENDC + '] setup data [{}]'.format(
-            ', '.join( hex(x) for x in list(usb_req.setup.to_bytes(8, 'big')) )))
-        print('[' + bcolors.FAIL + 'USBDevice(send_usb_req)' + bcolors.ENDC + '] received data [{}]'.format(
-            ', '.join( hex(x) for x in list(usb_req.data) )))
-        print('[' + bcolors.FAIL + 'USBDevice(send_usb_req)' + bcolors.ENDC + '] response data [{}]'.format(
-            ', '.join( hex(x) for x in list(usb_res) )))
-        self.connection.sendall(USBIPRETSubmit(command=0x3,
-                                                   seqnum=usb_req.seqnum,
-                                                   ep=ep,
-                                                   status=status,
-                                                   actual_length=usb_len,
-                                                   start_frame=0x0,
-                                                   number_of_packets=0x0,
-                                                   interval=0x0,
-                                                   data=usb_res).pack())
+    def send_usb_req(self, usb_res, usb_len, status=0, ep=0, start_frame=0, packets=0, seqnum=None, 
+                     direction=0):
+        rsp = USBIPRETSubmit(command=0x3,
+                             seqnum=seqnum,
+                             devid=0,
+                             direction=direction,
+                             ep=ep,
+                             status=status,
+                             actual_length=usb_len,
+                             start_frame=start_frame,
+                             number_of_packets=packets,
+                             error_count=0,
+                             interval=0x0,
+                             padding=0,
+                             data_frame=usb_res).pack()
+        dump_bytes(list(rsp), colour=bcolors.FAIL, component='USBDevice(response)', msg='response bytes:')
+        self.connection.sendall(rsp)
 
     def handle_get_descriptor(self, control_req, usb_req):
         handled = False
@@ -411,17 +471,18 @@ class USBDevice():
                                  iProduct=0,
                                  iSerialNumber=0,
                                  bNumConfigurations=1).pack()
-            self.send_usb_req(usb_req, ret, len(ret))
+            self.send_usb_req(ret, len(ret), seqnum=usb_req.seqnum)
         elif control_req.wValue == 0x2: # configuration descriptor
             handled = True
             ret= self.all_configurations[:control_req.wLength]
-            self.send_usb_req(usb_req, ret, len(ret))
+            #print(ret)
+            self.send_usb_req(ret, len(ret), seqnum=usb_req.seqnum)
         return handled
 
 
     def handle_set_configuration(self, control_req, usb_req):
         handled = True
-        self.send_usb_req(usb_req, '', 0,0)
+        self.send_usb_req(b'', 0, seqnum=usb_req.seqnum)
         return handled
 
     def handle_usb_control(self, usb_req):
@@ -436,7 +497,7 @@ class USBDevice():
             if control_req.bRequest == 0x06: # Get Descriptor
                 handled = self.handle_get_descriptor(control_req, usb_req)
             if control_req.bRequest == 0x00: # Get STATUS
-                self.send_usb_req(usb_req, "\x01\x00", 2);
+                self.send_usb_req(b"\x01\x00", 2, seqnum=usb_req.seqnum);
                 handled = True
 
         if control_req.bmRequestType == 0x00: # Host Request
@@ -452,12 +513,6 @@ class USBDevice():
                 self.handle_usb_control(usb_req)
             else:
                 print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] Data request for ep {}'.format(usb_req.ep))
-                cmd = USBIPCMDSubmit()
-                cmd.unpack(usb_req.data)
-                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] header len {}'.format(len(cmd.pack())))
-                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] maybe data {}'.format(usb_req.data[len(cmd.pack()):]))
-                cmd.data = usb_req.data
-                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] USB/IP Command Submit [{}]'.format(cmd.data))
                 self.handle_data(usb_req)
         except Exception as e:
             print(e)
@@ -537,7 +592,7 @@ class USBContainer:
 
 
     def run(self, ip='0.0.0.0', port=3240):
-        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] Starting server')
+        colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Starting server')
         socketserver.TCPServer.allow_reuse_address = True
         self.server = socketserver.ThreadingTCPServer((ip, port), USBIPConnection)
         self.server.usbcontainer = self
@@ -549,7 +604,8 @@ class USBIPConnection(socketserver.BaseRequestHandler):
     attachedBusID = ''
 
     def handle(self):
-        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] New connection from {}'.format(self.client_address))
+        endpoint_requests = {}
+        colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='New connection from {}'.format(self.client_address))
         req = USBIPHeader()
         while 1:
             if not self.attached:
@@ -557,65 +613,99 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                 if not data:
                     break
                 req.unpack(data)
-                print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] Header packet is valid')
-                print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] Command is {}'.format(hex(req.command)))
+                colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Header packet is valid')
+                colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Command is {}'.format(hex(req.command)))
                 if req.command == 0x8005:
-                    print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] Querying device list')
+                    colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Querying device list')
                     self.request.sendall(self.server.usbcontainer.handle_device_list().pack())
                 elif req.command == 0x8003:
                     busid = self.request.recv(5).strip()  # receive bus id
-                    print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC 
-                            + '] Attaching to device with busid [{}]'.format(busid.decode()))
+                    colour_print(colour=bcolors.OKBLUE, component='USBIP', 
+                                 msg='Attaching to device with busid [{}]'.format(busid.decode()))
                     self.request.recv(27)
                     self.request.sendall(self.server.usbcontainer.handle_attach(busid.decode()).pack())
                     self.attached = True
                     self.attachedBusID = busid.decode()
-                    print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] attached')
+                    colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='attached')
 
             else:
                 #print(self.server.usbcontainer.usb_devices)
                 if (not self.attachedBusID in self.server.usbcontainer.usb_devices):
-                    print('[' + bcolors.WARNING + 'USBIP' + bcolors.ENDC + '] closing')
+                    colour_print(colour=bcolors.WARNING, component='USBIP', msg='closing')
                     self.request.close()
                     break
                 else:
-                    print('handles requests')
+                    colour_print(component='USB/IP', msg='waiting for command')
                     command = self.request.recv(4)
-                    print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP command [{}]'.format(
-                            ', '.join( hex(x) for x in list(command) )))
-                    if (command == 0x00000003):
+                    dump_bytes(command, msg='USB/IP command bytes recieved:')
+                    cmdVal = struct.unpack('>I', command)[0]
+                    '''
+                    if (cmdVal == 0x00000003):
                         cmd = USBIPCMDUnlink()
                         data = self.request.recv(cmd.size())
                         cmd.unpack(data)
-                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC 
-                                + '] Detaching device with seqnum {}'.format(cmd.seqnum))
+                        colour_print(component='USBIP', msg='Detaching device with seqnum {}'.format(cmd.seqnum))
                         # We probably don't even need to handle that, the windows client doesn't even send this packet
-                    else :
+                    '''
+                    if (cmdVal == 0x00000001):
                         cmd = USBIPCMDSubmit()
-                        data = self.request.recv(cmd.size())
-                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP data [{}]'.format(
-                            ', '.join( hex(x) for x in list(data) )))
-                        if len(data) == 0:
-                            break
-                        cmd.unpack(data)
-                        print('[' + bcolors.OKBLUE + 'USBIP' + bcolors.ENDC + '] USB/IP Command:: seqnum: {}; devid: {}; '\
-                                'direction: {}; ep: {}; flags: {}; no. of pkts: {}; interval: {}; setup: {}; buff: {}'.format(
-                            cmd.seqnum,cmd.devid,cmd.direction,cmd.ep,cmd.transfer_flags,cmd.number_of_packets,
-                            cmd.interval,cmd.setup,cmd.transfer_buffer_length))
+                        data = self.request.recv(cmd.size() - 4)
+                        cmd.unpack(command + data)
+                        msg = 'USB/IP Command::\n\tseqnum: {}; devid: {};\n\tdirection: {}; ep: {};\n\tflags: {};'\
+                                'transfer buffer: {};\n\tstart_frame: {}; no. of pkts: {}; '\
+                                '\n\tinterval: {}; setup: {}'.format(
+                            cmd.seqnum,cmd.devid,cmd.direction,cmd.ep,cmd.transfer_flags,cmd.transfer_buffer_length,
+                            cmd.start_frame,cmd.number_of_packets,cmd.interval,list(cmd.setup.to_bytes(8, 'big')))
+                        colour_print(colour=bcolors.OKBLUE, component='USBIPConnection.handle', msg=msg)
+                        if endpoint_requests.get(cmd.ep) == None:
+                            endpoint_requests[cmd.ep] = 1
+                        else:
+                            endpoint_requests[cmd.ep] = endpoint_requests.get(cmd.ep) + 1
+                        msg = "Endpoint reuests: {}".format( endpoint_requests)
+                        colour_print(component='USBIPConnection.handle', msg=msg)
+                        data_frame = b''
+                        if cmd.start_frame == 0xFFFFFFFF and cmd.transfer_flags == 0x0:
+                            colour_print(colour=bcolors.OKYELLOW, component='USBIPConnection.handle', msg='CTAPHID:: '\
+                                    'FIDO2 Authenticator recieved start_frame, reading rest of data maybe . . .')
+                            data_frame = self.request.recv(cmd.transfer_buffer_length)
+                            dump_bytes(data_frame, component='USBIPConnection.handle', msg='data bytes recieved:')
                         usb_req = USBRequest(seqnum=cmd.seqnum,
                                              devid=cmd.devid,
                                              direction=cmd.direction,
                                              ep=cmd.ep,
                                              flags=cmd.transfer_flags,
-                                             numberOfPackets=cmd.number_of_packets,
+                                             number_of_packets=cmd.number_of_packets,
                                              interval=cmd.interval,
                                              setup=cmd.setup,
-                                             data=data)
+                                             cmd_frame=cmd.pack(),
+                                             data_frame=data_frame)
+                        dump_bytes(list(usb_req.setup.to_bytes(8, 'big')), colour=bcolors.FAIL, 
+                                   component='USBDevice(send_usb_req)', msg='setup bytes:')
+                        dump_bytes(list(usb_req.cmd_frame), list(usb_req.data_frame), colour=bcolors.FAIL, 
+                                    component='USBDevice(request)', msg='whole recieved message:')
                         self.server.usbcontainer.usb_devices[self.attachedBusID].connection = self.request
                         try:
                             self.server.usbcontainer.usb_devices[self.attachedBusID].handle_usb_request(usb_req)
                         except:
-                            print('[' + bcolors.FAIL + 'USBIP' + bcolors.ENDC + '] Connection with client ' 
-                                    + str(self.client_address) + ' ended')
+                            colour_print(colour=bcolors.FAIL, component='USBIP', 
+                                         msg='Connection with client ' + str(self.client_address) + ' ended')
                             break
+                    elif(cmdVal == 0x00000002):
+                        cmd = USBIPUnlinkReq()
+                        data = self.request.recv(cmd.size())
+                        cmd.unpack(data)
+                        dump_bytes(command + cmd.pack(), colour=bcolors.WARNING, component='USBIP', msg='Unlink request')
+                        #TODO have we actually sent a USBIP_RET_SUBMIT or not?
+                        success = self.server.usbcontainer.usb_devices[self.attachedBusID].unlink(cmd)
+                        status = 0x0;
+                        if success == True:
+                            status = 0xF
+                        ret = USBIPUnlinkRet(command=0x04, seqnum=cmd.seqnum, devid=cmd.devid, direction=0, ep=cmd.ep,
+                                             status=status, padding=b'\0' * 24)
+                        dump_bytes(ret.pack(), colour=bcolors.WARNING, component='USBIP', msg='Unlink return')
+                        self.request.sendall(ret.pack())
+
+                    else:
+                        raise Exception("Unknown USB/IP command recieved")
         self.request.close()
+        self.server.server_close()

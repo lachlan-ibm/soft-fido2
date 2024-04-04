@@ -230,7 +230,8 @@ usbip list -r 127.0.0.1
 
 ### Attach to a device
 ```
-usbpi attach -r 127.0.0.1 -b <bus_id, 1-1.1>
+sudo modprobe vhci-hcd
+usbip attach -r 127.0.0.1 -b <bus_id, 1-1.1>
 ```
 
 # Rust

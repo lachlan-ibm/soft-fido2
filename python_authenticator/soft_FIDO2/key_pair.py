@@ -62,6 +62,18 @@ class KeyPair(object):
         publicKey = privateKey.public_key()
         return cls(privateKey, publicKey)
 
+    @classmethod
+    def create_pcks12_bag(cls, key, cert, name, secret, cas=None):
+        return serialization.pcks12.serialize_key_and_certificates(
+                name, key, cert, cas, serialization.BestAvailableEncryption(secret))
+
+    @classmethod
+    def load_pcks12_bag(cls, data, secret):
+        '''
+        Returns Tuple(private_key, cert, additional_certs
+        '''
+        return serialization.pkcs12.load_pkcs12(data, secret)
+
     def set_key(self, privateKey):
         self.private = privateKey
         self.public = privateKey.get_public()
