@@ -338,25 +338,13 @@ class CertUtils(object):
         extensions = [CertUtils.AppleNonceExtension(nonce)]
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
-
     @classmethod
-    def derive_aes_key_from_x509_oid(cls, cert, key):
+    def derive_aes_key_from_x509(cls, cert, key):
         '''
-        We create a custom OID in the IBM namespace to store an encrypted
-        AES key. Extract the OID and use the private key to recover the 
-        Fernet Key seed.
+        Use the Elliptic Curve key exchange with ourself to generate a AES key we can use
+        to seed the Fido2Authenticator with.
         '''
-        return b'TODO'
-
-    @classmethod
-    def gen_aes_key_cert(cls, aes_key
-                       subject=None,
-                       issuer=None,
-                       lifetime=365,
-                       serial=x509.random_serial_number(),
-                       keyPair=None,
-                       signKeyPair=None,
-                       signer=hashes.SHA256(),
-                       backend=default_backend()):
-        extensions = [CertUtils.AesKeyExtension(aes_key)]
-        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
+        for ext in cert.extensions:
+            if ext.oid == CertUtils.EncryptedAesKeyExtension.OID:
+                return key.exchange(ec.ECDH(), cert.public_key())
+        return None

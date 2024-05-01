@@ -70,7 +70,7 @@ class KeyPair(object):
     @classmethod
     def load_pcks12_bag(cls, data, secret):
         '''
-        Returns Tuple(private_key, cert, additional_certs
+        Returns Tuple(private_key, cert, additional_certs)
         '''
         return serialization.pkcs12.load_pkcs12(data, secret)
 
