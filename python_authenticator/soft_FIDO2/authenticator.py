@@ -562,10 +562,27 @@ class Fido2Authenticator(object):
         uniqueLength = struct.pack("!H", len(unique))
         pubArea += [uniqueLength[0], uniqueLength[1]]
         pubArea += unique
-
         return bytes(pubArea)
 
-    def _build_rsa_cert_info(self, attsToSign, pubInfo):
+    def _build_ec_public_area(self, keypair):
+        pubArea = []
+        pubArea += [0, 0x23] # TPM_ALG_ID = TPM_ALG_ECC
+        pubArea += [0, 0x0B] # TPM_ALG_SHA256
+        pubArea += [0] * 4  # TPMA_OBJECT
+        pubArea += [0] * 2  # authPolicy
+        pubArea += [0, 0x10]  # symetric = TPM_ALG_NULL
+        pubArea += [0, 0x10]  # scheme = TPM_ALG_NULL
+        pubArea += [0, 0x03]  # curve_id == TPM_ECC_NIST_P256
+        pubArea += [0, 0x10]  # kdf == TPM_ALG_NULL
+        xBytes = KeyUtils._long_to_bytes(keypair.getPublic().public_numbers().x)
+        pubArea += struct.pack("!H", len(xBytes))
+        pubArea += xBytes
+        yBytes = KeyUtils._long_to_bytes(keypair.getPublic().public_numbers().y)
+        pubArea += struct.pack("!H", len(yBytes))
+        pubArea += yBytes
+        return bytes(pubArea)
+
+    def _build_cert_info(self, attsToSign, pubInfo):
         certInfo = [0xFF, 0x54, 0x43, 0x47]  # TPM_GENERATED
         certInfo += [0x80, 0x17]  # TPM_ST_ATTEST_CERTIFY
         certInfo += [0] * 2  # qualified signer length
@@ -588,7 +605,6 @@ class Fido2Authenticator(object):
         certInfo += [attestedNameLength[0], attestedNameLength[1]]
         certInfo += attestedName
         certInfo += [0] * 2  # attested qualified name length
-
         return bytes(certInfo)
 
     def build_tpm_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
@@ -627,9 +643,17 @@ class Fido2Authenticator(object):
 
         # Build sign data
         toSign = bytes([*authData, *clientDataHash])
-        pubArea = self._build_rsa_public_area(keyPair)
-        certInfo = self._build_rsa_cert_info(toSign, pubArea)
-        sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
+        pubArea = self._build_rsa_public_area(keyPair) if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else \
+                    self._build_ec_public_area(keyPair)
+        certInfo = self._build_cert_info(toSign, pubArea)
+        sig = None
+        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
+            keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
+        else:
+            digest = hashes.Hash(hashes.SHA256())
+            digest.update(certInfo)
+            sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
+
 
         # Build attestation
         result = {
@@ -741,7 +765,14 @@ class Fido2Authenticator(object):
         x5c = [CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate)]
         #Sign data
         toSign = [*authData, *clientDataHash]
-        sig = keyPair.get_private().sign(bytes(toSign), padding.PKCS1v15(), hashes.SHA256())
+        sig = None
+        if isinstance(keyPair.getPublic(), rsa.RSAPublicKey):
+            sig = keyPair.get_private().sign(bytes(toSign), padding.PKCS1v15(), hashes.SHA256())
+        else: #Must be EC key
+            digest = hashes.Hash(hashes.SHA256())
+            digest.update(bytes(toSign))
+            sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
+
         result = {
             u"x5c": x5c,
             u"sig": sig,
