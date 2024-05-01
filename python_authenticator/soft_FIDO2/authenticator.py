@@ -724,7 +724,7 @@ class Fido2Authenticator(object):
         jwtResponse = jwt.encode(
             claims,
             keyPair.get_private_bytes(),
-            algorithm="RS256",
+            algorithm="RS256" if isinstance(keyPair.getPublic(), rsa.RSAPublicKey) else "ES256",
             headers={"x5c": [CertUtils.get_bytes(leafCert).decode(),
                              CertUtils.get_bytes(self.caCertificate).decode()]})
         result = {u'ver': u'some version', u'response': jwtResponse.encode()}
