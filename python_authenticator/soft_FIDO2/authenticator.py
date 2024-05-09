@@ -574,10 +574,10 @@ class Fido2Authenticator(object):
         pubArea += [0, 0x10]  # scheme = TPM_ALG_NULL
         pubArea += [0, 0x03]  # curve_id == TPM_ECC_NIST_P256
         pubArea += [0, 0x10]  # kdf == TPM_ALG_NULL
-        xBytes = KeyUtils._long_to_bytes(keypair.getPublic().public_numbers().x)
+        xBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().x)
         pubArea += struct.pack("!H", len(xBytes))
         pubArea += xBytes
-        yBytes = KeyUtils._long_to_bytes(keypair.getPublic().public_numbers().y)
+        yBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().y)
         pubArea += struct.pack("!H", len(yBytes))
         pubArea += yBytes
         return bytes(pubArea)
@@ -724,7 +724,7 @@ class Fido2Authenticator(object):
         jwtResponse = jwt.encode(
             claims,
             keyPair.get_private_bytes(),
-            algorithm="RS256" if isinstance(keyPair.getPublic(), rsa.RSAPublicKey) else "ES256",
+            algorithm="RS256" if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else "ES256",
             headers={"x5c": [CertUtils.get_bytes(leafCert).decode(),
                              CertUtils.get_bytes(self.caCertificate).decode()]})
         result = {u'ver': u'some version', u'response': jwtResponse.encode()}
@@ -766,7 +766,7 @@ class Fido2Authenticator(object):
         #Sign data
         toSign = [*authData, *clientDataHash]
         sig = None
-        if isinstance(keyPair.getPublic(), rsa.RSAPublicKey):
+        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             sig = keyPair.get_private().sign(bytes(toSign), padding.PKCS1v15(), hashes.SHA256())
         else: #Must be EC key
             digest = hashes.Hash(hashes.SHA256())
