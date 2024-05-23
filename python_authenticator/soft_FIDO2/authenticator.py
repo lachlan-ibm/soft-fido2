@@ -575,9 +575,12 @@ class Fido2Authenticator(object):
         pubArea += [0, 0x03]  # curve_id == TPM_ECC_NIST_P256
         pubArea += [0, 0x10]  # kdf == TPM_ALG_NULL
         xBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().x)
-        pubArea += struct.pack("!H", len(xBytes))
+        xByteLen = struct.pack("!H", len(xBytes))
+        pubArea += [xByteLen[0], xByteLen[1]]
         pubArea += xBytes
         yBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().y)
+        yByteLen = struct.pack("!H", len(yBytes))
+        pubArea += [yByteLen[0], yByteLen[1]]
         pubArea += struct.pack("!H", len(yBytes))
         pubArea += yBytes
         return bytes(pubArea)
@@ -701,6 +704,8 @@ class Fido2Authenticator(object):
             dict: Android safetynet attestation statement,
                     https://www.w3.org/TR/webauthn/#android-safetynet-attestation
         """
+        if(isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey)):
+           raise RuntimeError("Android safetynet Attestation requires a RSA key")
         leafSubj = x509.Name([
             x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'attest.android.com'),
             x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
@@ -724,7 +729,7 @@ class Fido2Authenticator(object):
         jwtResponse = jwt.encode(
             claims,
             keyPair.get_private_bytes(),
-            algorithm="RS256" if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else "ES256",
+            algorithm="RS256",
             headers={"x5c": [CertUtils.get_bytes(leafCert).decode(),
                              CertUtils.get_bytes(self.caCertificate).decode()]})
         result = {u'ver': u'some version', u'response': jwtResponse.encode()}
