@@ -581,7 +581,6 @@ class Fido2Authenticator(object):
         yBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().y)
         yByteLen = struct.pack("!H", len(yBytes))
         pubArea += [yByteLen[0], yByteLen[1]]
-        pubArea += struct.pack("!H", len(yBytes))
         pubArea += yBytes
         return bytes(pubArea)
 
