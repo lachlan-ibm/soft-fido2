@@ -291,7 +291,7 @@ class CertUtils(object):
                               subject=None,
                               issuer=None,
                               lifetime=365,
-                              serial=None,
+                              serial=x509.random_serial_number(),
                               keyPair=None,
                               signKeyPair=None,
                               signer=hashes.SHA256(),
