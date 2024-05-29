@@ -477,7 +477,7 @@ class Fido2Authenticator(object):
                 x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
             ])
             leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                              issuer=self.caCertificate.issuer,
+                                              issuer=self.caCertificate.subject,
                                               keyPair=keyPair,
                                               signKeyPair=self.caKeyPair,
                                               aaguid=self.get_aaguid(hexString=False))
@@ -636,7 +636,7 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
         ])
         tpmCert = CertUtils.gen_aik_cert(subject=x509.Name([]),
-                                         issuer=self.caCertificate.issuer,
+                                         issuer=self.caCertificate.subject,
                                          keyPair=keyPair,
                                          signKeyPair=self.caKeyPair,
                                          aaguid=self.get_aaguid(hexString=False),
@@ -712,7 +712,7 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                          issuer=self.caCertificate.issuer,
+                                          issuer=self.caCertificate.subject,
                                           keyPair=keyPair,
                                           signKeyPair=self.caKeyPair)
         nonceBytes = [*authData, *clientDataHash]
@@ -762,7 +762,7 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                          issuer=self.caCertificate.issuer,
+                                          issuer=self.caCertificate.subject,
                                           keyPair=keyPair,
                                           signKeyPair=self.caKeyPair,
                                           androidKeyNonce=bytes(clientDataHash))
@@ -812,7 +812,7 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         appleCert = CertUtils.gen_apple_cert(subject=leafSubj,
-                                             issuer=self.caCertificate.issuer,
+                                             issuer=self.caCertificate.subject,
                                              keyPair=keyPair,
                                              signKeyPair=self.caKeyPair,
                                              nonce=nonceHash)
