@@ -302,7 +302,7 @@ class CertUtils(object):
         extensions = [
             x509.BasicConstraints(False, None),
             x509.KeyUsage(True, True, False, True, False, True, True, False, False),
-            x509.ExtendedKeyUsage(ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE))
+            x509.ExtendedKeyUsage([ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE)])
         ]
 
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
