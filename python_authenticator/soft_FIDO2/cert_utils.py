@@ -293,6 +293,7 @@ class CertUtils(object):
                               lifetime=365,
                               serial=None,
                               keyPair=None,
+                              signKeyPair=None,
                               signer=hashes.SHA256(),
                               backend=default_backend()):
         '''
@@ -304,7 +305,7 @@ class CertUtils(object):
             x509.ExtendedKeyUsage(ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE))
         ]
 
-        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signer, backend)
+        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
     @classmethod
     def gen_apple_cert(cls,
