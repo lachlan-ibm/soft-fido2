@@ -663,7 +663,7 @@ class Fido2Authenticator(object):
             u"certInfo": certInfo,
             u"sig": sig,
             u"ver": u"2.0",
-            u"alg": -257,  # SHA256 /w RSA
+            u"alg": -257 if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else -7,  # SHA256 /w RSA (-257) or EC (-7)
             u"x5c": x5c
         }
         return result
