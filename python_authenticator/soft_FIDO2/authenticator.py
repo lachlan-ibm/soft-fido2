@@ -470,6 +470,9 @@ class Fido2Authenticator(object):
         sig = ""
         selfAttestation = True if 'self' in atteStmtFmt else False
         if not selfAttestation:
+            if not self.caCertificate:
+                raise RuntimeError("Packed Attestation requires a CA certificate to be "\
+                        "present when the authenticator is created")
             leafSubj = x509.Name([
                 x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'),
                 x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
@@ -635,7 +638,8 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
         ])
-        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name([]),
+        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name(
+                                        [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'ibm.security.tpm.attestation')]),
                                          issuer=self.caCertificate.subject,
                                          keyPair=keyPair,
                                          signKeyPair=self.caKeyPair,
@@ -800,6 +804,9 @@ class Fido2Authenticator(object):
             dict: Apple platform attestation statement,
                     #TODO has not been published
         """
+        if not self.caCertificate:
+            raise RuntimeError("Apple Attestation requires a CA certificate to be "\
+                    "present when the authenticator is created")
         #First need to generate the apple certificate with the required extension
         nonceBytes = []
         nonceBytes += authData
