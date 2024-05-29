@@ -638,8 +638,7 @@ class Fido2Authenticator(object):
             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
             x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
         ])
-        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name(
-                                        [x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'ibm.security.tpm.attestation')]),
+        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name([]),
                                          issuer=self.caCertificate.subject,
                                          keyPair=keyPair,
                                          signKeyPair=self.caKeyPair,
