@@ -254,7 +254,7 @@ class Fido2Authenticator(object):
             return -8
         return 0
 
-    def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True, up=True):
+    def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True, up=True, be=False, bs=False):
         '''Reponds to requests to navigator.credentail.create(). jsonOptions should be
         either a dictionary or a JSON string of the attestation options and usually has the form:
         {
@@ -295,6 +295,8 @@ class Fido2Authenticator(object):
             keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the attestation; default = self.kp
             uv (:obj:`bool`, optional): if the authenticator should set the user verification flag; default = True
             up (:obj:`bool`, optional): if the authenticator should set the user presence flag; default = True
+            be (:obj:`bool`, optional): if the authenticator should set the backup eligible flag; default = False
+            bs (:obj:`bool`, optional): if the authenticator should set the backup state flag; default = False
 
         Returns:
             dict: response to navigator.credential.create
@@ -309,7 +311,7 @@ class Fido2Authenticator(object):
         cco = self.attestation_options_response_to_credential_create_options(options)
         return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv, up)
 
-    def credential_request(self, jsonOptions, keyPair=None, uv=True, up=True):
+    def credential_request(self, jsonOptions, keyPair=None, uv=True, up=True, be=False, bs=False):
         '''Responds to navigator.credential.get(). jsonOptions should be either a dictionary
         or a JSON string of the assertion options and usually has the form:
         {
@@ -329,6 +331,8 @@ class Fido2Authenticator(object):
             keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the assertion; default = self.kp
             uv (:obj:`bool`, optional): if the authenticator should set hte user verification flag, default = True
             up (:obj:`bool`, optional): if the authenticator should set hte user presence flag, default = True
+            be (:obj:`bool`, optional): if the authenticator should set the backup eligible flag; default = False
+            bs (:obj:`bool`, optional): if the authenticator should set the backup state flag; default = False
 
         Returns:
             dict: response to navigator.credential.get
@@ -342,7 +346,7 @@ class Fido2Authenticator(object):
             options = json.loads(jsonOptions)
         cro = self.assertion_options_response_to_credential_request_options(options)
 
-        return self.process_credential_request_options(cro, keyPair, uv, up)
+        return self.process_credential_request_options(cro, keyPair, uv, up, be, bs)
 
     def build_client_data_JSON(self, pk):
         """Creates the ClientDataJSON object for attestation and assertion operations
@@ -403,7 +407,7 @@ class Fido2Authenticator(object):
         attestedCredDataBytes += cbor.dumps(credPublicKeyCOSE)
         return attestedCredDataBytes
 
-    def build_authenticator_data(self, pk, attStmtFmt, keyPair, uv, up=True):
+    def build_authenticator_data(self, pk, attStmtFmt, keyPair, uv, up=True, be=False, bs=False):
         """create the authenticator data for the attestation or assertion request
 
         Args:
@@ -413,7 +417,10 @@ class Fido2Authenticator(object):
             attStmtFmt (str): attestation statement format,
                     https://www.w3.org/TR/webauthn/#defined-attestation-formats
             keyPair (KeyPair): public/private key pair to use
+            up (bool): toggle setting the user presence flag
             uv (bool): toggle setting the user verification flag
+            be (bool): toggle setting the backup eligible flag
+            bs (bool): toggle setting the backup state flag
 
         Returns:
             str: byte string of authenticator data,
@@ -437,6 +444,10 @@ class Fido2Authenticator(object):
             flags |= 0x40  # AT
         if attStmtFmt != 'fido-u2f' and uv != None and uv == True:
             flags |= 0x04  # UV
+        if be == True:
+            flags |= 0x08
+        if bs == True:
+            flags |= 0x0F
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8'))
         #Add counter and increment
         authDataBytes += struct.pack(">I", self.counter)
@@ -888,7 +899,7 @@ class Fido2Authenticator(object):
         cco = {'publicKey': pkcco}
         return cco
 
-    def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv, up=True):
+    def process_credential_create_options(self, cco, atteStmtFmt, keyPair, uv, up=True, be=False, bs=False):
         """Generate response to parsed credential create request
 
         Args:
@@ -899,6 +910,8 @@ class Fido2Authenticator(object):
             keyPair (KeyPair): public/private kye pair to sign with
             uv (bool): set the user verification flag
             up (bool): set the user presence flag
+            be (bool): set the backup eligible flag
+            bs (bool): set the backup state flag
 
         Returns:
             dict: attestation response to credential create request,
@@ -912,7 +925,7 @@ class Fido2Authenticator(object):
 
         credIdBytes = self._get_credential_id_bytes(keyPair)
 
-        authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up)
+        authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up, be, bs)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str(re.sub('-self', '', atteStmtFmt))
         attestationObject = {u'authData': authData, u'fmt': attStmtFmt, u'attStmt': attStmt}
@@ -989,7 +1002,7 @@ class Fido2Authenticator(object):
         cro['publicKey'] = pkcro
         return cro
 
-    def process_credential_request_options(self, cro, keyPair, uv, up=True):
+    def process_credential_request_options(self, cro, keyPair, uv, up=True, be=False, bs=False):
         """Generate response to parsed credential get request
 
         Args:
@@ -998,6 +1011,8 @@ class Fido2Authenticator(object):
             keyPair (KeyPair): public/private key pair to sign with
             uv (bool): set the user verification flag
             up (bool): set the user presence flag
+            be (bool): set the backup eligible flag. This should be consistent with the registration state.
+            bs (bool): set the backup state flag
 
         Returns:
             dict: assertion response to credential get request,
@@ -1005,7 +1020,7 @@ class Fido2Authenticator(object):
         """
         pk = cro["publicKey"]
         clientDataJSON = self.build_client_data_JSON(pk)
-        authData = self.build_authenticator_data(pk, None, keyPair, uv, up)
+        authData = self.build_authenticator_data(pk, None, keyPair, uv, up, be, bs)
         saar = {
             "clientDataJSON": str(base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8'),
             "authenticatorData": str(base64.urlsafe_b64encode(authData), 'utf-8')
