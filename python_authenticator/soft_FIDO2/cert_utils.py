@@ -257,7 +257,7 @@ class CertUtils(object):
         # CA cert requires basic contraint, ski, key usage and san extensions
         extensions = [
             x509.SubjectKeyIdentifier.from_public_key(keyPair.get_public()),
-            x509.BasicConstraints(True, 2),
+            x509.BasicConstraints(True, 3),
             x509.KeyUsage(True, False, False, False, False, True, True, False, False),
         ]
 
@@ -305,20 +305,21 @@ class CertUtils(object):
                               subject=None,
                               issuer=None,
                               lifetime=365,
-                              serial=None,
+                              serial=x509.random_serial_number(),
                               keyPair=None,
+                              signKeyPair=None,
                               signer=hashes.SHA256(),
                               backend=default_backend()):
         '''
         Generate intermediate certificate in trust chain
         '''
         extensions = [
-            x509.BasicConstraints(False, None),
+            x509.BasicConstraints(True, 3),
             x509.KeyUsage(True, True, False, True, False, True, True, False, False),
-            x509.ExtendedKeyUsage(ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE))
+            x509.ExtendedKeyUsage([ObjectIdentifier(cls.TCG_KP_AIK_CERTIFICATE_ATTRIBUTE)])
         ]
 
-        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signer, backend)
+        return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
     @classmethod
     def gen_apple_cert(cls,
