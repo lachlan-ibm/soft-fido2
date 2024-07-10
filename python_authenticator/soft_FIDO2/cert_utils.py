@@ -180,8 +180,8 @@ class CertUtils(object):
                     .issuer_name(issuer) \
                     .public_key(keyPair.get_public()) \
                     .serial_number(serial) \
-                    .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1)) \
-                    .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=lifetime)) \
+                    .not_valid_before(datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)) \
+                    .not_valid_after(datetime.datetime.now(datetime.UTC) + datetime.timedelta(days=lifetime)) \
 
     @classmethod
     def __add_extensions(cls, certBuilder, extensions):
