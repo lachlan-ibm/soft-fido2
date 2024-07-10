@@ -1,7 +1,17 @@
 # Copyrite IBM 2022
 
 # CTAP2HID reads bytes from endpoint 1,building the frames into a CTAPMsg. A CTAPMsg is used to initalize a 
-#FIDO2Transaction thread which will reply on endpoint 2 when the transaction is complete.
+# FIDO2Transaction thread which will reply on endpoint 2 when the transaction is complete.
+#
+# Authenticator uses some environmental properties to read PKI from the filesystem.
+#       FIDO_AUTHENTICATOR_PKCS12 :: pkcs12 which contains the CA key/x509 and any generated x509 by the 
+#                                    Fido2Authenticator.
+#       FIDO_AUTHENTICATOR_PKCS12_SECRET :: password to decrypt the pkcs12 bag.
+# Any credentials crated using the CA pkcs12 can be reconstructed during `navigator.credential.get` requests.
+#       FIDO2_GENERATE_CA :: boolean to indicate if an error should be thrown if the PKCS12 file does not exist or
+#                            cannot be read / converted to requried PKI. If this value is true the CA key and x509
+#                            are generated on the first request to create a credential.
+#
 
 import base64, datetime, multiprocessing, os, sys, random, queue
 from enum import Enum
@@ -87,22 +97,27 @@ class Authenticator(object):
             try:
                 if cls._ca_cert == None and cls_.ca_kp == None:
                     #Get the PKCS12 file and load the key/cert
-                    p12_file = os.environ.get("FIDO_AUTHENTICATOR_PCKS12", os.path.expanduser("~/.fido2/authenticator.p12"))
+                    p12_file = os.environ.get("FIDO_AUTHENTICATOR_PKCS12", os.path.expanduser("~/.fido2/authenticator.p12"))
                     p12_data = open(p12_file, 'rb')
                     ca_key, cls._ca_cert, _ = KeyPair.load_pcks12_bag(p12_data, 
-                                                            os.environ.get("FIDO_AUTHENTICATOR_PCKS12_SECRET"))
+                                                            os.environ.get("FIDO_AUTHENTICATOR_PKCS12_SECRET"))
                     cls._ca_kp = KeyPair(ca_key, ca_key.get_public())
                     # Retrieve and decrypt the symmetrical key
                     shared_key = CertUtils.derive_aes_key_from_x509(cls._ca_cert, ca_key)
                     cls._fernet_key = Fernet(base64.urlsafe_b64encode(shared_key))
             except Exception as e:
-                colour_print(colour=bcolors.FAIL, component='Authenticator.__new__', msg=e)
-                pass
+                if bool(os.environ.get("FIDO_GENERATE_CA", "false")) == True:
+                    cls._ca_kp = KeyPair.generate_ecdsa()
+                    cls._ca_cert = CertUtils.gen_ca_cert(
+                            subject=x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'SOFT FIDO2 MOCK CA')]), keyPair=ca_kp)
+                else:
+                    colour_print(colour=bcolors.FAIL, component='Authenticator.__new__', msg=e)
+                    sys.exit(1)
             _lock.release()
 
 
     @staticmethod
-    def attestation_outputs(clientDataHash, rp, user, pkCredsParams, excludeList, exts):
+    def attestation_out(clientDataHash, rp, user, pkCredsParams, excludeList, exts):
         _authenticator = Fido2Authenticator(aaguid=[b'\x00'*16], 
                             caKeyPair=cls._ca_kp, caCert=cls._ca_cert, fKey=cls._fernet_key)
         authData = _authenticator.build_authenticator_data(rp, 'packed', _authenticator.kp, False)
@@ -112,7 +127,7 @@ class Authenticator(object):
 
 
     @staticmethod
-    def assertion_outputs(rpId, clientDataHash, allowedList, exts):
+    def assertion_out(rpId, clientDataHash, allowedList, exts):
         for cred in allowedList:
             try:
                 #Create the authenticator
@@ -154,6 +169,8 @@ class CBORCommand(object):
     # Response buffer. This stores the outgoing response to the recieved CBOR message and shrinks until the entire
     # response has been transmitted
     response = []
+    # Signal that the response buffer is ready to be sent back to the client
+    response_read = False
     # Track then number of response segments transmitted
     response_segment = 0
     # Length of the incoming CBOR message.
@@ -178,7 +195,17 @@ class CBORCommand(object):
             CommandByte.MAKE_CREDENTIAL: self._make_cred,
             CommandByte.GET_NEXT_ASSERTION: self._get_assertion,
             CommandByte.GET_INFO: self._get_info,
+            CommandByte.CLIENT_PIN: self._client_pin
             }.get(cmd)(segment)
+
+    def _client_pin(self, ba):
+        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
+        
+        result = {
+                0x02: b's3cr37'
+        }
+        self.response += cbor.dumps(result)
+        self.response_ready = True
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
@@ -191,11 +218,12 @@ class CBORCommand(object):
             0x09: ["usb"]
         }
         self.response += cbor.dumps(result)
+        self.response_ready = True
 
 
     def __generate_attestation(self, options):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
-        authData, attStmt = Authenticator.attestation_outputs(options.get(0x01), options.get(0x02), options.get(0x03),
+        authData, attStmt = Authenticator.attestation_out(options.get(0x01), options.get(0x02), options.get(0x03),
                                             options.get(0x04), options.get(0x05), options.get(0x06))
         result = {
             0x01: 'packed', #fmt
@@ -208,7 +236,7 @@ class CBORCommand(object):
 
     def __generate_assertion(self, options):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
-        credential, authData, signature = Authenticator.assertion_outputs(options.get(0x01), options.get(0x02),
+        credential, authData, signature = Authenticator.assertion_out(options.get(0x01), options.get(0x02),
                                                             options.get(0x03), options.get(0x04))
         result = {
                 0x01: credential,
@@ -219,7 +247,6 @@ class CBORCommand(object):
         }
         return result
 
-
     def _make_cred(self, ba):
         self.request += bytes(ba)
         if len(self.request) >= self.length:
@@ -228,10 +255,11 @@ class CBORCommand(object):
             for props in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
                 if not prop[0] in req:
                     colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
-                                 msg='{} misssing from request:\n{}'.format(prop[1], cbor.dumps(req)))
+                                 msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                     raise Exception("Missing required property %s" % prop[1])
             rsp = self.__generate_attestation(req)
             self.response = cbor.dumps(rsp)
+            self.response_ready = True
 
 
     def _get_assertion(self, ba):
@@ -242,12 +270,13 @@ class CBORCommand(object):
             for props in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
                 if not prop[0] in req:
                     colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
-                                 msg='{} misssing from request:\n{}'.format(prop[1], cbor.dumps(req)))
+                                 msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                     raise Exception("Missing required property %s" % prop[1])
             rsp = self.__generate_assertion(req)
             self.response = cbor.dumps(rsp)
+            self.response_ready = True
 
-
+# Send this for every new message frame. Response contains
 class CTAPInitResponse(BaseStructure):
     _fields_ = [
         ('cid', 'I'),
@@ -263,10 +292,11 @@ class CTAPInitResponse(BaseStructure):
                     index = i
                     break
             if index == None:
-                print("setting data field")
+                colour_print(colour=bcolors.OKGREEN, component='CTAPInitResponse.__init__', msg='setting data field')
                 self._fields_ += [('data', '%ds' % len(kwargs['data']))]
             else:
-                print('data already exists as a field, updating it')
+                colour_print(colour=bcolors.OKGREEN, component='CTAPInitResponse.__init__', 
+                             msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
             print(self._fields_)
         super().__init__(**kwargs)
@@ -283,9 +313,11 @@ class CtapContinueResponse(BaseStructure):
                     break
             if index == None:
                 print("setting data field")
+                colour_print(colour=bcolors.OKPINK, component='CtapContinueResponse.__init__', msg='setting data field')
                 self._fields_ += [('data', '%ds' % len(kwargs['data']))]
             else:
-                print('data already exists as a field, updating it')
+                colour_print(colour=bcolors.OKPINK, component='CtapContinueResponse.__init__', 
+                             msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
             print(self._fields_)
         super(CTAPContinueResponse, self).__init__(**kwargs)
@@ -471,8 +503,7 @@ class CTAP2HIDevice(USBDevice):
                     msg='CBOR encoded bytes:')
         cbor_cmd = CBORCommand(usb_req.data_frame[7:])
         self.cids[cid]['cborCmd'] = cbor_cmd
-        if len(cbor_cmd.response) != 0:
-            #We can respond immediatly
+        if cbor_cmd.response_ready == True: #We can respond immediatly
             return self.send_response_segment(cid, cbor_cmd)
         else:
             colour_print(colour=bcolors.YELLOW, component='USBDevice.ctaphid_cbor', 
@@ -500,7 +531,7 @@ class CTAP2HIDevice(USBDevice):
         worker.my_thread = keep_alive_thread
         self.pending.append( worker )
         for cid, context in self.cids.items():
-            if context.get('cborCmd') != None and len(context['cborCmd'].response) > 0:
+            if context.get('cborCmd') != None and context['cborCmd'].response_ready == True:
                 colour_print(component='USBDevice.handle_data', 
                             msg='Using pending request to send response segment')
                 self.send_response_segment(cid, context['cborCmd'])
@@ -537,7 +568,6 @@ class CTAP2HIDevice(USBDevice):
             colour_print(colour=bcolors.FAIL, component='USBDevice.handle_data', 
                          msg='CID not found in device context, don\'t know what to do')
 
-
     def _handle_incoming(self, usb_req):
         if len(self.pending) == 0:
             colour_print(colour=bolors.FAIL, component="USBDevice.handle_data", 
@@ -565,10 +595,8 @@ class CTAP2HIDevice(USBDevice):
             self.send_usb_req(b'', 0, seqnum=usb_req.seqnum)
         '''
         if usb_req.ep == 0xE: #HOST In endpoint, add it to the queue so we can use it when we have data 
-            # or use it to send the current in progress transaction
-            return self._handle_outgoing(usb_req)
-        else:
-            #We have data, work out what to do with it and if we have a pending request we can respond with
+            return self._handle_outgoing(usb_req) # or use it to send the current in progress transaction
+        else: #We have data, work out what to do with it and if we have a pending request we can respond with
             return self._handle_incoming(usb_req)
 
 

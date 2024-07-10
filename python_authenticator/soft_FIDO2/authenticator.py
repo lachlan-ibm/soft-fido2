@@ -73,9 +73,9 @@ class Fido2Authenticator(object):
             try:
                 self.kp = self._get_key_pair_from_credential_id(credId, fKey)
             except Exception as e:
-                print(e)
-                #set the bytes as the cred_id and generate a key
+                print(e) #set the bytes as the cred_id and generate a key
                 self.cred_id_bytes = self._urlb64_decode(credId)
+
         if self.kp == None:
             #self.kp = KeyPair.generate_rsa()
             #self.kp = KeyPair.generate_ed25519()
@@ -84,12 +84,11 @@ class Fido2Authenticator(object):
         if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
             self.cred_id_bytes = self._urlb64_decode(credId)
 
-
         if aaguid == None:
             self.aaguid = [0] * 16
-
         else:
             self.aaguid = aaguid
+
 
     @classmethod
     def _urlb64_decode(cls, b64String):
