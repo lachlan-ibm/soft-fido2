@@ -40,7 +40,8 @@ class Fido2Authenticator(object):
                  counter=0,
                  hashingAlg=hashes.SHA256(),
                  transports=None,
-                 fKey=None):
+                 fKey=None,
+                 disable_counter=False):
         """
         Args:
             keyPair (KeyPair): public/private key pair to sign challenges with;
@@ -58,6 +59,7 @@ class Fido2Authenticator(object):
             transports (list, optional): a list of support transports; default = None
             fKey (cryptography.fernet.Fernet, optional): An optional symmetric key to generate 
                         the cred id with. Can be used to reconstruct private EC key for assertions.
+            disable_counter (`bool`, optional): Optionally disable the attestation/assertion internal counter.
         """
         self.counter = counter
         self.userHandle = None
@@ -68,26 +70,28 @@ class Fido2Authenticator(object):
         self.cred_id_bytes = None
         self.kp = keyPair
         self.fKey = fKey
+        self.disable_counter = disable_counter
 
         if self.kp == None and credId != None and fKey != None:
             try:
                 self.kp = self._get_key_pair_from_credential_id(credId, fKey)
             except Exception as e:
-                print(e)
-                #set the bytes as the cred_id and generate a key
+                print(e) #set the bytes as the cred_id and generate a key
                 self.cred_id_bytes = self._urlb64_decode(credId)
+
         if self.kp == None:
-            self.kp = KeyPair.generate_rsa()
+            #self.kp = KeyPair.generate_rsa()
+            #self.kp = KeyPair.generate_ed25519()
+            self.kp = KeyPair.generate_ecdsa()
 
         if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
             self.cred_id_bytes = self._urlb64_decode(credId)
 
-
         if aaguid == None:
             self.aaguid = [0] * 16
-
         else:
             self.aaguid = aaguid
+
 
     @classmethod
     def _urlb64_decode(cls, b64String):
@@ -97,7 +101,6 @@ class Fido2Authenticator(object):
         Args:
             b64String (str): string to decode
 
-        Returns:
             str: decoded string
         """
         pad = len(b64String) % 4
@@ -292,6 +295,8 @@ class Fido2Authenticator(object):
             jsonOptions (dict) :dictionary of options for navigator.credential.create
             atteStmtFormat (:obj:`str`, optional): https://w3c.github.io/webauthn/#defined-attestation-formats
                     default = 'packed-self'
+                    for compound attestation the string is prefixed with 'compound:' and the required compound
+                    statements are listed with a ',' (comma) separator. eg: `compound:packed-self,tpm`
             keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the attestation; default = self.kp
             uv (:obj:`bool`, optional): if the authenticator should set the user verification flag; default = True
             up (:obj:`bool`, optional): if the authenticator should set the user presence flag; default = True
@@ -449,9 +454,11 @@ class Fido2Authenticator(object):
         if bs == True:
             flags |= 0x0F
         authDataBytes += struct.pack("c", chr(flags).encode('utf-8'))
-        #Add counter and increment
+
+        #Add counter and increment if required
         authDataBytes += struct.pack(">I", self.counter)
-        self.counter += 1
+        if self.disable_counter == False:  
+            self.counter += 1
 
         if not assertion:
             credIdBytes = self._get_credential_id_bytes(keyPair)
@@ -836,6 +843,22 @@ class Fido2Authenticator(object):
         print(CertUtils.get_encoded(appleCert))
         return {'x5c': [CertUtils.get_encoded(appleCert), CertUtils.get_encoded(self.caCertificate)]}
 
+    def _process_att_stmt(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        try:
+            return {
+                "none": self.build_none_attestation_statement,
+                "packed": self.build_packed_attestation_statement,
+                "fido-u2f": self.build_fido_u2f_attestation_statement,
+                "packed-self": self.build_packed_attestation_statement,
+                "android-key": self.build_android_key_attestation_statement,
+                "android-safetynet": self.build_android_safetynet_attestation_statement,
+                "tpm": self.build_tpm_attestation_statement,
+                "apple": self.build_apple_attestation_statement
+            }.get(atteStmtFmt)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
+        except KeyError:
+            raise Exception("Unsupported attestation statement format [{}]".format(atteStmtFmt))
+
+
     def process_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
         """Helper function that chooses an attestation statement function based on the atteStmtFmt variable
 
@@ -852,19 +875,19 @@ class Fido2Authenticator(object):
             dict: attestation statement. Type of statement depends on 'atteStmtFmt', see:
                     https://www.w3.org/TR/webauthn/#defined-attestation-formats
         """
-        try:
-            return {
-                "none": self.build_none_attestation_statement,
-                "packed": self.build_packed_attestation_statement,
-                "fido-u2f": self.build_fido_u2f_attestation_statement,
-                "packed-self": self.build_packed_attestation_statement,
-                "android-key": self.build_android_key_attestation_statement,
-                "android-safetynet": self.build_android_safetynet_attestation_statement,
-                "tpm": self.build_tpm_attestation_statement,
-                "apple": self.build_apple_attestation_statement
-            }.get(atteStmtFmt)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
-        except KeyError:
-            raise Exception("Unsupported attestation statement format [{}]".format(atteStmtFmt))
+        if atteStmtFmt.startwith('compound'):
+            stmtsCsv = atteStmtFmt.split(":")
+            if stmtsCsv == None or len(stmtsCsv) != 2:
+                raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
+            stmts = stmtsCsv[1].split(",")
+            if stmts == None or len(stmts) < 2:
+                raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
+            result = []
+            for stmt in stmts:
+                result += [self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)]
+            return result
+        #else
+        return self._process_att_stmt(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
 
     def attestation_options_response_to_credential_create_options(self, options):
         """Take the options provided by the relyig party and extract required information to

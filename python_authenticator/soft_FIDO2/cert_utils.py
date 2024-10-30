@@ -322,5 +322,30 @@ class CertUtils(object):
         Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
         which I am sure is very useful to apple.
         '''
+    def gen_apple_cert(cls,
+                       subject=None,
+                       issuer=None,
+                       lifetime=365,
+                       serial=x509.random_serial_number(),
+                       keyPair=None,
+                       signKeyPair=None,
+                       nonce=None,
+                       signer=hashes.SHA256(),
+                       backend=default_backend()):
+        '''
+        Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
+        which I am sure is very useful to apple.
+        '''
         extensions = [CertUtils.AppleNonceExtension(nonce)]
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
+
+    @classmethod
+    def derive_aes_key_from_x509(cls, cert, key):
+        '''
+        Use the Elliptic Curve key exchange with ourself to generate a AES key we can use
+        to seed the Fido2Authenticator with.
+        '''
+        for ext in cert.extensions:
+            if ext.oid == CertUtils.EncryptedAesKeyExtension.OID:
+                return key.exchange(ec.ECDH(), cert.public_key())
+        return None
