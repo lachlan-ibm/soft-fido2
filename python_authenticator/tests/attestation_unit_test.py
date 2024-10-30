@@ -64,7 +64,7 @@ def test_Signing(fido2_server, fido2_authenticator, fido2_user):
         x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Travis CI/CD')
     ])
     caCert = CertUtils.gen_ca_cert(subject=subject, keyPair=caKp)
-    authenticator = Fido2Authenticator(caKeyPair=caKp, caCert=caCert)
+    authenticator = Fido2Authenticator(kp=KeyPair.generate_rsa(), caKeyPair=caKp, caCert=caCert)
     attestation = authenticator.credential_create(attestation_options, atteStmtFmt='packed')
     cdj = base64.urlsafe_b64decode(attestation.get("response", {}).get("clientDataJSON"))
     clientDataHash = hashlib.sha256( cdj ).digest()
@@ -74,11 +74,11 @@ def test_Signing(fido2_server, fido2_authenticator, fido2_user):
     cert = x509.load_der_x509_certificate(attStmt.get('x5c')[0], default_backend())
     pubKey = cert.public_key()
     #RSA key
-    #pubKey.verify(attStmt.get('sig'), , padding.PKCS1v15(), hashes.SHA256())
+    pubKey.verify(attStmt.get('sig'), authData + clientDataHash, padding.PKCS1v15(), hashes.SHA256())
     #EC Key
-    hasher = hashes.Hash(hashes.SHA256())
-    hasher.update(authData + clientDataHash)
-    pubKey.verify(attStmt.get('sig'), hasher.finalize(), ec.ECDSA(hashes.SHA256()))
+    #hasher = hashes.Hash(hashes.SHA256())
+    #hasher.update(authData + clientDataHash)
+    #pubKey.verify(attStmt.get('sig'), hasher.finalize(), ec.ECDSA(hashes.SHA256()))
 
 
 def test_Attestation_Object(fido2_server, fido2_authenticator, fido2_user):
