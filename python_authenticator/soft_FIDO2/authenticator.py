@@ -875,7 +875,7 @@ class Fido2Authenticator(object):
             dict: attestation statement. Type of statement depends on 'atteStmtFmt', see:
                     https://www.w3.org/TR/webauthn/#defined-attestation-formats
         """
-        if atteStmtFmt.startwith('compound'):
+        if atteStmtFmt.startswith('compound'):
             stmtsCsv = atteStmtFmt.split(":")
             if stmtsCsv == None or len(stmtsCsv) != 2:
                 raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
