@@ -64,7 +64,7 @@ def test_Signing(fido2_server, fido2_authenticator, fido2_user):
         x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Travis CI/CD')
     ])
     caCert = CertUtils.gen_ca_cert(subject=subject, keyPair=caKp)
-    authenticator = Fido2Authenticator(kp=KeyPair.generate_rsa(), caKeyPair=caKp, caCert=caCert)
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_rsa(), caKeyPair=caKp, caCert=caCert)
     attestation = authenticator.credential_create(attestation_options, atteStmtFmt='packed')
     cdj = base64.urlsafe_b64decode(attestation.get("response", {}).get("clientDataJSON"))
     clientDataHash = hashlib.sha256( cdj ).digest()
