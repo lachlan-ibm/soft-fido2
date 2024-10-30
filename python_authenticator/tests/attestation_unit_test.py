@@ -72,7 +72,12 @@ def test_Signing(fido2_server, fido2_authenticator, fido2_user):
     attStmt = attestationObject.get("attStmt")
     cert = x509.load_der_x509_certificate(attStmt.get('x5c')[0], default_backend())
     pubKey = cert.public_key()
-    pubKey.verify(attStmt.get('sig'), authData + clientDataHash, padding.PKCS1v15(), hashes.SHA256())
+    #RSA key
+    #pubKey.verify(attStmt.get('sig'), , padding.PKCS1v15(), hashes.SHA256())
+    #EC Key
+    hasher = hashes.Hash(hashes.SHA256())
+    hasher.update(authData + clientDataHash)
+    pubKey.verify(attStmt.get('sig'), hasher.finalize(), ec.ECDSA(hashes.SHA256()))
 
 
 def test_Attestation_Object(fido2_server, fido2_authenticator, fido2_user):
