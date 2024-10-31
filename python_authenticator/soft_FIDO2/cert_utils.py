@@ -194,8 +194,8 @@ class CertUtils(object):
                     .issuer_name(issuer) \
                     .public_key(keyPair.get_public()) \
                     .serial_number(serial) \
-                    .not_valid_before(datetime.datetime.utcnow() - datetime.timedelta(days=1)) \
-                    .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=lifetime)) \
+                    .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)) \
+                    .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=lifetime)) \
 
     @classmethod
     def __add_extensions(cls, certBuilder, extensions):
@@ -322,6 +322,20 @@ class CertUtils(object):
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
     @classmethod
+    def gen_apple_cert(cls,
+                       subject=None,
+                       issuer=None,
+                       lifetime=365,
+                       serial=x509.random_serial_number(),
+                       keyPair=None,
+                       signKeyPair=None,
+                       nonce=None,
+                       signer=hashes.SHA256(),
+                       backend=default_backend()):
+        '''
+        Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
+        which I am sure is very useful to apple.
+        '''
     def gen_apple_cert(cls,
                        subject=None,
                        issuer=None,
