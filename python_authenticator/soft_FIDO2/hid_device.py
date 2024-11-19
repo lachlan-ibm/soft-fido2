@@ -241,7 +241,7 @@ class CBORCommand(object):
         result = {
                 0x01: credential,
                 0x02: authData,
-                0x03: signature
+                0x03: signature,
                 0x08: {}, #unsigned extensions output
                 0x09: False #epAtt
         }
@@ -475,9 +475,11 @@ class CTAP2HIDevice(USBDevice):
         bcnt = usb_req.data_frame[5:7]
         nonce = usb_req.data_frame[7:15]
         assignedCID = bytes([0, random.randint(0, 255), 0, random.randint(0, 255)])
-        # protocol == 2; major version == 1; minor version = 2; build version = 5
-        data = nonce + assignedCID + int.to_bytes(2) + int.to_bytes(5) + int.to_bytes(1) + int.to_bytes(2) \
-                + int.to_bytes(5)
+        data = nonce + assignedCID
+        # protocol == 2; major version == 5; minor version = 2; build version = 5
+        # data += int.to_bytes(2) + int.to_bytes(5) + int.to_bytes(1) + int.to_bytes(2) + int.to_bytes(5)
+        for i in [2, 5, 1, 2, 5]:
+            data += int.to_bytes(i)
         dump_bytes(data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         rsp = CTAPInitResponse(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
