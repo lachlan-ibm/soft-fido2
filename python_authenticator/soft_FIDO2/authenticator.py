@@ -672,6 +672,7 @@ class Fido2Authenticator(object):
         sig = None
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
+            sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
         else:
             digest = hashes.Hash(hashes.SHA256())
             digest.update(certInfo)
