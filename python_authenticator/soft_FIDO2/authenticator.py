@@ -952,8 +952,8 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up, be, bs)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str(re.sub('-self', '', atteStmtFmt))
-        if atteStmtFmt.startswith('compound'):
-            atteStmtFmt = atteStmtFmt.split(':')[0]
+        if attStmtFmt.startswith('compound'):
+            attStmtFmt = atteStmtFmt.split(':')[0]
         attestationObject = {u'authData': authData, u'fmt': attStmtFmt, u'attStmt': attStmt}
         saar = {
             u'clientDataJSON': str(clientDataEncoded, 'utf-8'),
