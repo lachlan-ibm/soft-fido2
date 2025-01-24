@@ -885,7 +885,8 @@ class Fido2Authenticator(object):
                 raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
             result = []
             for stmt in stmts:
-                result += [self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)]
+                result += [{u'fmt': stmt, u'attStmt': 
+                           self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)}]
             return result
         #else
         return self._process_att_stmt(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
