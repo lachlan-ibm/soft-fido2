@@ -672,6 +672,7 @@ class Fido2Authenticator(object):
         sig = None
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
             keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
+            sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
         else:
             digest = hashes.Hash(hashes.SHA256())
             digest.update(certInfo)
@@ -884,7 +885,8 @@ class Fido2Authenticator(object):
                 raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
             result = []
             for stmt in stmts:
-                result += [self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)]
+                result += [{u'fmt': stmt, u'attStmt': 
+                           self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)}]
             return result
         #else
         return self._process_att_stmt(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
@@ -951,6 +953,8 @@ class Fido2Authenticator(object):
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up, be, bs)
         attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
         attStmtFmt = str(re.sub('-self', '', atteStmtFmt))
+        if atteStmtFmt.startswith('compound'):
+            attStmtFmt = atteStmtFmt.split(':')[0]
         attestationObject = {u'authData': authData, u'fmt': attStmtFmt, u'attStmt': attStmt}
         saar = {
             u'clientDataJSON': str(clientDataEncoded, 'utf-8'),

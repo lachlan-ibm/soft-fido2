@@ -336,20 +336,6 @@ class CertUtils(object):
         Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
         which I am sure is very useful to apple.
         '''
-    def gen_apple_cert(cls,
-                       subject=None,
-                       issuer=None,
-                       lifetime=365,
-                       serial=x509.random_serial_number(),
-                       keyPair=None,
-                       signKeyPair=None,
-                       nonce=None,
-                       signer=hashes.SHA256(),
-                       backend=default_backend()):
-        '''
-        Generate Apple Attestation certificate. At the moment this is just a x509 with some apple extension
-        which I am sure is very useful to apple.
-        '''
         extensions = [CertUtils.AppleNonceExtension(nonce)]
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
 
