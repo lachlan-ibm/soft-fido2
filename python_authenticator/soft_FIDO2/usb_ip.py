@@ -489,8 +489,8 @@ class USBDevice():
         control_req = StandardDeviceRequest()
         control_req.unpack(usb_req.setup.to_bytes(8, 'big'))
         handled = False
-        print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_control)' + bcolors.ENDC + "] UC Request Type {}; UC " + \
-                "Request {}; UC Value  {}; UCIndex  {}; UC Length {}".format(
+        print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_control)' + bcolors.ENDC + "] UC Request Type" + \
+                " {}; UC Request {}; UC Value  {}; UCIndex  {}; UC Length {}".format(
                 control_req.bmRequestType, control_req.bRequest, control_req.wValue, control_req.wIndex,
                 control_req.wLength))
         if control_req.bmRequestType == 0x80: # Host Request
@@ -512,7 +512,8 @@ class USBDevice():
                 print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] Control request')
                 self.handle_usb_control(usb_req)
             else:
-                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + '] Data request for ep {}'.format(usb_req.ep))
+                print('[' + bcolors.OKBLUE + 'USBDevice(handle_usb_request)' + bcolors.ENDC + \
+                        '] Data request for ep {}'.format(usb_req.ep))
                 self.handle_data(usb_req)
         except Exception as e:
             print(e)
@@ -661,7 +662,7 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                             endpoint_requests[cmd.ep] = 1
                         else:
                             endpoint_requests[cmd.ep] = endpoint_requests.get(cmd.ep) + 1
-                        msg = "Endpoint reuests: {}".format( endpoint_requests)
+                        msg = "Endpoint requests: {}".format( endpoint_requests)
                         colour_print(component='USBIPConnection.handle', msg=msg)
                         data_frame = b''
                         if cmd.start_frame == 0xFFFFFFFF and cmd.transfer_flags == 0x0:

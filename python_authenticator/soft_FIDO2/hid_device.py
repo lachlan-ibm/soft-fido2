@@ -13,11 +13,17 @@
 #                            are generated on the first request to create a credential.
 #
 
-import base64, datetime, multiprocessing, os, sys, random, queue
-from enum import Enum
+import base64, datetime, multiprocessing, os, sys, random, queue, threading, time
+import cbor2 as cbor
+from enum import Enum, IntEnum
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ec
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from usb_ip import BaseStructure, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer, \
                     USBIPCMDSubmit, bcolors, dump_bytes, colour_print
+from key_pair import KeyPair, KeyUtils
+from authenticator import Fido2Authenticator
+from cert_utils import CertUtils
 
 
 # Classes to create a USB device object, connect it to the system usb daemon and begin tx/rx
@@ -91,11 +97,13 @@ class Authenticator(object):
     _fernet_key = None
     _lock = multiprocessing.Lock()
 
+    _pin_kp = None
+
     def __new__(cls):
-        if cls._ca_cert == None and cls_.ca_kp == None:
-            _lock.aquire()
+        if cls._ca_cert == None and cls._ca_kp == None:
+            cls._lock.acquire()
             try:
-                if cls._ca_cert == None and cls_.ca_kp == None:
+                if cls._ca_cert == None and cls._ca_kp == None:
                     #Get the PKCS12 file and load the key/cert
                     p12_file = os.environ.get("FIDO_AUTHENTICATOR_PKCS12", os.path.expanduser("~/.fido2/authenticator.p12"))
                     p12_data = open(p12_file, 'rb')
@@ -109,11 +117,36 @@ class Authenticator(object):
                 if bool(os.environ.get("FIDO_GENERATE_CA", "false")) == True:
                     cls._ca_kp = KeyPair.generate_ecdsa()
                     cls._ca_cert = CertUtils.gen_ca_cert(
-                            subject=x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'SOFT FIDO2 MOCK CA')]), keyPair=ca_kp)
+                            subject=x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'SOFT FIDO2 MOCK CA')]), 
+                            keyPair=cls._ca_kp)
                 else:
                     colour_print(colour=bcolors.FAIL, component='Authenticator.__new__', msg=e)
                     sys.exit(1)
-            _lock.release()
+            cls._lock.release()
+
+            cls._pin_kp = KeyPair.generate_ecdsa()
+
+    @classmethod
+    def get_pin_cose_key(cls, pin_req):
+        if cls._pin_kp == None:
+            cls.__new__(cls)
+        cose_key = {1: 2,
+                3: -25, #hard code ec with sha384
+                -1: 1,
+                -2: KeyUtils._long_to_bytes(cls._pin_kp.get_public().public_numbers().x),
+                -3: KeyUtils._long_to_bytes(cls._pin_kp.get_public().public_numbers().y)
+                #-2: b"\xc7\xf7\xbcm<r-8C\xcdKY\x18\x88\x10A\xad\xd6\xa9\x87\x16\x8c\xef\xca\tB\x1b!\x07p\x96\xb9",
+                #-3: b"`]\xd5\xce\xdc\x8b\x880\xd5g\xca\xcb\x1b\xe1<\xceI\x1c\x00\x10\x90\x13\xc3\x90\xec\x94\xc7\x0e\xf0\xfc\xffN"
+            }
+        return {1: cose_key}
+
+    @classmethod
+    def get_pin_token(cls, pin_req):
+        #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
+        platform_key = pin_req[3]
+        pin_hash_enc = pint_req[6]
+
+        return {2: pin_auth_token}
 
 
     @staticmethod
@@ -162,7 +195,14 @@ class CBORCommand(object):
         AUTHENTICATOR_CONFIG = 0xD
 
         def __repr__(self):
-            return f'{self.__class__.__name__}.{self.name}'
+            #return f'{self.__class__.__name__}.{self.name}'
+            return self.value
+
+    class CBORStatusCode(IntEnum):
+        CTAP2_OK = 0x0
+        CTAP1_ERR_INVALID_COMMAND = 0x01
+        CTAP2_ERR_INVALID_CBOR = 0x12
+
 
     # Request buffer. This stores the incoming CBOR message and grows until all segments have been recieved
     request = []
@@ -170,55 +210,111 @@ class CBORCommand(object):
     # response has been transmitted
     response = []
     # Signal that the response buffer is ready to be sent back to the client
-    response_read = False
-    # Track then number of response segments transmitted
+    response_ready = False
+    # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
+    # should always be one less than this number
     response_segment = 0
     # Length of the incoming CBOR message.
     length = 0
     # Track the number of request segmetns recieved
     request_segment = 0
-    # CBOR command byte recieved in initial packet
+    # Authenticator API command byte recieved in initial packet
     cmd = None
+    # Command recieved in CTAPHID frame, this is likely 0x90 (CBOR_MSG) but might be different
+    ctaphid_cmd = 0
+    #Length of the payload bytes
+    bcnt = 0
 
-    def __init__(self, ba):
+    def __init__(self, ba, skip_init=False):
+        if ba == None and skip_init == True:
+            return #Create an empty command as we will directly set the response buffer later with the assigned CID.
         if len(ba) <= 1:
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
-            self.cmd = ba[0:1]
-            self.length = ba[1:2]
-            self.response = self.unpack(ba[2:])
+        self.length = int.from_bytes(ba[0:2])
+        self.request = ba[3:]
+        self.cmd = self.CommandByte(int.from_bytes(ba[2:3]))
+        colour_print(colour=bcolors.OKPURPLE, component='CBORCommand.__init__', 
+                msg="command {}; length {}; self.request[{}]".format(self.cmd, self.length, len(self.request)))
+        if self.length >= len(self.request):
+            colour_print(colour=bcolors.OKPURPLE, component='CBORCommand.__init__', 
+                    msg="request is segmented, wait for the whole message")
+        else: #We have the whole message
+            self.response = self.unpack()
+
+    def append_segment(self, seg_buf):
+        self.request += seg_buf
+        if len(self.request) >= self.length:
+            self.response = self.unpack()
+        else:
+            self.request_segment += 1
+
 
     #Return CBOR response if entire command has been received or None if still 
     #waiting for segments
-    def unpack(self, segment):
+    def unpack(self):
         return {
-            CommandByte.MAKE_CREDENTIAL: self._make_cred,
-            CommandByte.GET_NEXT_ASSERTION: self._get_assertion,
-            CommandByte.GET_INFO: self._get_info,
-            CommandByte.CLIENT_PIN: self._client_pin
-            }.get(cmd)(segment)
+            self.CommandByte.MAKE_CREDENTIAL: self._make_cred,
+            self.CommandByte.GET_NEXT_ASSERTION: self._get_assertion,
+            self.CommandByte.GET_INFO: self._get_info,
+            self.CommandByte.CLIENT_PIN: self._client_pin
+            }.get(self.cmd)(bytes(self.request))
+
+    def get_rsp_seg(self, num_bytes):
+        if not isinstance(num_bytes, int):
+            raise RuntimeError("panic!")
+        self.response_segment += 1
+        #sequence is offset by two to account for init pkt and zero index start for continue sequence
+        seg_num = max(self.response_segment - 2, 0)
+        colour_print(colour=bcolors.WARNING, component='CBORCommand.get_rsp_seg', msg='self.response_segment = {}'.format(self.response_segment))
+        colour_print(colour=bcolors.WARNING, component='CBORCommand.get_rsp_seg', msg='self.response_segment - 2 = {}'.format(self.response_segment - 2))
+        colour_print(colour=bcolors.WARNING, component='CBORCommand.get_rsp_seg', msg='segment number = {}'.format(seg_num))
+        seg = self.response
+        if num_bytes >= len(self.response):
+            self.response = []
+        else:
+            seg = self.response[:num_bytes]
+            self.response = self.response[num_bytes:]
+        return seg, seg_num
 
     def _client_pin(self, ba):
+
+       pin_sub_cmds = { 
+            #GET_PIN_RETRIES = 0x1
+                      2: Authenticator.get_pin_cose_key,
+            #SET_PIN = 0x3
+            #CHANGE_PIN = 0x4
+                      5: Authenticator.get_pin_token
+                }
+
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
-        
-        result = {
-                0x02: b's3cr37'
-        }
-        self.response += cbor.dumps(result)
+        req_data = cbor.loads(ba)
+        colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
+                     msg='Packet request: {}'.format(req_data))
+        sub_cmd = req_data[2]
+        colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
+                     msg='pin sub_cmd: {}'.format(sub_cmd))
+        rsp = pin_sub_cmds.[sub_cmd](req_data)
+        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+        self.bcnt = len(result)
         self.response_ready = True
+        return result
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
         result = {
-            0x01: ["FIDO_2_1", "FIDO_2_0"],
-            0x03: b'\x00' * 16,
+            0x01: ["U2F_V2", "FIDO_2_0"],
+            0x02: ['hmac-secret'],
+            #0x03: b"\x01\x02\x03\x04" * 4,
+            0x03: b"\xcbiH\x1e\x8f\xf7@9\x93\xec\n')\xa1T\xa8",
             0x04: {'rk': True, 'up': True, 'plat': False, 'clientPin': True},
-            0x05: 2000,
-            0x06: [1],
-            0x09: ["usb"]
+            0x05: 1200,
+            0x06: [1]
         }
-        self.response += cbor.dumps(result)
+        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result)
+        self.bcnt = len(result)
         self.response_ready = True
+        return result
 
 
     def __generate_attestation(self, options):
@@ -277,7 +373,7 @@ class CBORCommand(object):
             self.response_ready = True
 
 # Send this for every new message frame. Response contains
-class CTAPInitResponse(BaseStructure):
+class CTAPHIDInitPkt(BaseStructure):
     _fields_ = [
         ('cid', 'I'),
         ('cmd', 'B'),
@@ -292,16 +388,21 @@ class CTAPInitResponse(BaseStructure):
                     index = i
                     break
             if index == None:
-                colour_print(colour=bcolors.OKGREEN, component='CTAPInitResponse.__init__', msg='setting data field')
+                colour_print(colour=bcolors.OKGREEN, component='CTAPHIDInitPkt.__init__', msg='setting data field')
                 self._fields_ += [('data', '%ds' % len(kwargs['data']))]
             else:
-                colour_print(colour=bcolors.OKGREEN, component='CTAPInitResponse.__init__', 
+                colour_print(colour=bcolors.OKGREEN, component='CTAPHIDInitPkt.__init__', 
                              msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
             print(self._fields_)
         super().__init__(**kwargs)
 
-class CtapContinueResponse(BaseStructure):
+class CTAPHIDSeqPkt(BaseStructure):
+
+    _fields_ = [
+        ('cid', 'I'),
+        ('seq', 'B'),
+    ]
 
     def __init__(self, **kwargs):
         print(kwargs)
@@ -313,19 +414,15 @@ class CtapContinueResponse(BaseStructure):
                     break
             if index == None:
                 print("setting data field")
-                colour_print(colour=bcolors.OKPINK, component='CtapContinueResponse.__init__', msg='setting data field')
+                colour_print(colour=bcolors.OKPINK, component='CTAPHIDSeqPkt.__init__', msg='setting data field')
                 self._fields_ += [('data', '%ds' % len(kwargs['data']))]
             else:
-                colour_print(colour=bcolors.OKPINK, component='CtapContinueResponse.__init__', 
+                colour_print(colour=bcolors.OKPINK, component='CTAPHIDSeqPkt.__init__', 
                              msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
             print(self._fields_)
-        super(CTAPContinueResponse, self).__init__(**kwargs)
+        super(CTAPHIDSeqPkt, self).__init__(**kwargs)
 
-    _fields_ = [
-        ('cid', 'I'),
-        ('seq', 'B'),
-    ]
 
 
 class CTAP2HIDevice(USBDevice):
@@ -347,6 +444,8 @@ class CTAP2HIDevice(USBDevice):
 
     #This will contain the current set of channel id's and associated state
     cids = {}
+    #This is a list of pending message frames with a worker thread which will respond within 50ms if 
+    # we don't generate a response in time
     pending = []
 
     def __init__(self):
@@ -355,8 +454,8 @@ class CTAP2HIDevice(USBDevice):
 
     def unlink(self, usb_req):
         index = None
-        for i, req in enumerate(self.pending):
-            if req.seqnum == usb_req.unlink_seqnum:
+        for i, worker in enumerate(self.pending):
+            if worker.req.seqnum == usb_req.unlink_seqnum:
                 index = i
         if index != None:
             del self.pending[index]
@@ -387,48 +486,70 @@ class CTAP2HIDevice(USBDevice):
         return ''.join("%02X" % x for x in b)
 
 
-    class KeepAliveWorker():
+    class KeepAliveWorker(object):
 
         stop = False
         my_thread = None
         req = None
-        usbip = None
+        hid = None
+        start = None
 
-        def __init__(self, req, usbip):
+        def __init__(self, req, hid):
             self.req = req
-            self.usbip = usbip
+            self.hid = hid
 
         def reply_with_keepalive(self):
             start = round(time.time() * 1000)
             while self.stop == False:
                 now = round(time.time() * 1000)
-                if(start + 45 >= now) and self.stop == False:
+                wait_time = now - start
+                if(now >= start + 450) and self.stop == False: #If we get to 45ms, send heartbeat
+                    colour_print(colour=bcolors.FAIL, component='KeepAliveWorker.reply_with_keepalive',
+                                 msg='Thread reached timeout of {} ms before response buffer was recieved . . . sending heartbeat response'.format(wait_time))
                     #We need to reply with keep alive after 50ms this gives us some tolerance
                     #Our status is always still processing
                     rsp = b'\x3B\x01\x01'
-                    self.usbip.send_usb_req(rsp, len(rsp), start_frame=0xFFFFFFFF, packets=0, ep=0, direction=0, 
+                    self.hid.send_usb_req(rsp, len(rsp), start_frame=0xFFFFFFFF, packets=0, ep=0, direction=0, 
                                        seqnum=self.req.seqnum)
                     self.stop = True
-                    for idx, txn in enumerate(usbip.pending): #If we sent a keep alive remove the transaction from the
+                    for idx, txn in enumerate(self.hid.pending): #If we sent a keep alive remove the transaction from the
                         # list of pending transactions
                         if txn.req is not None and txn.req.seqnum is not None and txn.req.seqnum == self.req.seqnum:
-                            del self.usbip.pending[idx]
+                            del self.hid.pending[idx]
                     return
-                time.sleep(1/1000)
+                time.sleep(5/1000) # sleep for 5 ms
 
 
     def send_response_segment(self, cid, cbor_cmd):
         if len(self.pending) == 0:
-            colour_print(colour=bolors.FAIL, component='send_response_segment', msg='No pending transactions to use :(')
+            colour_print(colour=bcolors.FAIL, component='send_response_segment', msg='No pending transactions to use :(')
             return
-        #Take control of the next pending request, fi this fails then we will just have to wait for the
+        #Take control of the next pending request, if this fails then we will just have to wait for the
         # next frame to appear.
         self.pending[0].stop = True
-        if self.pending[0].my_thread is not None:
+        if self.pending[0].my_thread is not None and self.pending[0].my_thread.is_alive() == True:
             self.pending[0].my_thread.join(1/1000)
         if self.pending[0].my_thread.is_alive() == True:
             colour_print(colour=bcolors.FAIL, component='send_response_segment', msg='Could not kill keepalive thread')
             return
+        rsp_data = None
+        if cbor_cmd.response_segment == 0: #We send the init pkt
+            data, _ = cbor_cmd.get_rsp_seg(57)
+            rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), 
+                                    cmd=cbor_cmd.ctaphid_cmd,
+                                    bcnt=cbor_cmd.bcnt,
+                                    data=data).pack()
+        else: #We send the continue sequence pkt
+            data, seq_num = cbor_cmd.get_rsp_seg(59)
+            colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='Sequence number {}'.format(seq_num))
+            rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid),
+                                     seq=seq_num,
+                                     data=data).pack()
+        colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='pad with {} 0 bytes'.format(64 - len(rsp_data)))
+        rsp_data += b'\00' * (64 - len(rsp_data)) # pad the 64 byte frame with 0x00 if required
+        '''
+        rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
+        dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
         rsp_data = cid
         rsp_data += int.to_bytes(cbor_cmd.response_segment, 1)
         if len(cbor_cmd.response) > 58:
@@ -439,11 +560,15 @@ class CTAP2HIDevice(USBDevice):
             cbor_cmd.response = []
         # Pad out to 64 bytes
         rsp_data += b'\x00' * (64 - len(rsp_data))
-        self.send_usb_req(rsp_data, len(rsp), start_frame=0xFFFFFFFF, packets=0, 
+        '''
+        dump_bytes(rsp_data, colour=bcolors.OKGREEN, component='USBDevice.send_response_segment', 
+                   msg='Packed response: ')
+        self.send_usb_req(rsp_data, len(rsp_data), start_frame=0xFFFFFFFF, packets=0, 
                           ep=0, direction=0, seqnum=self.pending[0].req.seqnum)
         del self.pending[0]
-        cbor_cmd.response_segment += 1
-        if len(cbor_cmd.response) == 0: #If we have not response buffer left, remove the transaction from our context
+        #If we have not response buffer left, remove the transaction from our context
+        # don't do this for the broadcast channel.
+        if len(cbor_cmd.response) == 0 and cid != b'\xff\xff\xff\xff':
             del self.cids[cid]['cborCmd']
         return
 
@@ -452,22 +577,42 @@ class CTAP2HIDevice(USBDevice):
         return
 
     def ctaphid_msg(self, usb_req):
+
+        class U2FCommand(Enum):
+            U2F_VERSION = 0x0
+            U2F_REGISTER = 0x1
+            U2F_AUTHENTICATE = 0x2
+            U2F_VER = 0x03
+
+        #Only supporting extended length encoding, section 3.1.3
+        #https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html
         cid = usb_req.data_frame[0:4]
         if not cid in self.cids:
             colour_print(colour=bcolors.FAIL, component='USBDevice.ctaphid_msg', 
                          msg='Unknown CID {}'.format(cid))
         cmd = usb_req.data_frame[4:5]
-        u2f_cmd = usb_req.data_frame[5:7]
-        u2f_p1 = usb_req.data_frame[7:9]
-        u2f_p2 = usb_req.data_frame[9:11]
-        u2f_lc = usb_req.data_frame[11:13]
-        u2f_req_data = None
-        if int.from_bytes(u2f_lc) > 0:
-            u2f_req_data = usb_req.data_frame[13:13 + int.from_bytes(u2f_lc)]
-        u2f_le = None
-        if len(usb.rwq.data_frame) > (13 + int.from_bytes(u2f_lc)):
-            u2f_le = usb_req.data_frame[13 + int.from_bytes(u2f_lc):]
-        return
+        bcnt = usb_req.data_frame[5:7]
+        apdu = usb_req.data_frame[7:]
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_msg', 
+                    msg='cmd = {}; bcnt = {}; apdu = {}'.format(
+                        self._bytes_to_str(cmd), self._bytes_to_str(bcnt), apdu))
+        u2f_cla = apdu[:1]
+        u2f_ins = apdu[1:2]
+        u2f_p1 = apdu[2:3]
+        u2f_p2 = apdu[3:4]
+        u2f_lc = apdu[4:7]
+        u2f_data = apdu[7:]
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_msg', 
+                    msg='U2F Raw Message CLA = {}; INS = {}; P1 = {}; P2 = {}; Lc = {}'.format(
+                        u2f_cla, u2f_ins, u2f_p1, u2f_p2, u2f_lc))
+        if u2f_cla == b'\x00' and u2f_ins == b'\x03':
+            #U2F_VERSION request, send the expected response
+            cborCmd = CBORCommand(None, skip_init=True)
+            cborCmd.ctaphid_cmd = int.from_bytes(cmd)
+            cborCmd.bcnt = 6
+            cborCmd.response = b'U2F_V2'
+            self.cids[cid]['cborCmd'] = cborCmd
+            self.send_response_segment(cid, self.cids[cid]['cborCmd'])
 
     def ctaphid_init(self, usb_req):
         cid = usb_req.data_frame[0:4]
@@ -475,6 +620,8 @@ class CTAP2HIDevice(USBDevice):
         bcnt = usb_req.data_frame[5:7]
         nonce = usb_req.data_frame[7:15]
         assignedCID = bytes([0, random.randint(0, 255), 0, random.randint(0, 255)])
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', 
+                    msg='Assigning a new CID to {}'.format(self._bytes_to_str(assignedCID)))
         data = nonce + assignedCID
         # protocol == 2; major version == 5; minor version = 2; build version = 5
         # data += int.to_bytes(2) + int.to_bytes(5) + int.to_bytes(1) + int.to_bytes(2) + int.to_bytes(5)
@@ -482,33 +629,42 @@ class CTAP2HIDevice(USBDevice):
             data += int.to_bytes(i)
         dump_bytes(data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
-        rsp = CTAPInitResponse(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
-        dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
-        self.cids[assignedCID] = {'cborCmd': CBORCommand()}
-        self.cids[assignedCID]['cborCmd'].response = rsp
+        #rsp = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
+        #dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
+        self.cids[assignedCID] = {'cborCmd': CBORCommand(None, skip_init=True) }
+        self.cids[assignedCID]['cborCmd'].response = data
+        self.cids[assignedCID]['cborCmd'].ctaphid_cmd = int.from_bytes(cmd)
+        self.cids[assignedCID]['cborCmd'].bcnt = 17
         #return self.send_usb_req(usb_req, rsp, 64, ep=0x81, start_frame=int.from_bytes(cid))
         #self.send_usb_req(usb_req, b'', 0, ep=usb_req.ep)
         #self.send_usb_req(rsp, len(rsp), start_frame=0xFFFFFFFF, packets=0, 
         #                  ep=0, direction=0, seqnum=self.pending[0].seqnum)
         #del self.pending[0]
-        self.send_response_segment(assignedCID, self.cids[assignedCID]['cborCmd'])
+        self.send_response_segment(cid, self.cids[assignedCID]['cborCmd'])
 
     def ctaphid_cbor(self, usb_req):
         cid = usb_req.data_frame[0:4]
-        colour_print(colour=bcolors.OKGREEn, component='USBDevice.ctaphid_cbor', 
-                    msg='CBOR message recieved on channel {}'.format(cid))
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
+                    msg='CBOR message recieved on channel {}'.format(self._bytes_to_str(cid)))
         cmd = usb_req.data_frame[4:5]
         bcnt = usb_req.data_frame[5:7]
         ctap_cmd = usb_req.data_frame[7:8]
-        cbor_data = usb_req.data_frame[8: int.from_bytes(bcnt) - 1]
-        dump_bytes(cbor_data, colour=bcolors.OKCYAN, component='USBDevice.ctaphid_cbor', 
-                    msg='CBOR encoded bytes:')
-        cbor_cmd = CBORCommand(usb_req.data_frame[7:])
+        print(int.from_bytes(bcnt) - 1)
+        cbor_data = usb_req.data_frame[8: 7 + int.from_bytes(bcnt)]
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
+                     msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
+                                                                   self._bytes_to_str(bcnt)))
+        dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
+                    msg='CBOR encoded bytes: ')
+        cbor_cmd = CBORCommand(usb_req.data_frame[5:])
+        cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
         self.cids[cid]['cborCmd'] = cbor_cmd
         if cbor_cmd.response_ready == True: #We can respond immediatly
-            return self.send_response_segment(cid, cbor_cmd)
+            dump_bytes(self.cids[cid]['cborCmd'].response, colour=bcolors.OKGREEN, 
+                       component='USBDevice.ctaphid_cbor', msg='CBOR response: ')
+            return self.send_response_segment(cid, self.cids[cid]['cborCmd'])
         else:
-            colour_print(colour=bcolors.YELLOW, component='USBDevice.ctaphid_cbor', 
+            colour_print(colour=bcolors.OKYELLOW, component='USBDevice.ctaphid_cbor', 
                          msg="Waiting for rest of command to arrive . . .")
             return
 
@@ -526,21 +682,24 @@ class CTAP2HIDevice(USBDevice):
         self.send_usb_req(b'', 0, ep=usb_req.ep, seqnum=usb_req.seqnum)
 
     def _handle_outgoing(self, usb_req):
-        colour_print(component='USBDevice.handle_data', msg='Adding request to pending')
+        colour_print(component='USBDevice._handle_outgoing', msg='Adding request to pending')
         # Create a new thread so we will reply at 50ms if required
-        worker = KeepAliveWorker(usb_req)
+        worker = self.KeepAliveWorker(usb_req, self)
         keep_alive_thread = threading.Thread(target=worker.reply_with_keepalive)
         worker.my_thread = keep_alive_thread
+        #keep_alive_thread.start()
         self.pending.append( worker )
         for cid, context in self.cids.items():
             if context.get('cborCmd') != None and context['cborCmd'].response_ready == True:
-                colour_print(component='USBDevice.handle_data', 
+                colour_print(component='USBDevice._handle_outgoing', 
                             msg='Using pending request to send response segment')
                 self.send_response_segment(cid, context['cborCmd'])
-        return
+                return
 
     def _handle_incoming_cmd(self, cmd, usb_req):
         ctapCmd = int.from_bytes(cmd) & 0x7F
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice._handle_incoming_cmd', 
+                    msg='recieved command {}'.format(ctapCmd))
         return {
             1: self.ctaphid_ping,
             3: self.ctaphid_msg,
@@ -552,43 +711,44 @@ class CTAP2HIDevice(USBDevice):
         }.get(ctapCmd, self.ctaphid_unknown)(usb_req)
 
     def _handle_incoming_sequence(self, cid, usb_req):
+        seqNum = int.from_bytes(usb_req.data_frame[4:5])
         context = self.cids.get(cid)
         if context != None:
             transaction = context.get("cborCmd")
-            seqNum = usb_req.data_frame[4:5]
             if transaction != None and seqNum == transaction.request_segment:
-                response = transaction.unpack(usb_req.data_frame[5:])
-                if response == None:
-                    transaction.request_segment += 1
-                else:
+                transaction.append_segment(usb_req.data_frame[5:])
+                if transaction.response_ready == True:
                     self.send_response_segment(cid, transaction)
+                else:
+                    colour_print(colour=bcolors.OKPURPLE, component='USBDevice._handle_incoming_sequence', 
+                                 msg='Sequence number [{}] not the last expected sequence'.format(seqNum))
             else:
-                colour_print(colour=bcolors.FAIL, component='USBDevice.handle_data', 
+                colour_print(colour=bcolors.FAIL, component='USBDevice._handle_incoming_sequence', 
                              msg='Sequence number [{}] not the next expected sequence [{}]'.format(
                                  seqNum, transaction.request_segment))
         else:
-            colour_print(colour=bcolors.FAIL, component='USBDevice.handle_data', 
+            colour_print(colour=bcolors.FAIL, component='USBDevice._handle_incoming_sequence', 
                          msg='CID not found in device context, don\'t know what to do')
 
     def _handle_incoming(self, usb_req):
         if len(self.pending) == 0:
-            colour_print(colour=bolors.FAIL, component="USBDevice.handle_data", 
+            colour_print(colour=bcolors.FAIL, component="USBDevice._handle_incoming", 
                          msg="No pending request to respond with :(")
         else: #We reply to the HOST Out endpoint with an empty frame then process the command
             self.send_usb_req('', 64, ep=0, start_frame=0xFFFFFFFF, seqnum=usb_req.seqnum)
         # We send the response to the command to a request in self.pending once we are ready
         cid = usb_req.data_frame[0:4]
         cmd = usb_req.data_frame[4:5]
-        colour_print(colour=bcolors.OKGREEN, component='USBDevice.handle_data', 
+        colour_print(colour=bcolors.OKGREEN, component='USBDevice._handle_incoming', 
                     msg='CID: {}; command: {}'.format(self._bytes_to_str(cid), self._bytes_to_str(cmd)))
-        if(int.from_bytes(cmd) & 0x80) == 0:
-            colour_print(colour=bcolors.FAIL, component='USBDevice.handle_data', 
-                        msg='bit 7 not set in command byte')
-            self._handle_incoming_cmd(cmd, usb_req)
+        if(int.from_bytes(cmd) & 0x80) > 0:
+            colour_print(colour=bcolors.FAIL, component='USBDevice._handle_incoming', 
+                        msg='bit 8 set we got a command msg')
+            return self._handle_incoming_cmd(cmd, usb_req)
         else:
-            colour_print(colour=bcolors.OKPURPLE, component='USBDevice.handle_data',
+            colour_print(colour=bcolors.OKPURPLE, component='USBDevice._handle_incoming',
                          msg='Recieved a sequence segment, appending it to the current msg context')
-            self._handle_incoming_sequence(cid, usb_req)
+            return self._handle_incoming_sequence(cid, usb_req)
 
     def handle_data(self, usb_req):
         '''

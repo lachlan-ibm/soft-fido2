@@ -236,6 +236,7 @@ class Fido2Authenticator(object):
             result = bytes(self.aaguid)
         return result
 
+    @classmethod
     def _get_alg_id_from_pubkey_and_hash(self, publicKey, alg):
         if isinstance(publicKey, rsa.RSAPublicKey):
             if isinstance(self.hashAlg, hashes.SHA256):
