@@ -237,22 +237,22 @@ class Fido2Authenticator(object):
         return result
 
     @classmethod
-    def _get_alg_id_from_pubkey_and_hash(self, publicKey, alg):
+    def _get_alg_id_from_pubkey_and_hash(cls, publicKey, alg):
         if isinstance(publicKey, rsa.RSAPublicKey):
-            if isinstance(self.hashAlg, hashes.SHA256):
+            if isinstance(alg, hashes.SHA256):
                 return -257
-            if isinstance(self.hashAlg, hashes.SHA384):
+            if isinstance(alg, hashes.SHA384):
                 return -258
-            elif isinstance(self.hashAlg, hashes.SHA512):
+            elif isinstance(alg, hashes.SHA512):
                 return -259
-            elif isinstance(self.hashAlg, hashes.SHA1):
+            elif isinstance(alg, hashes.SHA1):
                 return -65535
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
-            if isinstance(self.hashAlg, hashes.SHA256):
+            if isinstance(alg, hashes.SHA256):
                 return -7
-            if isinstance(self.hashAlg, hashes.SHA384):
+            if isinstance(alg, hashes.SHA384):
                 return -35
-            elif isinstance(self.hashAlg, hashes.SHA512):
+            elif isinstance(alg, hashes.SHA512):
                 return -36
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             return -8

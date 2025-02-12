@@ -21,7 +21,7 @@ class KeyUtils(object):
 
     @classmethod
     def _bytes_to_long(self, b):
-        l = len(b) / 4
+        l = int(len(b) / 4)
         parts = struct.unpack(">" + 'L' * l, b)[::-1]
         result = 0
         for i in range(len(parts)):

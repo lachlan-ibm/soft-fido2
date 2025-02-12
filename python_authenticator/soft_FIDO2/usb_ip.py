@@ -39,7 +39,6 @@ class bcolors:
     OKGREEN = '\033[92m'
     OKPINK = '\033[95m'
     OKYELLOW = '\033[93m'
-    OKCYAN = '\003[1;36m'
     OKPURPLE = '\033[35m'
     WARNING = '\033[93m'
     FAIL = '\033[91m'

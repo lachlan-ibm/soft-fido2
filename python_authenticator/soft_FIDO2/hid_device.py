@@ -16,8 +16,10 @@
 import base64, datetime, multiprocessing, os, sys, random, queue, threading, time
 import cbor2 as cbor
 from enum import Enum, IntEnum
+from secrets import token_bytes
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from usb_ip import BaseStructure, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer, \
                     USBIPCMDSubmit, bcolors, dump_bytes, colour_print
@@ -98,10 +100,13 @@ class Authenticator(object):
     _lock = multiprocessing.Lock()
 
     _pin_kp = None
+    _pin_retry = 5
+    _pin_auth_token = None
 
     def __new__(cls):
         if cls._ca_cert == None and cls._ca_kp == None:
             cls._lock.acquire()
+            cls._pin_kp = KeyPair.generate_ecdsa() #P-256 key, cose key type -25
             try:
                 if cls._ca_cert == None and cls._ca_kp == None:
                     #Get the PKCS12 file and load the key/cert
@@ -113,6 +118,7 @@ class Authenticator(object):
                     # Retrieve and decrypt the symmetrical key
                     shared_key = CertUtils.derive_aes_key_from_x509(cls._ca_cert, ca_key)
                     cls._fernet_key = Fernet(base64.urlsafe_b64encode(shared_key))
+
             except Exception as e:
                 if bool(os.environ.get("FIDO_GENERATE_CA", "false")) == True:
                     cls._ca_kp = KeyPair.generate_ecdsa()
@@ -124,7 +130,9 @@ class Authenticator(object):
                     sys.exit(1)
             cls._lock.release()
 
-            cls._pin_kp = KeyPair.generate_ecdsa()
+    @classmethod
+    def _decapsulate_platform_key(cls, cose_key):
+        return
 
     @classmethod
     def get_pin_cose_key(cls, pin_req):
@@ -143,24 +151,48 @@ class Authenticator(object):
     @classmethod
     def get_pin_token(cls, pin_req):
         #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
-        platform_key = pin_req[3]
-        pin_hash_enc = pint_req[6]
+        platform_cose_key = pin_req[3]
+        pin_hash_enc = pin_req[6]
+        iv = pin_hash_enc[:16]
+        ct = pin_hash_enc[16:]
+        cose_type_to_curve_map = {
+                    -25: ec.SECP256R1,
+                    -26: ec.SECP521R1
+                }
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
+                     msg='plat cose key: {}; iv: {}; ct: {}'.format(platform_cose_key, iv, ct))
+        ec_pub_numbs = ec.EllipticCurvePublicNumbers(KeyUtils._bytes_to_long(platform_cose_key[-2]),
+                            KeyUtils._bytes_to_long(platform_cose_key[-3]), 
+                            cose_type_to_curve_map[platform_cose_key[3]]())
+        plat_pubkey = ec_pub_numbs.public_key()
+        shared_key = cls._pin_kp.get_private().exchange(ec.ECDH(), plat_pubkey)
+        hmac_seed = shared_key[:16]
+        aes_seed = shared_key[16:]
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
+                     msg='hmac seed: {}; aes seed: {}'.format(hmac_seed, aes_seed))
+        decryptor = Cipher(algorithms.AES(aes_seed), modes.CBC(iv)).decryptor()
+        pin = decryptor.update(ct) + decryptor.finalize()
+        cls._pin_auth_token = token_bytes(32)
+        return {2: cls._pin_auth_token}
 
-        return {2: pin_auth_token}
 
-
-    @staticmethod
-    def attestation_out(clientDataHash, rp, user, pkCredsParams, excludeList, exts):
-        _authenticator = Fido2Authenticator(aaguid=[b'\x00'*16], 
+    @classmethod
+    def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts):
+        _authenticator = Fido2Authenticator(aaguid=b"\x00" * 16, 
                             caKeyPair=cls._ca_kp, caCert=cls._ca_cert, fKey=cls._fernet_key)
-        authData = _authenticator.build_authenticator_data(rp, 'packed', _authenticator.kp, False)
-        credId = _authenticator._get_credential_id_bytes(_authenticator.kp)
-        attStmt = _authenticator.build_packed_attestation_statement('packed', clentDataHash, credId, _authenticator.kp)
+        rp['rp'] = rp # authenticator.py expects this strucutre
+        authData = _authenticator.build_authenticator_data(rp, 'packed-self', _authenticator.kp, True)
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
+                     msg='toSign: {}'.format(bytes([*clientDataHash, *authData])))
+        attStmt = _authenticator.build_packed_attestation_statement('packed-self', 
+                                                    clientDataHash, authData, None, _authenticator.kp)
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
+                     msg='attStmt: {}'.format(attStmt))
         return authData, attStmt
 
 
-    @staticmethod
-    def assertion_out(rpId, clientDataHash, allowedList, exts):
+    @classmethod
+    def assertion_out(cls, rpId, clientDataHash, allowedList, exts):
         for cred in allowedList:
             try:
                 #Create the authenticator
@@ -204,25 +236,14 @@ class CBORCommand(object):
         CTAP2_ERR_INVALID_CBOR = 0x12
 
 
-    # Request buffer. This stores the incoming CBOR message and grows until all segments have been recieved
     request = []
-    # Response buffer. This stores the outgoing response to the recieved CBOR message and shrinks until the entire
-    # response has been transmitted
     response = []
-    # Signal that the response buffer is ready to be sent back to the client
-    response_ready = False
-    # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
-    # should always be one less than this number
     response_segment = 0
-    # Length of the incoming CBOR message.
+    response_ready = False
     length = 0
-    # Track the number of request segmetns recieved
     request_segment = 0
-    # Authenticator API command byte recieved in initial packet
     cmd = None
-    # Command recieved in CTAPHID frame, this is likely 0x90 (CBOR_MSG) but might be different
     ctaphid_cmd = 0
-    #Length of the payload bytes
     bcnt = 0
 
     def __init__(self, ba, skip_init=False):
@@ -231,9 +252,26 @@ class CBORCommand(object):
         if len(ba) <= 1:
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
+        # Length of the incoming CBOR message (total).
         self.length = int.from_bytes(ba[0:2])
+        # Request buffer. This stores the incoming CBOR message and grows until all segments have been recieved
         self.request = ba[3:]
+        # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
+        # should always be one less than this number
+        self.response_segment = 0
+        # Track the number of request segmetns recieved
+        self.request_segment = 0
+        # Response buffer. This stores the outgoing response to the recieved CBOR message and shrinks until the entire
+        # response has been transmitted
+        self.response = []
+        # Command recieved in CTAPHID frame, this is likely 0x90 (CBOR_MSG) but might be different
+        self.ctaphid_cmd = 0
+        # Authenticator API command byte recieved in initial packet
         self.cmd = self.CommandByte(int.from_bytes(ba[2:3]))
+        #Length of the payload bytes
+        self.bcnt = 0
+        # Signal that the response buffer is ready to be sent back to the client
+        self.response_ready = False
         colour_print(colour=bcolors.OKPURPLE, component='CBORCommand.__init__', 
                 msg="command {}; length {}; self.request[{}]".format(self.cmd, self.length, len(self.request)))
         if self.length >= len(self.request):
@@ -241,11 +279,15 @@ class CBORCommand(object):
                     msg="request is segmented, wait for the whole message")
         else: #We have the whole message
             self.response = self.unpack()
+            dump_bytes(self.response, colour=bcolors.OKPINK, 
+                       component='CBORCommand.__init__', msg='CTAP response')
 
     def append_segment(self, seg_buf):
         self.request += seg_buf
         if len(self.request) >= self.length:
             self.response = self.unpack()
+            dump_bytes(self.response, colour=bcolors.OKPINK, 
+                       component='CBORCommand.append_segment', msg='CTAP response')
         else:
             self.request_segment += 1
 
@@ -278,23 +320,21 @@ class CBORCommand(object):
         return seg, seg_num
 
     def _client_pin(self, ba):
-
-       pin_sub_cmds = { 
+        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
+        pin_sub_cmds = { 
             #GET_PIN_RETRIES = 0x1
                       2: Authenticator.get_pin_cose_key,
             #SET_PIN = 0x3
             #CHANGE_PIN = 0x4
                       5: Authenticator.get_pin_token
                 }
-
-        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
         req_data = cbor.loads(ba)
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='Packet request: {}'.format(req_data))
         sub_cmd = req_data[2]
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='pin sub_cmd: {}'.format(sub_cmd))
-        rsp = pin_sub_cmds.[sub_cmd](req_data)
+        rsp = pin_sub_cmds[sub_cmd](req_data)
         result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
@@ -306,7 +346,7 @@ class CBORCommand(object):
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
             #0x03: b"\x01\x02\x03\x04" * 4,
-            0x03: b"\xcbiH\x1e\x8f\xf7@9\x93\xec\n')\xa1T\xa8",
+            0x03: b"\x00" * 16,
             0x04: {'rk': True, 'up': True, 'plat': False, 'clientPin': True},
             0x05: 1200,
             0x06: [1]
@@ -316,20 +356,6 @@ class CBORCommand(object):
         self.response_ready = True
         return result
 
-
-    def __generate_attestation(self, options):
-        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
-        authData, attStmt = Authenticator.attestation_out(options.get(0x01), options.get(0x02), options.get(0x03),
-                                            options.get(0x04), options.get(0x05), options.get(0x06))
-        result = {
-            0x01: 'packed', #fmt
-            0x02 : authData,
-            0x03: attStmt,
-            0x04: False, #epAtt
-            0x06: {} #unsigned extensions output
-        }
-        return result
-
     def __generate_assertion(self, options):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
         credential, authData, signature = Authenticator.assertion_out(options.get(0x01), options.get(0x02),
@@ -337,40 +363,44 @@ class CBORCommand(object):
         result = {
                 0x01: credential,
                 0x02: authData,
-                0x03: signature,
-                0x08: {}, #unsigned extensions output
-                0x09: False #epAtt
+                0x03: signature
         }
         return result
 
     def _make_cred(self, ba):
-        self.request += bytes(ba)
-        if len(self.request) >= self.length:
-            #We have the whole request, we can generate a response now
-            req = cbor.loads(b''.join(i.to_bytes(1) for i in self.request[:self.length]))
-            for props in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
-                if not prop[0] in req:
-                    colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
-                                 msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
-                    raise Exception("Missing required property %s" % prop[1])
-            rsp = self.__generate_attestation(req)
-            self.response = cbor.dumps(rsp)
-            self.response_ready = True
+        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
+        req = cbor.loads(ba)
+        colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                     msg='CBOR request {}'.format(req))
+        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
+            if not prop[0] in req.keys():
+                colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                             msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
+                raise Exception("Missing required property %s" % prop[1])
+        authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
+                                            req.get(0x04), req.get(0x05), req.get(0x06))
+        rsp = {
+            0x01: 'packed', #fmt
+            0x02: authData,
+            0x03: attStmt
+        }
+        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+        self.bcnt = len(result)
+        self.response_ready = True
+        return result
 
 
     def _get_assertion(self, ba):
-        self.request += bytes(ba)
-        if len(self.request) >= self.length:
-            #We have the whole request, we can generate a response now
-            req = cbor.loads(b''.join(i.to_bytes(1) for i in self.request[:self.length]))
-            for props in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
-                if not prop[0] in req:
-                    colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
-                                 msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
-                    raise Exception("Missing required property %s" % prop[1])
-            rsp = self.__generate_assertion(req)
-            self.response = cbor.dumps(rsp)
-            self.response_ready = True
+        req = cbor.loads(b''.join(i.to_bytes(1) for i in self.request[:self.length]))
+        for props in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
+            if not prop[0] in req:
+                colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                             msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
+                raise Exception("Missing required property %s" % prop[1])
+        rsp = self.__generate_assertion(req)
+        self.response = cbor.dumps(rsp)
+        self.bcnt = len(result)
+        self.response_ready = True
 
 # Send this for every new message frame. Response contains
 class CTAPHIDInitPkt(BaseStructure):
