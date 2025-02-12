@@ -20,6 +20,7 @@ from secrets import token_bytes
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from usb_ip import BaseStructure, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer, \
                     USBIPCMDSubmit, bcolors, dump_bytes, colour_print
@@ -96,6 +97,7 @@ class Authenticator(object):
 
     _ca_cert = None
     _ca_kp = None
+    _authenticator_kp = None
     _fernet_key = None
     _lock = multiprocessing.Lock()
 
@@ -121,6 +123,7 @@ class Authenticator(object):
 
             except Exception as e:
                 if bool(os.environ.get("FIDO_GENERATE_CA", "false")) == True:
+                    cls._authenticator_kp = KeyPair.generate_rsa()
                     cls._ca_kp = KeyPair.generate_ecdsa()
                     cls._ca_cert = CertUtils.gen_ca_cert(
                             subject=x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'SOFT FIDO2 MOCK CA')]), 
@@ -149,6 +152,11 @@ class Authenticator(object):
         return {1: cose_key}
 
     @classmethod
+    def get_pin_retries(cls, pin_req):
+        cls._pin_retry -= 1
+        return {3: cls._pin_retry}
+
+    @classmethod
     def get_pin_token(cls, pin_req):
         #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
         platform_cose_key = pin_req[3]
@@ -173,19 +181,21 @@ class Authenticator(object):
         decryptor = Cipher(algorithms.AES(aes_seed), modes.CBC(iv)).decryptor()
         pin = decryptor.update(ct) + decryptor.finalize()
         cls._pin_auth_token = token_bytes(32)
+        cls._pin_retry = 5
         return {2: cls._pin_auth_token}
 
 
     @classmethod
     def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts):
-        _authenticator = Fido2Authenticator(aaguid=b"\x00" * 16, 
-                            caKeyPair=cls._ca_kp, caCert=cls._ca_cert, fKey=cls._fernet_key)
-        rp['rp'] = rp # authenticator.py expects this strucutre
-        authData = _authenticator.build_authenticator_data(rp, 'packed-self', _authenticator.kp, True)
+        cls.kp = KeyPair.generate_ecdsa()
+        authenticator = Fido2Authenticator(keyPair=cls.kp)
+        credId = authenticator.get_credential_id()
+        pk = {'rp': rp} # authenticator.py expects this strucutre
+        authData = authenticator.build_authenticator_data(pk, 'packed-self', cls.kp, True, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
-                     msg='toSign: {}'.format(bytes([*clientDataHash, *authData])))
-        attStmt = _authenticator.build_packed_attestation_statement('packed-self', 
-                                                    clientDataHash, authData, None, _authenticator.kp)
+                     msg='credId: {}; toSign: {}'.format(credId, base64.b64encode(bytes([*authData, *clientDataHash ])).decode()))
+        attStmt = authenticator.build_packed_attestation_statement('packed-self', 
+                                                    clientDataHash, authData, None, cls.kp)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
         return authData, attStmt
@@ -196,17 +206,19 @@ class Authenticator(object):
         for cred in allowedList:
             try:
                 #Create the authenticator
-                kp = Fido2Authenticator._get_key_pair_from_credential_id(assert_opts['credential_id'], cls._ca_key)
-                _authenticator = Fido2Authenticator(key_pair=kp, aaguid=[b'\x00'*16], caKeyPair=cls._ca_kp, 
-                                                    caCert=cls._ca_cert, fKey=cls._fernet_key)
+                #kp = Fido2Authenticator._get_key_pair_from_credential_id(assert_opts['credential_id'], cls._ca_key)
+                #_authenticator = Fido2Authenticator(key_pair=cls.kp, aaguid=[b'\x00'*16], caKeyPair=cls._ca_kp, 
+                #                                    caCert=cls._ca_cert, fKey=cls._fernet_key)
+                _authenticator = Fido2Authenticator(keyPair=cls.kp)
                 credential = {
-                        "type" : "public-key",
-                        "id": _authenticator._get_credential_id_bytes(_authenticator.kp),
-                        "transports": ["usb"]}
+                        "id": _authenticator._get_credential_id_bytes(cls.kp),
+                        "type" : "public-key"
+                    }
                 #Generate the assertion response data
-                authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', _authenticator.kp, False)
-                #Sign it
-                sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
+                authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed-self', cls.kp, True, up=True, be=False, bs=False)
+                #Sign it, authenticator method b64 encodeds the ba so we decode it right away
+                sig = base64.urlsafe_b64decode(
+                        _authenticator.assertion_signature(authData, clientDataHash, cls.kp))
                 return credential, authData, sig
             except Exception:
                 colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
@@ -322,7 +334,7 @@ class CBORCommand(object):
     def _client_pin(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
         pin_sub_cmds = { 
-            #GET_PIN_RETRIES = 0x1
+                      1: Authenticator.get_pin_retries,
                       2: Authenticator.get_pin_cose_key,
             #SET_PIN = 0x3
             #CHANGE_PIN = 0x4
@@ -356,17 +368,6 @@ class CBORCommand(object):
         self.response_ready = True
         return result
 
-    def __generate_assertion(self, options):
-        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
-        credential, authData, signature = Authenticator.assertion_out(options.get(0x01), options.get(0x02),
-                                                            options.get(0x03), options.get(0x04))
-        result = {
-                0x01: credential,
-                0x02: authData,
-                0x03: signature
-        }
-        return result
-
     def _make_cred(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
         req = cbor.loads(ba)
@@ -391,16 +392,26 @@ class CBORCommand(object):
 
 
     def _get_assertion(self, ba):
-        req = cbor.loads(b''.join(i.to_bytes(1) for i in self.request[:self.length]))
-        for props in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
+        # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
+        req = cbor.loads(ba)
+        colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
+                     msg='CBOR request {}'.format(req))
+        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
             if not prop[0] in req:
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
-        rsp = self.__generate_assertion(req)
-        self.response = cbor.dumps(rsp)
+        credential, authData, signature = Authenticator.assertion_out(req.get(0x01), req.get(0x02),
+                                                            req.get(0x03), req.get(0x04))
+        rsp = {
+                0x01: credential,
+                0x02: authData,
+                0x03: signature
+        }
+        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
+        return result
 
 # Send this for every new message frame. Response contains
 class CTAPHIDInitPkt(BaseStructure):

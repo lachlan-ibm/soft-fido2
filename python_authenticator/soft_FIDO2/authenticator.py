@@ -391,22 +391,26 @@ class Fido2Authenticator(object):
         attestedCredDataBytes += credIdBytes
 
         credPublicKeyCOSE = {}
-        credPublicKeyCOSE[3] = self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg)
         if isinstance(publicKey, rsa.RSAPublicKey):
-            credPublicKeyCOSE[1] = 3
-            credPublicKeyCOSE[-1] = KeyUtils._long_to_bytes(publicKey.public_numbers().n)
-            credPublicKeyCOSE[-2] = KeyUtils._long_to_bytes(publicKey.public_numbers().e)
-
+            credPublicKeyCOSE = {1: 3,
+                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
+                                -1: KeyUtils._long_to_bytes(publicKey.public_numbers().n),
+                                -2: KeyUtils._long_to_bytes(publicKey.public_numbers().e)
+                            }
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
-            credPublicKeyCOSE[1] = 2
-            credPublicKeyCOSE[-1] = 1
-            credPublicKeyCOSE[-2] = KeyUtils._long_to_bytes(publicKey.public_numbers().x)
-            credPublicKeyCOSE[-3] = KeyUtils._long_to_bytes(publicKey.public_numbers().y)
+            credPublicKeyCOSE = {1: 2,
+                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
+                                -1: 1,
+                                -2: KeyUtils._long_to_bytes(publicKey.public_numbers().x),
+                                -3: KeyUtils._long_to_bytes(publicKey.public_numbers().y)
+                            }
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
-            credPublicKeyCOSE[1] = 6
-            credPublicKeyCOSE[-1] = 6
-            credPublicKeyCOSE[-2] = publicKey.public_bytes(encoding=serialization.Encoding.Raw,
+            credPublicKeyCOSE = {1: 6,
+                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
+                                -1: 6,
+                                -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
                                                              format=serialization.PublicFormat.Raw)
+                            }
         else:
             raise Exception("Unsupported public key algorithm")
 
