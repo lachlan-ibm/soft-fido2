@@ -13,14 +13,14 @@
 #                            are generated on the first request to create a credential.
 #
 
-import base64, datetime, multiprocessing, os, sys, random, queue, threading, time
+import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback
 import cbor2 as cbor
 from enum import Enum, IntEnum
-from secrets import token_bytes
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
+from cryptography.fernet import Fernet
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from usb_ip import BaseStructure, USBDevice, InterfaceDescriptor, DeviceConfigurations, EndPoint, USBContainer, \
                     USBIPCMDSubmit, bcolors, dump_bytes, colour_print
@@ -56,18 +56,15 @@ interface_d = InterfaceDescriptor(bAlternateSetting=0,
                                   bInterfaceProtocol=0, # no interface protocol
                                   iInterface=0)
 
-
 end_point_one = EndPoint(bEndpointAddress=0x04, # HOST OUT / USB IN
                      bmAttributes=0x3, # Interrupt transfer
                      wMaxPacketSize=(64&0x00FF)<<8 | (64&0xFF00),  # 64-byte packet max
                      bInterval=5)  # Poll every 5 millisecond
 
-
 end_point_two = EndPoint(bEndpointAddress=0x8E, # HOST IN / USB OUT
                      bmAttributes=0x3, # Interrupt transfer
                      wMaxPacketSize=(64&0x00FF)<<8 | (64&0xFF00),  # 64-byte packet max, bussit
                      bInterval=5)  # Poll every 5 millisecond
-
 
 interface_d.descriptions = [hid_class]  # Supports only one description
 interface_d.endpoints = [end_point_two, end_point_one]  # Supports two endpoint
@@ -84,7 +81,7 @@ configuration.interfaces = [interface_d]   # Supports only one interface
 class Authenticator(object):
     '''
     Authenticator wraps the Fido2Authenticator with management for a persistent key/ca certificate stored in
-    a PKCS12 file.
+    an encrypted file.
 
     The default location for this is in the ~/.fido2 directory for the user running this module, however this
     can be overwritten by environment properties.
@@ -95,130 +92,167 @@ class Authenticator(object):
     generate a new credential.
     '''
 
-    _ca_cert = None
-    _ca_kp = None
-    _authenticator_kp = None
-    _fernet_key = None
+    _open_keys = {}
     _lock = multiprocessing.Lock()
 
-    _pin_kp = None
+    _pin_token_kp = None
     _pin_retry = 5
-    _pin_auth_token = None
 
     def __new__(cls):
-        if cls._ca_cert == None and cls._ca_kp == None:
-            cls._lock.acquire()
-            cls._pin_kp = KeyPair.generate_ecdsa() #P-256 key, cose key type -25
+        cls._lock.acquire()
+        if cls._pin_token_kp == None:
+            cls._pin_token_kp = KeyPair.generate_ecdsa() #P-256 key, cose key type -25
+        cls._lock.release()
+
+    @classmethod
+    def _validate_pin(cls, pinHash, cid):
+        '''
+        Look in the home direcotry of the user for a .fido2 directory. If it exists and contains
+        enough data, try and open it.
+
+        If we can open a given file and it contains the cert/key we expect; add it to cls._open_keys with the 
+        pinAuthToken as the key.
+
+        If we successfuly open and validata a file, then a generated pinAuthToken, which will
+        function as an opaque lookup key, is returned.
+        If no file could be opened then this method will return None
+        '''
+        # Try all .passkey files in the $HOME/.fido2 dir. If we parse out a cert/key then we have a 
+        # valid pin and can cache the result and return an auth token.
+        aesKey = algorithms.AES128(pinHash)
+        baseDir = os.path.realpath(os.path.join(os.environ.get("HOME"), '.fido2'))
+        for maybeKeyFile in os.listdir(baseDir):
+            if not maybeKeyFile.endswith('.passkey'):
+                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
+                             msg='{} has invalid file type'.format(maybeKeyFile))
+                continue
+            encBagF = None
             try:
-                if cls._ca_cert == None and cls._ca_kp == None:
-                    #Get the PKCS12 file and load the key/cert
-                    p12_file = os.environ.get("FIDO_AUTHENTICATOR_PKCS12", os.path.expanduser("~/.fido2/authenticator.p12"))
-                    p12_data = open(p12_file, 'rb')
-                    ca_key, cls._ca_cert, _ = KeyPair.load_pcks12_bag(p12_data, 
-                                                            os.environ.get("FIDO_AUTHENTICATOR_PKCS12_SECRET"))
-                    cls._ca_kp = KeyPair(ca_key, ca_key.get_public())
-                    # Retrieve and decrypt the symmetrical key
-                    shared_key = CertUtils.derive_aes_key_from_x509(cls._ca_cert, ca_key)
-                    cls._fernet_key = Fernet(base64.urlsafe_b64encode(shared_key))
-
+                encBagF = open(os.path.join(baseDir, maybeKeyFile), 'rb')
+                everything = encBagF.read()
+                if len(everything) < 32:
+                    continue
+                iv = everything[:16]
+                tag = everything[16:32]
+                encKeyAndPem = everything[32:]
+                decryptor = Cipher(aesKey, modes.GCM(iv, tag)).decryptor()
+                danger = cbor.loads(decryptor.update(encKeyAndPem) + decryptor.finalize())
+                colour_print(colour=bcolors.OKPINK, component='Authenticator_validate_pin', 
+                             msg='Pin decrypted a .passkey file')
+                ca = CertUtils.load_der_certificate(danger.get('ca'))
+                kp = KeyUtils.load_ec_key(danger.get('pk'))
+                seed = danger.get('seed')
+                fKey = Fernet(seed)
+                cls._pin_retry = 5 #Reset the counter
+                pinAuthToken = secrets.token_bytes(32)
+                cls._open_keys[cid] = {
+                            'fKey': fKey,
+                            'pem': ca,
+                            'kp': kp,
+                            'exp': round(time.time() + 30 ) #30 s
+                        }
+                return pinAuthToken
             except Exception as e:
-                if bool(os.environ.get("FIDO_GENERATE_CA", "false")) == True:
-                    cls._authenticator_kp = KeyPair.generate_rsa()
-                    cls._ca_kp = KeyPair.generate_ecdsa()
-                    cls._ca_cert = CertUtils.gen_ca_cert(
-                            subject=x509.Name([x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'SOFT FIDO2 MOCK CA')]), 
-                            keyPair=cls._ca_kp)
-                else:
-                    colour_print(colour=bcolors.FAIL, component='Authenticator.__new__', msg=e)
-                    sys.exit(1)
-            cls._lock.release()
+                if encBagF != None:
+                    encBagF.close()
+                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
+                             msg='Something bad happened:\n{}'.format(e))
+                continue
+        colour_print(colour=bcolors.FAIL, component='Authenticator_validate_pin', 
+                     msg='No valid pin found!')
+        return None
 
     @classmethod
-    def _decapsulate_platform_key(cls, cose_key):
-        return
-
-    @classmethod
-    def get_pin_cose_key(cls, pin_req):
-        if cls._pin_kp == None:
+    def get_pin_cose_key(cls, pin_req, cid):
+        if cls._pin_token_kp == None:
             cls.__new__(cls)
-        cose_key = {1: 2,
-                3: -25, #hard code ec with sha384
-                -1: 1,
-                -2: KeyUtils._long_to_bytes(cls._pin_kp.get_public().public_numbers().x),
-                -3: KeyUtils._long_to_bytes(cls._pin_kp.get_public().public_numbers().y)
-                #-2: b"\xc7\xf7\xbcm<r-8C\xcdKY\x18\x88\x10A\xad\xd6\xa9\x87\x16\x8c\xef\xca\tB\x1b!\x07p\x96\xb9",
-                #-3: b"`]\xd5\xce\xdc\x8b\x880\xd5g\xca\xcb\x1b\xe1<\xceI\x1c\x00\x10\x90\x13\xc3\x90\xec\x94\xc7\x0e\xf0\xfc\xffN"
-            }
-        return {1: cose_key}
+        return {1: KeyUtils.get_cose_key(cls._pin_token_kp.get_public(), hashes.SHA256(), ecdh=True)}
 
     @classmethod
-    def get_pin_retries(cls, pin_req):
+    def get_pin_retries(cls, pin_req, cid):
         cls._pin_retry -= 1
         return {3: cls._pin_retry}
 
     @classmethod
-    def get_pin_token(cls, pin_req):
-        #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
-        platform_cose_key = pin_req[3]
-        pin_hash_enc = pin_req[6]
-        iv = pin_hash_enc[:16]
-        ct = pin_hash_enc[16:]
-        cose_type_to_curve_map = {
+    def decapsulate(cls, ecCoseKey):
+        cose_type_to_curve_map = { #These are kind of made up, as per 
+                    #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
                     -25: ec.SECP256R1,
                     -26: ec.SECP521R1
                 }
+        ec_pub_numbs = ec.EllipticCurvePublicNumbers(KeyUtils._bytes_to_long(ecCoseKey[-2]),
+                            KeyUtils._bytes_to_long(ecCoseKey[-3]), 
+                            cose_type_to_curve_map[ecCoseKey[3]]())
+        pubkey = ec_pub_numbs.public_key()
+        shared_point = cls._pin_token_kp.get_private().exchange(ec.ECDH(), pubkey)
+        hasher = hashes.Hash(hashes.SHA256());
+        hasher.update(shared_point)
+        return hasher.finalize()
+
+    @classmethod
+    def get_pin_token(cls, pin_req, cid):
+        #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
+        platform_cose_key = pin_req[3]
+        pin_hash_enc = pin_req[6]
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
-                     msg='plat cose key: {}; iv: {}; ct: {}'.format(platform_cose_key, iv, ct))
-        ec_pub_numbs = ec.EllipticCurvePublicNumbers(KeyUtils._bytes_to_long(platform_cose_key[-2]),
-                            KeyUtils._bytes_to_long(platform_cose_key[-3]), 
-                            cose_type_to_curve_map[platform_cose_key[3]]())
-        plat_pubkey = ec_pub_numbs.public_key()
-        shared_key = cls._pin_kp.get_private().exchange(ec.ECDH(), plat_pubkey)
-        hmac_seed = shared_key[:16]
-        aes_seed = shared_key[16:]
+                     msg='plat cose key: {}; pinHashEnc: {}'.format(platform_cose_key, pin_hash_enc))
+        sharedSecret = cls.decapsulate(platform_cose_key)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
-                     msg='hmac seed: {}; aes seed: {}'.format(hmac_seed, aes_seed))
-        decryptor = Cipher(algorithms.AES(aes_seed), modes.CBC(iv)).decryptor()
-        pin = decryptor.update(ct) + decryptor.finalize()
-        cls._pin_auth_token = token_bytes(32)
-        cls._pin_retry = 5
-        return {2: cls._pin_auth_token}
+                     msg='shared secret: {};'.format(sharedSecret))
+        decryptor = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16))).decryptor()
+        pin = decryptor.update(pin_hash_enc) + decryptor.finalize()
+        pinAuthToken = cls._validate_pin(pin, cid)
+        if pinAuthToken != None:
+            return {2: pinAuthToken}
+        return None
 
 
     @classmethod
-    def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts):
-        cls.kp = KeyPair.generate_ecdsa()
-        authenticator = Fido2Authenticator(keyPair=cls.kp)
-        credId = authenticator.get_credential_id()
+    def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts, cid):
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
+                     msg='open keys: {}'.format(cls._open_keys))
+        if not cid in cls._open_keys.keys():
+            return None, None
+        ca = cls._open_keys.get(cid)
+        kp = KeyPair.generate_ecdsa()
+        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca.get('kp'), 
+                                            caCert=ca.get('pem'), fKey=ca.get('fKey'))
+        credId = authenticator.get_credential_id(kp)
         pk = {'rp': rp} # authenticator.py expects this strucutre
-        authData = authenticator.build_authenticator_data(pk, 'packed-self', cls.kp, True, up=True, be=False, bs=False)
+        authData = authenticator.build_authenticator_data(pk, 'packed', kp, True, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='credId: {}; toSign: {}'.format(credId, base64.b64encode(bytes([*authData, *clientDataHash ])).decode()))
-        attStmt = authenticator.build_packed_attestation_statement('packed-self', 
-                                                    clientDataHash, authData, None, cls.kp)
+        attStmt = authenticator.build_packed_attestation_statement('packed', 
+                                                    clientDataHash, authData, None, kp)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
         return authData, attStmt
 
 
     @classmethod
-    def assertion_out(cls, rpId, clientDataHash, allowedList, exts):
+    def assertion_out(cls, rpId, clientDataHash, allowedList, exts, cid):
+        if not cid in cls._open_keys.keys():
+            return None, None, None
+        ca = cls._open_keys.get(cid)
         for cred in allowedList:
             try:
-                #Create the authenticator
-                #kp = Fido2Authenticator._get_key_pair_from_credential_id(assert_opts['credential_id'], cls._ca_key)
-                #_authenticator = Fido2Authenticator(key_pair=cls.kp, aaguid=[b'\x00'*16], caKeyPair=cls._ca_kp, 
-                #                                    caCert=cls._ca_cert, fKey=cls._fernet_key)
-                _authenticator = Fido2Authenticator(keyPair=cls.kp)
+                ca_pem = ca.get('pem')
+                ca_kp = ca.get('kp')
+                fKey = ca.get('fKey')
+                #Create the authenticator, creating the key pair will fail if we don'w own the credId
+                b64CredId = base64.urlsafe_b64encode(cred.get('id'))
+                kp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fKey)
+                _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[b'\x00'*16], 
+                                                    caKeyPair=ca_kp, caCert=ca_pem, fKey=fKey)
                 credential = {
-                        "id": _authenticator._get_credential_id_bytes(cls.kp),
+                        "id": _authenticator.cred_id_bytes, #Should be set by __init__()
                         "type" : "public-key"
                     }
                 #Generate the assertion response data
-                authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed-self', cls.kp, True, up=True, be=False, bs=False)
+                authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', kp, True, 
+                                                                        up=True, be=False, bs=False)
                 #Sign it, authenticator method b64 encodeds the ba so we decode it right away
-                sig = base64.urlsafe_b64decode(
-                        _authenticator.assertion_signature(authData, clientDataHash, cls.kp))
+                sig = _authenticator.assertion_signature(authData, clientDataHash, kp)
                 return credential, authData, sig
             except Exception:
                 colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
@@ -246,8 +280,12 @@ class CBORCommand(object):
         CTAP2_OK = 0x0
         CTAP1_ERR_INVALID_COMMAND = 0x01
         CTAP2_ERR_INVALID_CBOR = 0x12
+        CTAP2_ERR_PIN_INVALID = 0x31
+        CTAP2_ERR_PIN_AUTH_INVALID = 0x33
+        CTAP2_ERR_PUAT_REQUIRED = 0x36
 
 
+    cid = 0xFFFFFFFF
     request = []
     response = []
     response_segment = 0
@@ -258,7 +296,8 @@ class CBORCommand(object):
     ctaphid_cmd = 0
     bcnt = 0
 
-    def __init__(self, ba, skip_init=False):
+    def __init__(self, cid, ba, skip_init=False):
+        self.cid = cid
         if ba == None and skip_init == True:
             return #Create an empty command as we will directly set the response buffer later with the assigned CID.
         if len(ba) <= 1:
@@ -346,8 +385,10 @@ class CBORCommand(object):
         sub_cmd = req_data[2]
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='pin sub_cmd: {}'.format(sub_cmd))
-        rsp = pin_sub_cmds[sub_cmd](req_data)
-        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+        rsp = pin_sub_cmds[sub_cmd](req_data, self.cid)
+        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes()
+        if rsp != None:
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -379,13 +420,15 @@ class CBORCommand(object):
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
-                                            req.get(0x04), req.get(0x05), req.get(0x06))
-        rsp = {
-            0x01: 'packed', #fmt
-            0x02: authData,
-            0x03: attStmt
-        }
-        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+                                            req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        if authData and attStmt:
+            rsp = {
+                0x01: 'packed', #fmt
+                0x02: authData,
+                0x03: attStmt
+            }
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -402,13 +445,15 @@ class CBORCommand(object):
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
         credential, authData, signature = Authenticator.assertion_out(req.get(0x01), req.get(0x02),
-                                                            req.get(0x03), req.get(0x04))
-        rsp = {
-                0x01: credential,
-                0x02: authData,
-                0x03: signature
-        }
-        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+                                                            req.get(0x03), req.get(0x04), self.cid)
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        if credential and authData and signature:
+            rsp = {
+                    0x01: credential,
+                    0x02: authData,
+                    0x03: signature
+            }
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -648,7 +693,7 @@ class CTAP2HIDevice(USBDevice):
                         u2f_cla, u2f_ins, u2f_p1, u2f_p2, u2f_lc))
         if u2f_cla == b'\x00' and u2f_ins == b'\x03':
             #U2F_VERSION request, send the expected response
-            cborCmd = CBORCommand(None, skip_init=True)
+            cborCmd = CBORCommand(cid, None, skip_init=True)
             cborCmd.ctaphid_cmd = int.from_bytes(cmd)
             cborCmd.bcnt = 6
             cborCmd.response = b'U2F_V2'
@@ -666,13 +711,13 @@ class CTAP2HIDevice(USBDevice):
         data = nonce + assignedCID
         # protocol == 2; major version == 5; minor version = 2; build version = 5
         # data += int.to_bytes(2) + int.to_bytes(5) + int.to_bytes(1) + int.to_bytes(2) + int.to_bytes(5)
-        for i in [2, 5, 1, 2, 5]:
+        for i in [2, 5, 1, 2, 0x04 | 0x08]:
             data += int.to_bytes(i)
         dump_bytes(data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         #rsp = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
         #dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
-        self.cids[assignedCID] = {'cborCmd': CBORCommand(None, skip_init=True) }
+        self.cids[assignedCID] = {'cborCmd': CBORCommand(cid, None, skip_init=True) }
         self.cids[assignedCID]['cborCmd'].response = data
         self.cids[assignedCID]['cborCmd'].ctaphid_cmd = int.from_bytes(cmd)
         self.cids[assignedCID]['cborCmd'].bcnt = 17
@@ -697,7 +742,7 @@ class CTAP2HIDevice(USBDevice):
                                                                    self._bytes_to_str(bcnt)))
         dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
                     msg='CBOR encoded bytes: ')
-        cbor_cmd = CBORCommand(usb_req.data_frame[5:])
+        cbor_cmd = CBORCommand(cid, usb_req.data_frame[5:])
         cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
         self.cids[cid]['cborCmd'] = cbor_cmd
         if cbor_cmd.response_ready == True: #We can respond immediatly

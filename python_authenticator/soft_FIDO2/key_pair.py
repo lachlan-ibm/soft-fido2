@@ -2,7 +2,7 @@ import struct
 import cbor2 as cbor
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 
 
@@ -20,7 +20,7 @@ class KeyUtils(object):
 
 
     @classmethod
-    def _bytes_to_long(self, b):
+    def _bytes_to_long(cls, b):
         l = int(len(b) / 4)
         parts = struct.unpack(">" + 'L' * l, b)[::-1]
         result = 0
@@ -30,6 +30,74 @@ class KeyUtils(object):
 
         return result
 
+    @classmethod
+    def load_ec_key(cls, key):
+        c = {   ec.SECP256R1().name: ec.SECP256R1,
+                ec.SECP521R1().name: ec.SECP521R1
+            }.get(key.get('c'))()
+        pk = ec.derive_private_key(key.get('pv'), c)
+        return KeyPair(pk, pk.public_key())
+
+    @classmethod
+    def cbor_ec_key(cls, pk):
+        if pk == None or not isinstance(pk, ec.EllipticCurvePrivateKey):
+            raise ValueError("{} not EllipticCurvePrivateKey".format(pk))
+        return cbor.dumps({ 'pv': pk.private_numbers.private_value,
+                            'c': pk.curve.name})
+
+    @classmethod
+    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, ecdh=False):
+        if isinstance(publicKey, rsa.RSAPublicKey):
+            if isinstance(alg, hashes.SHA256):
+                return -257
+            if isinstance(alg, hashes.SHA384):
+                return -258
+            elif isinstance(alg, hashes.SHA512):
+                return -259
+            elif isinstance(alg, hashes.SHA1):
+                return -65535
+        elif isinstance(publicKey, ec.EllipticCurvePublicKey):
+            if isinstance(alg, hashes.SHA256):
+                return -7 if ecdh == False else -25
+            if isinstance(alg, hashes.SHA384):
+                return -35
+            elif isinstance(alg, hashes.SHA512):
+                return -36 if ecdh == False else -26
+        elif isinstance(publicKey, ed25519.Ed25519PublicKey):
+            return -8
+        return 0
+
+    @classmethod
+    def get_cose_key(cls, publicKey, alg, ecdh=False):
+        if isinstance(publicKey, rsa.RSAPublicKey):
+            return {1: 3,
+                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                     -1: cls._long_to_bytes(publicKey.public_numbers().n),
+                     -2: cls._long_to_bytes(publicKey.public_numbers().e)
+                 }
+        elif isinstance(publicKey, ec.EllipticCurvePublicKey):
+            if ecdh == True:
+                return {1: 2,
+                        3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg, ecdh),
+                       -1: 1,
+                       -2: cls._long_to_bytes(publicKey.public_numbers().x),
+                       -3: cls._long_to_bytes(publicKey.public_numbers().y)
+                    }
+            return {1: 2,
+                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                     -1: 1,
+                     -2: cls._long_to_bytes(publicKey.public_numbers().x),
+                     -3: cls._long_to_bytes(publicKey.public_numbers().y)
+                 }
+        elif isinstance(publicKey, ed25519.Ed25519PublicKey):
+            return {1: 6,
+                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                     -1: 6,
+                     -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
+                                                  format=serialization.PublicFormat.Raw)
+                 }
+        else:
+            raise Exception("Unsupported public key algorithm")
 
 class KeyPair(object):
 

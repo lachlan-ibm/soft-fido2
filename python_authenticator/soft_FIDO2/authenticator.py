@@ -236,28 +236,6 @@ class Fido2Authenticator(object):
             result = bytes(self.aaguid)
         return result
 
-    @classmethod
-    def _get_alg_id_from_pubkey_and_hash(cls, publicKey, alg):
-        if isinstance(publicKey, rsa.RSAPublicKey):
-            if isinstance(alg, hashes.SHA256):
-                return -257
-            if isinstance(alg, hashes.SHA384):
-                return -258
-            elif isinstance(alg, hashes.SHA512):
-                return -259
-            elif isinstance(alg, hashes.SHA1):
-                return -65535
-        elif isinstance(publicKey, ec.EllipticCurvePublicKey):
-            if isinstance(alg, hashes.SHA256):
-                return -7
-            if isinstance(alg, hashes.SHA384):
-                return -35
-            elif isinstance(alg, hashes.SHA512):
-                return -36
-        elif isinstance(publicKey, ed25519.Ed25519PublicKey):
-            return -8
-        return 0
-
     def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True, up=True, be=False, bs=False):
         '''Reponds to requests to navigator.credentail.create(). jsonOptions should be
         either a dictionary or a JSON string of the attestation options and usually has the form:
@@ -389,31 +367,7 @@ class Fido2Authenticator(object):
         length = struct.pack('H', len(credIdBytes))
         attestedCredDataBytes += [length[1], length[0]]
         attestedCredDataBytes += credIdBytes
-
-        credPublicKeyCOSE = {}
-        if isinstance(publicKey, rsa.RSAPublicKey):
-            credPublicKeyCOSE = {1: 3,
-                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
-                                -1: KeyUtils._long_to_bytes(publicKey.public_numbers().n),
-                                -2: KeyUtils._long_to_bytes(publicKey.public_numbers().e)
-                            }
-        elif isinstance(publicKey, ec.EllipticCurvePublicKey):
-            credPublicKeyCOSE = {1: 2,
-                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
-                                -1: 1,
-                                -2: KeyUtils._long_to_bytes(publicKey.public_numbers().x),
-                                -3: KeyUtils._long_to_bytes(publicKey.public_numbers().y)
-                            }
-        elif isinstance(publicKey, ed25519.Ed25519PublicKey):
-            credPublicKeyCOSE = {1: 6,
-                                 3: self._get_alg_id_from_pubkey_and_hash(publicKey, self.hashAlg),
-                                -1: 6,
-                                -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
-                                                             format=serialization.PublicFormat.Raw)
-                            }
-        else:
-            raise Exception("Unsupported public key algorithm")
-
+        credPublicKeyCOSE = KeyUtils.get_cose_key(publicKey, self.hashAlg)
         attestedCredDataBytes += cbor.dumps(credPublicKeyCOSE)
         return attestedCredDataBytes
 
@@ -488,9 +442,28 @@ class Fido2Authenticator(object):
             dict: packed attestation statement,
                     https://www.w3.org/TR/webauthn/#packed-attestation
         """
-        result = {}
+        result = {} # Key order is important
+        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
         toSign = bytes([*authData, *clientDataHash])
         sig = ""
+
+        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
+            #sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
+            sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), self.hashAlg)
+
+        elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
+            #digest = hashes.Hash(hashes.SHA256())
+            digest = hashes.Hash(self.hashAlg)
+            digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
+            #sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
+            sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
+        elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
+            sig = keyPair.get_private().sign(toSign)
+
+        else:
+            raise Exception("Unsupported key type")
+
+        #Maybe add X5c
         selfAttestation = True if 'self' in atteStmtFmt else False
         if not selfAttestation:
             if not self.caCertificate:
@@ -510,24 +483,7 @@ class Fido2Authenticator(object):
             # Final trust chain to add to AttesationObject
             result['x5c'] = [CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate)]
 
-        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            #sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
-            sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), self.hashAlg)
-
-        elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            #digest = hashes.Hash(hashes.SHA256())
-            digest = hashes.Hash(self.hashAlg)
-            digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
-            #sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
-            sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
-        elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
-            sig = keyPair.get_private().sign(toSign)
-
-        else:
-            raise Exception("Unsupported key type")
-
         result[u"sig"] = sig
-        result[u"alg"] = self._get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
         return result
 
     def build_fido_u2f_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
@@ -807,7 +763,7 @@ class Fido2Authenticator(object):
         result = {
             u"x5c": x5c,
             u"sig": sig,
-            u"alg": self._get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
+            u"alg": KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
         }
         return result
 
@@ -996,7 +952,7 @@ class Fido2Authenticator(object):
             sig = keyPair.get_private().sign(toSignStr)
         else:
             raise Exception("Unsupported key alg")
-        return str(base64.urlsafe_b64encode(sig), 'utf-8')
+        return sig
 
     def assertion_options_response_to_credential_request_options(self, options):
         """Take the options provided by the relyig party and extract required information to
@@ -1065,8 +1021,8 @@ class Fido2Authenticator(object):
 
         credIdBytes = self._get_credential_id_bytes(keyPair)
 
-        saar['signature'] = self.assertion_signature(authData, clientDataHash, keyPair)
-
+        saar['signature'] = str(base64.urlsafe_b64encode(self.assertion_signature(
+                                                            authData, clientDataHash, keyPair)), 'utf-8')
         spkc = {
             'id': self.get_credential_id(keyPair),
             'rawId': self.get_credential_id(keyPair),
