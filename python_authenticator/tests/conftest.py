@@ -25,7 +25,7 @@ def fido2_server():
 
 @pytest.fixture(scope='module')
 def fido2_authenticator(fido2_server, fido2_user):
-    from soft_FIDO2 import Fido2Authenticator
+    from soft_fido2 import Fido2Authenticator
     attestation_options, state = fido2_server.register_begin(fido2_user)
     attestation_options = dict(attestation_options)['publicKey']
     #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')

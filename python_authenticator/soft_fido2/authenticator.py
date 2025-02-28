@@ -18,12 +18,12 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 
 try:
-    from soft_FIDO2.key_pair import KeyPair, KeyUtils
+    from soft_fido2.key_pair import KeyPair, KeyUtils
 except:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from key_pair import KeyPair, KeyUtils
 try:
-    from soft_FIDO2.cert_utils import CertUtils
+    from soft_fido2.cert_utils import CertUtils
 except:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from cert_utils import CertUtils
@@ -1061,44 +1061,5 @@ class Fido2Authenticator(object):
         credIdBytes = self._get_credential_id_bytes(keyPair)
 
         saar['signature'] = self.assertion_signature(authData, clientDataHash, keyPair)
-
-        spkc = {
-            'id': self.get_credential_id(keyPair),
-            'rawId': self.get_credential_id(keyPair),
-            'response': saar,
-            'type': 'public-key',
-            'getClientExtensionResults': {}
-        }
-        if(cro.get('extensions', None) != None 
-                and isinstance(cro['extensions'], dict) 
-                and "devicePubKey" in cro['extensions'].keys()):
-            raise RuntimeError("TODO")
-        return spkc
-
-
-############################# MAIN ##############################
-
-if __name__ == "__main__":
-    authenticator = Fido2Authenticator()
-    rsp = None
-    if sys.argv[1] == 'attestation':
-        rsp = authenticator.credential_create(sys.argv[3], atteStmtFmt=sys.argv[2], keyPair=authenticator.kp)
-        #write out keys usesd
-        with open('private.pem', 'wb') as key_file:
-            key_file.write(authenticator.kp.get_private_bytes())
-
-        with open('public.pem', 'wb') as key_file:
-            key_file.write(authenticator.kp.get_public_bytes())
-
-    else:
-        privateKey = publicKey = None
-        with open('private.pem', 'rb') as key_file:
-            privateKey = serialization.load_pem_private_key(key_file.read(), password=None, backend=default_backend())
-
-        with open('public.pem', 'rb') as key_file:
-            publicKey = serialization.load_pem_public_key(key_file.read(), backend=default_backend())
-
-        keyPair = KeyPair(privateKey, publicKey)
-        authenticator.kp = keyPair
         rsp = authenticator.credential_request(sys.argv[2], authenticator.kp)
     print(json.dumps(rsp, indent=4))

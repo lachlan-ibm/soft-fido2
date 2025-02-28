@@ -1,6 +1,6 @@
 #!/bin/python3
 
-from soft_FIDO2 import Fido2Authenticator, KeyPair
+from soft_fido2 import Fido2Authenticator, KeyPair
 import pytest
 import uuid
 from cryptography.fernet import Fernet
