@@ -18,12 +18,12 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 
 try:
-    from soft_FIDO2.key_pair import KeyPair, KeyUtils
+    from soft_fido2.key_pair import KeyPair, KeyUtils
 except:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from key_pair import KeyPair, KeyUtils
 try:
-    from soft_FIDO2.cert_utils import CertUtils
+    from soft_fido2.cert_utils import CertUtils
 except:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from cert_utils import CertUtils
@@ -1030,8 +1030,8 @@ class Fido2Authenticator(object):
             'type': 'public-key',
             'getClientExtensionResults': {}
         }
-        if(cro.get('extensions', None) != None 
-                and isinstance(cro['extensions'], dict) 
+        if(cro.get('extensions', None) != None
+                and isinstance(cro['extensions'], dict)
                 and "devicePubKey" in cro['extensions'].keys()):
             raise RuntimeError("TODO")
         return spkc

@@ -1,6 +1,6 @@
 #!/bin/python3
 
-from soft_FIDO2 import Fido2Authenticator
+from soft_fido2 import Fido2Authenticator
 import pytest
 from fido2.server import Fido2Server
 from fido2.webauthn import AttestedCredentialData, AuthenticationResponse, AuthenticatorAssertionResponse, AuthenticatorData, CollectedClientData
