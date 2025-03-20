@@ -1034,7 +1034,7 @@ class Fido2Authenticator(object):
             pkcro['extensions'] = options['extensions']
 
         if 'origin' in options:
-            pkcco['origin'] = options['origin']
+            pkcro['origin'] = options['origin']
 
         cro['publicKey'] = pkcro
         return cro
