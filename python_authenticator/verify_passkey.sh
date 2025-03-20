@@ -12,7 +12,7 @@ FIDO2_DIR="$HOME/.fido2"
 AUTHENTICATOR_FILE="$HOME/.fido2/$PASSKEY.passkey"
 mkdir -p $FIDO2_DIR
 
-export PASSKEYSRCDIR="`dirname $0`/soft_FIDO2/"
+export PASSKEYSRCDIR="`dirname $0`/soft_fido2/"
 echo $PASSKEYSRCDIR
 echo -e "$PIN\n$AUTHENTICATOR_FILE" | python <(cat <<EOF
 import os, sys, secrets
@@ -40,8 +40,10 @@ with open(passkey, 'rb') as f:
     ca = d['ca']
     pk = d['pk']
     seed = d['seed']
+    resCreds = d.get('res_creds', [])
+    print("Resident creds: {}".format(resCreds))
     f.close()
 EOF
 )
 
-echo "Passkey $PASSKEY.passkey in $FIDO2_DIR van be validated with the provided pin! :)"
+echo "Passkey $PASSKEY.passkey in $FIDO2_DIR can be validated with the provided pin! :)"

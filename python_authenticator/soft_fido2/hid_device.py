@@ -128,33 +128,24 @@ class Authenticator(object):
                 continue
             encBagF = None
             try:
-                encBagF = open(os.path.join(baseDir, maybeKeyFile), 'rb')
-                everything = encBagF.read()
-                if len(everything) < 32:
-                    continue
-                iv = everything[:16]
-                tag = everything[16:32]
-                encKeyAndPem = everything[32:]
-                decryptor = Cipher(aesKey, modes.GCM(iv, tag)).decryptor()
-                danger = cbor.loads(decryptor.update(encKeyAndPem) + decryptor.finalize())
+                encBagF = os.path.join(baseDir, maybeKeyFile)
+                passkey = KeyUtils._load_passkey(pinHash, encBagF)
                 colour_print(colour=bcolors.OKPINK, component='Authenticator_validate_pin', 
                              msg='Pin decrypted a .passkey file')
-                ca = CertUtils.load_der_certificate(danger.get('ca'))
-                kp = KeyUtils.load_ec_key(danger.get('pk'))
-                seed = danger.get('seed')
-                fKey = Fernet(seed)
+                ca = CertUtils.load_der_certificate(passkey.get('ca'))
+                kp = KeyUtils.load_ec_key(passkey.get('pk'))
+                seed = passkey.get('seed')
                 cls._pin_retry = 5 #Reset the counter
                 pinAuthToken = secrets.token_bytes(32)
                 cls._open_keys[cid] = {
-                            'fKey': fKey,
+                            'fKey': Fernet(seed),
                             'pem': ca,
                             'kp': kp,
-                            'exp': round(time.time() + 30 ) #30 s
+                            'file': encBagF,
+                            'ph': pinHash
                         }
                 return pinAuthToken
             except Exception as e:
-                if encBagF != None:
-                    encBagF.close()
                 colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
                              msg='Something bad happened:\n{}'.format(e))
                 continue
@@ -226,6 +217,8 @@ class Authenticator(object):
                                                     clientDataHash, authData, None, kp)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
+        #Since we set UV we can make these resident keys
+        KeyUtils.update_passkey({rp['id']: credId, 'user': user['id']}, ca['ph'], ca['file'])
         return authData, attStmt
 
 
@@ -234,6 +227,14 @@ class Authenticator(object):
         if not cid in cls._open_keys.keys():
             return None, None, None
         ca = cls._open_keys.get(cid)
+        resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds')
+        if resCreds != None:
+            colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
+                         msg='passkey has resident credentials, adding them to allowed list')
+            for rc in resCreds:
+                if rc.get(rpId) != None:
+                    allowedList += [{'id': base64.urlsafe_b64decode(rc[rpId]), 
+                                     'user': rc.get('user')}]
         for cred in allowedList:
             try:
                 ca_pem = ca.get('pem')
@@ -242,6 +243,8 @@ class Authenticator(object):
                 #Create the authenticator, creating the key pair will fail if we don'w own the credId
                 b64CredId = base64.urlsafe_b64encode(cred.get('id'))
                 kp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fKey)
+                colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
+                             msg='We have a usable key, sign the challenge')
                 _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[b'\x00'*16], 
                                                     caKeyPair=ca_kp, caCert=ca_pem, fKey=fKey)
                 credential = {
@@ -253,12 +256,13 @@ class Authenticator(object):
                                                                         up=True, be=False, bs=False)
                 #Sign it, authenticator method b64 encodeds the ba so we decode it right away
                 sig = _authenticator.assertion_signature(authData, clientDataHash, kp)
-                return credential, authData, sig
-            except Exception:
+                userHandle = cred.get("user")
+                return credential, authData, sig, userHandle
+            except Exception as e:
                 colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
                              msg='Could not retrieve key pair from credential id {}'.format(cred))
                 continue
-        return None, None, None
+        return None, None, None, None
 
 class CBORCommand(object):
 
@@ -444,8 +448,8 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
-        credential, authData, signature = Authenticator.assertion_out(req.get(0x01), req.get(0x02),
-                                                            req.get(0x03), req.get(0x04), self.cid)
+        credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
+                                                req.get(0x02), req.get(0x03, []), req.get(0x04), self.cid)
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if credential and authData and signature:
             rsp = {
@@ -453,6 +457,8 @@ class CBORCommand(object):
                     0x02: authData,
                     0x03: signature
             }
+            if userHandle:
+                rsp[0x04] = {'id': userHandle}
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True

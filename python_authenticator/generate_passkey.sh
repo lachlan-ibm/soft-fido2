@@ -12,7 +12,7 @@ FIDO2_DIR="$HOME/.fido2"
 AUTHENTICATOR_FILE="$HOME/.fido2/$PASSKEY.passkey"
 mkdir -p $FIDO2_DIR
 
-export PASSKEYSRCDIR="`dirname $0`/soft_FIDO2/"
+export PASSKEYSRCDIR="`dirname $0`/soft_fido2/"
 echo $PASSKEYSRCDIR
 echo -e "$PIN\n$AUTHENTICATOR_FILE" | python <(cat <<EOF
 import os, sys, secrets, base64

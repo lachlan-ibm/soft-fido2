@@ -1,9 +1,12 @@
 import struct
 import cbor2 as cbor
+import base64
+import secrets
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 
 class KeyUtils(object):
@@ -98,6 +101,43 @@ class KeyUtils(object):
                  }
         else:
             raise Exception("Unsupported public key algorithm")
+
+
+    @classmethod
+    def update_passkey(cls, resCred, pinHash, passkeyFilename):
+        '''
+        Add a resident cred to a .passkey file
+        '''
+        passkey = cls._load_passkey(pinHash, passkeyFilename)
+        passkey['res_creds'] = [ *passkey.get('res_creds', []), resCred]
+        cls._save_passkey(passkey, pinHash, passkeyFilename)
+
+    @classmethod
+    def _load_passkey(cls, pinHash, passkeyFilename):
+        passkey = {}
+        with open(passkeyFilename, 'rb') as f:
+            everything = f.read()
+            iv = everything[:16]
+            tag = everything[16:32]
+            encPasskey = everything[32:]
+            aesKey = algorithms.AES128(pinHash)
+            decryptor = Cipher(aesKey, modes.GCM(iv, tag)).decryptor()
+            cborKeyAndPem = decryptor.update(encPasskey) + decryptor.finalize()
+            passkey = cbor.loads(cborKeyAndPem)
+            f.close()
+        return passkey
+
+    @classmethod
+    def _save_passkey(cls, passkey, pinHash, passkeyFilename):
+        iv = secrets.token_bytes(16)
+        aesKey = algorithms.AES128(pinHash)
+        encryptor = Cipher(aesKey, modes.GCM(iv)).encryptor()
+        cborPasskey = cbor.dumps(passkey)
+        everything = encryptor.update(cborPasskey) + encryptor.finalize()
+        with open(passkeyFilename, 'wb') as f:
+            f.write(iv + encryptor.tag + everything)
+            f.close()
+
 
 class KeyPair(object):
 
