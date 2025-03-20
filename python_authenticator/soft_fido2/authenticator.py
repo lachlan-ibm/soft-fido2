@@ -331,6 +331,9 @@ class Fido2Authenticator(object):
             "attestation": "direct"
         }
 
+        If you want to use a different origin you can add it to the Public-Key dictionary as a 
+        top level key.
+
         Args:
             jsonOptions (dict): json dictionary of options for navigator.credentials.get
             keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the assertion; default = self.kp
@@ -364,13 +367,14 @@ class Fido2Authenticator(object):
         Returns:
             dict: clientDataJSON, https://www.w3.org/TR/webauthn/#sec-client-data
         """
-        rp = pk.get('rpId', None)
-        mode = 'webauthn.get'
-        if not rp:
-            rp = pk['rp']['id']
-            mode = 'webauthn.create'
+        mode = 'webauthn.get' if 'rpId' in pk else 'webauthn.create'
+        origin = pk.get('origin', None)
+        if not origin and 'rpId' in pk:
+            origin = 'https://' + pk['rpId']
+        if not origin:
+            origin = 'https://' + pk['rp']['id']
 
-        clientDataDict = {'origin': 'https://' + rp, 'challenge': self._urlb64_encode(pk['challenge']), 'type': mode}
+        clientDataDict = {'origin': origin, 'challenge': self._urlb64_encode(pk['challenge']), 'type': mode}
         return json.dumps(clientDataDict)
 
     def process_attested_credential_data(self, publicKey, credIdBytes):
@@ -921,6 +925,9 @@ class Fido2Authenticator(object):
         if 'extensions' in options:
             pkcco['extensions'] = options['extensions']
 
+        if 'origin' in options:
+            pkcco['origin'] = options['origin']
+
         cco = {'publicKey': pkcco}
         return cco
 
@@ -1025,6 +1032,9 @@ class Fido2Authenticator(object):
 
         if 'extensions' in options:
             pkcro['extensions'] = options['extensions']
+
+        if 'origin' in options:
+            pkcco['origin'] = options['origin']
 
         cro['publicKey'] = pkcro
         return cro
