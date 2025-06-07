@@ -1,4 +1,6 @@
-# Copyrite IBM 2022
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+# Assisted by watsonx Code Assistant
 
 # CTAP2HID reads bytes from endpoint 1,building the frames into a CTAPMsg. A CTAPMsg is used to initalize a 
 # FIDO2Transaction thread which will reply on endpoint 2 when the transaction is complete.
@@ -225,7 +227,7 @@ class Authenticator(object):
     @classmethod
     def assertion_out(cls, rpId, clientDataHash, allowedList, exts, cid):
         if not cid in cls._open_keys.keys():
-            return None, None, None
+            return None, None, None, None
         ca = cls._open_keys.get(cid)
         resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds')
         if resCreds != None:
@@ -449,7 +451,7 @@ class CBORCommand(object):
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
         credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
-                                                req.get(0x02), req.get(0x03, []), req.get(0x04), self.cid)
+                                                req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if credential and authData and signature:
             rsp = {

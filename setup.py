@@ -3,7 +3,7 @@ import os
 
 setup(
     name='soft_fido2',
-    version='0.2.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
+    version='0.3.%s' % os.environ.get('TRAVIS_BUILD_NUMBER', 0),
     description='Software based FIDO2 Authenticator',
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
@@ -16,6 +16,6 @@ setup(
         'asn1>=2.2.0',
         'PyJwt>=0.6.1'
     ],
-    url='https://github.ibm.com/ibm-security/fido2_authenticator',
+    url='https://github.com/lachlan-ibm/soft-fido2',
     zip_safe=False
 )
