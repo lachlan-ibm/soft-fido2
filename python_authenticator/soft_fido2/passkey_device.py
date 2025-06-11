@@ -2,19 +2,6 @@
 # IBM Confidential
 # Assisted by watsonx Code Assistant
 
-# CTAP2HID reads bytes from endpoint 1,building the frames into a CTAPMsg. A CTAPMsg is used to initalize a 
-# FIDO2Transaction thread which will reply on endpoint 2 when the transaction is complete.
-#
-# Authenticator uses some environmental properties to read PKI from the filesystem.
-#       FIDO_AUTHENTICATOR_PKCS12 :: pkcs12 which contains the CA key/x509 and any generated x509 by the 
-#                                    Fido2Authenticator.
-#       FIDO_AUTHENTICATOR_PKCS12_SECRET :: password to decrypt the pkcs12 bag.
-# Any credentials crated using the CA pkcs12 can be reconstructed during `navigator.credential.get` requests.
-#       FIDO2_GENERATE_CA :: boolean to indicate if an error should be thrown if the PKCS12 file does not exist or
-#                            cannot be read / converted to requried PKI. If this value is true the CA key and x509
-#                            are generated on the first request to create a credential.
-#
-
 import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback, logging
 import cbor2 as cbor
 from enum import Enum, IntEnum
@@ -23,61 +10,18 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.fernet import Fernet
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-from key_pair import KeyPair, KeyUtils
-from authenticator import Fido2Authenticator
-from cert_utils import CertUtils
+try:
+    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from key_pair import KeyPair, KeyUtils
+    from authenticator import Fido2Authenticator
+    from cert_utils import CertUtils
+except ImportError:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from key_pair import KeyPair, KeyUtils
+    from authenticator import Fido2Authenticator
+    from cert_utils import CertUtils
 
-
-# Classes to create a USB device object, connect it to the system usb daemon and begin tx/rx
-class CTAP2HIDClass(BaseStructure):
-    _fields_ = [
-        ('bLength', 'B', 9),
-        ('bDescriptorType', 'B', 0x21),  # HID
-        ('bcdHID', 'H'),
-        ('bCountryCode', 'B'),
-        ('bNumDescriptors', 'B'),
-        ('bDescriptprType2', 'B'),
-        ('wDescriptionLength', 'H'),
-    ]
-
-'''
-hid_class = CTAP2HIDClass(bcdHID=0x0100,  # HID version number
-                     bCountryCode=0x0,
-                     bNumDescriptors=0x1,
-                     bDescriptprType2=0x22,  # Report
-                     wDescriptionLength=0x3F00)  # Little endian
-
-
-interface_d = InterfaceDescriptor(bAlternateSetting=0,
-                                  bNumEndpoints=2,
-                                  bInterfaceClass=3,  # class HID
-                                  bInterfaceSubClass=0, # no interface subclass
-                                  bInterfaceProtocol=0, # no interface protocol
-                                  iInterface=0)
-
-end_point_one = EndPoint(bEndpointAddress=0x04, # HOST OUT / USB IN
-                     bmAttributes=0x3, # Interrupt transfer
-                     wMaxPacketSize=(64&0x00FF)<<8 | (64&0xFF00),  # 64-byte packet max
-                     bInterval=5)  # Poll every 5 millisecond
-
-end_point_two = EndPoint(bEndpointAddress=0x8E, # HOST IN / USB OUT
-                     bmAttributes=0x3, # Interrupt transfer
-                     wMaxPacketSize=(64&0x00FF)<<8 | (64&0xFF00),  # 64-byte packet max, bussit
-                     bInterval=5)  # Poll every 5 millisecond
-
-interface_d.descriptions = [hid_class]  # Supports only one description
-interface_d.endpoints = [end_point_two, end_point_one]  # Supports two endpoint
-# wTotalLength = len( interface_d.pack() + hid_class.pack() + end_point_one.pack() + end_point_two.pack() + 18)
-configuration = DeviceConfigurations(wTotalLength=0x2900,
-                                     bNumInterfaces=0x1,
-                                     bConfigurationValue=0x1,
-                                     iConfiguration=0x0,  # No string
-                                     bmAttributes=0x80,  # valid self powered
-                                     bMaxPower=50)  # 50 mah current
-configuration.interfaces = [interface_d]   # Supports only one interface
-'''
 
 class Authenticator(object):
     '''
@@ -410,6 +354,7 @@ class CBORCommand(object):
             0x06: [1]
         }
         result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result)
+        logging.debug(f"len: {len(result)}")
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -470,12 +415,13 @@ class CTAPHIDInitPkt(BaseStructure):
     _fields_ = [
         ('cid', 'I'),
         ('cmd', 'B'),
-        ('bc_high', 'B'),
-        ('bc_low', 'B')
-        #('bcnt', 'H')
+        #('bc_high', 'B', 0),
+        #('bc_low', 'B', 0)
+        ('bcnt', 'H', 0)
     ]
 
     def __init__(self, **kwargs):
+        self.base_pack_format = '>'
         if 'data' in kwargs:
             index = None
             for i, field in enumerate(self._fields_):
@@ -489,7 +435,7 @@ class CTAPHIDInitPkt(BaseStructure):
                 colour_print(colour=bcolors.OKGREEN, component='CTAPHIDInitPkt.__init__', 
                              msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
-            #print(self._fields_)
+            logging.debug(f"{self._fields_}")
         super().__init__(**kwargs)
 
 class CTAPHIDSeqPkt(BaseStructure):
@@ -500,6 +446,7 @@ class CTAPHIDSeqPkt(BaseStructure):
     ]
 
     def __init__(self, **kwargs):
+        self.base_pack_format = '>'
         #print(kwargs)
         if 'data' in kwargs:
             index = None
@@ -508,14 +455,14 @@ class CTAPHIDSeqPkt(BaseStructure):
                     index = i
                     break
             if index == None:
-                print("setting data field")
+                logging.debug("setting data field")
                 colour_print(colour=bcolors.OKPINK, component='CTAPHIDSeqPkt.__init__', msg='setting data field')
                 self._fields_ += [('data', '%ds' % len(kwargs['data']))]
             else:
                 colour_print(colour=bcolors.OKPINK, component='CTAPHIDSeqPkt.__init__', 
                              msg='data already exists as a field, updating it')
                 self._fields_[index] = ('data', '%ds' % len(kwargs['data']))
-            #print(self._fields_)
+            logging.debug(f"{self._fields_}")
         super(CTAPHIDSeqPkt, self).__init__(**kwargs)
 
 
@@ -585,12 +532,14 @@ class CTAP2HIDevice(UserDevice):
         '''
         rsp_data = None
         if cbor_cmd.response_segment == 0: #We send the init pkt
+            logging.debug(f"bcnt from init pkt: {cbor_cmd.bcnt}")
             data, _ = cbor_cmd.get_rsp_seg(57)
+            logging.debug(f"bcnt: {cbor_cmd.bcnt}")
             rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), 
                                     cmd=cbor_cmd.ctaphid_cmd,
-                                    bc_high=(cbor_cmd.bcnt & 0xFF00) >> 8,
-                                    bc_low=(0xFF & cbor_cmd.bcnt),
-                                    #bcnt=cbor_cmd.bcnt,
+                                    #bc_high=(cbor_cmd.bcnt & 0xFF00) >> 8,
+                                    #bc_low=(0xFF & cbor_cmd.bcnt),
+                                    bcnt=cbor_cmd.bcnt,
                                     data=data).pack()
         else: #We send the continue sequence pkt
             data, seq_num = cbor_cmd.get_rsp_seg(59)
@@ -599,7 +548,7 @@ class CTAP2HIDevice(UserDevice):
                                      seq=seq_num,
                                      data=data).pack()
         colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='pad with {} 0 bytes'.format(64 - len(rsp_data)))
-        #rsp_data += b'\00' * (64 - len(rsp_data)) # pad the 64 byte frame with 0x00 if required
+        rsp_data += b'\00' * (64 - len(rsp_data)) # pad the 64 byte frame with 0x00 if required
         '''
         rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
         dump_bytes(rsp, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Packed response')
@@ -625,14 +574,22 @@ class CTAP2HIDevice(UserDevice):
         self.pending.put(rsp_data)
         #If we have not response buffer left, remove the transaction from our context
         # don't do this for the broadcast channel.
-        if len(cbor_cmd.response) == 0 and cid != b'\xff\xff\xff\xff':
-            del self.cids[cid]['cborCmd']
+        #if len(cbor_cmd.response) == 0 and cid != b'\xff\xff\xff\xff':
+        #    del self.cids[cid]['cborCmd']
         return
 
+    def send_response_segments(self, cid, cbor_cmd):
+        while len(cbor_cmd.response) > 0:
+            self.send_response_segment(cid, cbor_cmd)
 
 
     def ctaphid_ping(self, usb_req):
-        return
+        cid = usb_req.data[0:4]
+        cborCmd = CBORCommand(cid, None, skip_init=True)
+        cborCmd.ctaphid_cmd = 0x01
+        cborCmd.response = b'U2F_V2'
+        self.cids[cid]['cborCmd'] = cborCmd
+        self.send_response_segment(cid, cborCmd)
 
     def ctaphid_msg(self, usb_req):
 
@@ -691,10 +648,11 @@ class CTAP2HIDevice(UserDevice):
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         #rsp = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
         #dump_bytes(rsp, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Packed response')
-        self.cids[assignedCID] = {'cborCmd': CBORCommand(cid, None, skip_init=True) }
-        self.cids[assignedCID]['cborCmd'].response = data
-        self.cids[assignedCID]['cborCmd'].ctaphid_cmd = int.from_bytes(cmd)
-        self.cids[assignedCID]['cborCmd'].bcnt = 17
+        initCmd = CBORCommand(cid, None, skip_init=True)
+        self.cids[assignedCID] = {'cborCmd': initCmd }
+        initCmd.response = data
+        initCmd.ctaphid_cmd = int.from_bytes(cmd)
+        initCmd.bcnt = 17
         #return self.send_usb_req(usb_req, rsp, 64, ep=0x81, start_frame=int.from_bytes(cid))
         #self.send_usb_req(usb_req, b'', 0, ep=usb_req.ep)
         #self.send_usb_req(rsp, len(rsp), start_frame=0xFFFFFFFF, packets=0, 
@@ -709,7 +667,7 @@ class CTAP2HIDevice(UserDevice):
         cmd = usb_req.data[4:5]
         bcnt = usb_req.data[5:7]
         ctap_cmd = usb_req.data[7:8]
-        print(int.from_bytes(bcnt) - 1)
+        logging.debug(f"CBOR bcnt: {int.from_bytes(bcnt) - 1}")
         cbor_data = usb_req.data[8: 7 + int.from_bytes(bcnt)]
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor', 
                      msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
@@ -722,20 +680,30 @@ class CTAP2HIDevice(UserDevice):
         if cbor_cmd.response_ready == True: #We can respond immediatly
             dump_bytes(self.cids[cid]['cborCmd'].response, colour=bcolors.OKGREEN, 
                        component='CTAP2HIDevice.ctaphid_cbor', msg='CBOR response: ')
-            return self.send_response_segment(cid, self.cids[cid]['cborCmd'])
+            return self.send_response_segments(cid, cbor_cmd)
         else:
             colour_print(colour=bcolors.OKYELLOW, component='CTAP2HIDevice.ctaphid_cbor', 
                          msg="Waiting for rest of command to arrive . . .")
             return
 
+    def _ctap_ack(self, usb_req):
+        cid = usb_req.data[0:4]
+        rsp = CBORCommand(cid, None, skip_init=True)
+        rsp.response = b''
+        self.cids[cid]['cborCmd'] = rsp
+        self.send_response_segment(cid, rsp)
+
     def ctaphid_cancel(self, usb_req):
-        return
+        return self._ctap_ack(usb_req)
 
     def ctaphid_keepalive(self, usb_req):
         return
 
+    def ctaphid_wink(self, usb_req):
+        return self._ctap_ack(usb_req)
+
     def ctaphid_error(self, usb_req):
-        return
+        return self._ctap_ack(usb_req)
 
     def ctaphid_unknown(self, usb_req):
         colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice.ctaphid_unknown', msg='Unkown request recieved')
@@ -764,6 +732,7 @@ class CTAP2HIDevice(UserDevice):
             1: self.ctaphid_ping,
             3: self.ctaphid_msg,
             6: self.ctaphid_init,
+            8: self.ctaphid_wink,
             16: self.ctaphid_cbor,
             17: self.ctaphid_cancel,
             59: self.ctaphid_keepalive,
@@ -797,14 +766,24 @@ class CTAP2HIDevice(UserDevice):
         #else: #We reply to the HOST Out endpoint with an empty frame then process the command
         #    self.send_usb_req('', 64, ep=0, start_frame=0xFFFFFFFF, seqnum=usb_req.seqnum)
         # We send the response to the command to a request in self.pending once we are ready
+        '''
+        hid_event = HIDCmdEvent()
+        try:
+            hid_event.unpack(event.data[:event.ev_len])
+        except Exception:
+            logging.exception("Panic!")
+            self.interrupt = True
+        '''
         ep = event.data[0]
         event.data = event.data[1:]
         cid = event.data[0:4]
         cmd = event.data[4:5]
         dump_bytes(event.data[:event.ev_len])
+
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice._handle_incoming', 
-                    msg='EP: {} CID: {}; command: {}'.format(
-                        ep, self._bytes_to_str(cid), self._bytes_to_str(cmd)))
+                    msg='EP: {} CID: {}; CMD/SEQ {}; DATA: {}'.format(
+                        ep, cid, cmd, self._bytes_to_str(event.data[:event.ev_len])))
+
         if(int.from_bytes(cmd) & 0x80) > 0:
             colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming', 
                         msg='bit 8 set we got a command msg')
@@ -822,7 +801,7 @@ class CTAP2HIDevice(UserDevice):
             return self._handle_incoming(usb_req)
     '''
 
-    def handle_unknown_control(self, control_req, usb_req):
+    def handle_unknown_control(self, usb_req):
         handled = False
         if control_req.bmRequestType == 0x81: #Interface request
             if control_req.bRequest == 0x6:  # Get Descriptor

@@ -29,7 +29,7 @@ advised of the possibility of such damage.
 Update 2022 by Lachlan Gleeson for python 3
 '''
 
-import socketserver, datetime, struct, traceback, re
+import socketserver, datetime, struct, traceback, re, signal
 
 
 # Hey StackOverflow !
@@ -101,7 +101,7 @@ class BaseStructure(object):
                 pack_format += field[1][1:]
             else:
                 pack_format += field[1]
-        #print(pack_format)
+        print(pack_format)
         return pack_format.encode('utf-8')
 
     def formatDevicesList(self, devicesCount):
@@ -602,6 +602,17 @@ class USBContainer:
 class USBIPConnection(socketserver.BaseRequestHandler):
     attached = False
     attachedBusID = ''
+
+    def __init__(self, request=None, client_address=None, server=None):
+        super().__init__(request=request, client_address=client_address, server=server)
+        signal.signal(signal.SIGINT, self.interrupt)
+        signal.signal(signal.SIGTERM, self.interrupt)
+
+    def interrupt():
+        if self.request:
+            self.request.close()
+        if self.server:
+            self.server.server_close()
 
     def handle(self):
         endpoint_requests = {}

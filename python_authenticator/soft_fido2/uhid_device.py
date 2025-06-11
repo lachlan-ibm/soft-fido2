@@ -1,15 +1,15 @@
 #!/bin/python
 #IBM Confidential
 # Assisted by watsonx Code Assistant
-#Copyright IBM Corp. 2025
+# Copyright IBM Corp. 2025
 
 import os, struct, fcntl, errno, time, queue, threading, logging, re, signal
 
 from enum import Enum
 
 # Assisted by watsonx Code Assistant 
-logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
+#logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(message)s')
 
 # Hey StackOverflow !
 class bcolors:
@@ -117,7 +117,8 @@ class UHIDReportType(Enum):
     INPUT_REPORT = 0x02
 
 class BaseStructure(object):
-    _fields = []
+    _fields_ = []
+    base_pack_format = '<'
 
     def __init__(self, **kwargs):
         self.init_from_dict(**kwargs)
@@ -134,7 +135,7 @@ class BaseStructure(object):
         return struct.calcsize(self.format())
 
     def format(self):
-        pack_format = '<'
+        pack_format = self.base_pack_format
         for field in self._fields_:
             if isinstance(field[1], BaseStructure):
                 pack_format += str(field[1].size()) + 's'
@@ -144,7 +145,7 @@ class BaseStructure(object):
                 pack_format += field[1][1:]
             else:
                 pack_format += field[1]
-        #logging.debug(pack_format)
+        logging.debug(pack_format)
         return pack_format.encode('utf-8')
 
     def pack(self):
@@ -163,7 +164,7 @@ class BaseStructure(object):
                     values.append(getattr(self, field[0], 0))
         #Python 2 -> 3, str != bytestring so conditionally remap any strings we find.
         values = [bytes(v, 'utf-8') if isinstance(v, str) else v for v in values]
-        #logging.debug(values)
+        logging.debug(values)
         packed = struct.pack(self.format(), *values)
         #logging.debug("packed [{}]".format(packed))
         return packed
@@ -179,6 +180,7 @@ class BaseStructure(object):
             i+=1
         #logging.debug(keys_vals)
         self.init_from_dict(**keys_vals)
+
 
 REPORT_DESCRIPTOR = bytes([
     0x06, 0xD0, 0xF1, # Usage Page (FIDO Alliance)
@@ -296,9 +298,7 @@ class UHIDSetReportReply(BaseStructure):
 class UserDevice(threading.Thread):
 
     #Pending input reports
-    pending = queue.Queue(maxsize=10)
-    #Get reports awaiting a reply
-    inQ = queue.Queue(maxsize=10)
+    pending = queue.Queue(maxsize=100)
 
     def __init__(self, devPath="/dev/uhid"):
         super().__init__()
@@ -315,9 +315,9 @@ class UserDevice(threading.Thread):
         return ''.join(f'{byte:02x}' for byte in byte_array)
 
     # Assisted by watsonx Code Assistant 
-    def log_received_bytes(self, byte_array):
-        logging.debug("event byte count: {}".format( 
-                            0 if byte_array is None else len(byte_array)))
+    def log_received_bytes(self, byte_array, io_type="IN"):
+        logging.debug("event byte count: {} DIR: {}".format( 
+                            0 if byte_array is None else len(byte_array), io_type))
         formatted_bytes = self.format_bytes(byte_array)
         lines = [formatted_bytes[i:i+64] for i in range(0, len(formatted_bytes), 64)]
         for line in lines:
@@ -369,12 +369,7 @@ class UserDevice(threading.Thread):
         ev = UHIDGetReport()
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
-        if ev.report_type == UHIDReportType.INPUT_REPORT:
-            self.inQ.put(ev)
-        elif getReport.report_type == UHIDReportType.FEATURE_REPORT:
-            self.handle_unknown_control(ev_bytes)
-        else:
-            raise NotImplementedError("unexpected request")
+        raise NotImplementedError("unexpected request")
 
     def set_report_ev(self, ev_type, ev_bytes):
         logging.debug("Set report event received!")
@@ -414,8 +409,7 @@ class UserDevice(threading.Thread):
             #fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
         except OSError as e:
             logging.debug("OSError with uhid fd")
-            import traceback
-            print(traceback.format_exc())
+            logging.exception(e)
             return
         if fd == None:
             logging.debug("Error with udev fd")
@@ -423,12 +417,12 @@ class UserDevice(threading.Thread):
         try:
             #Send create
             create_2_req = UHIDCreate2Event().pack()
-            #logging.debug(create_2_req)
             n = os.write(fd, bytearray(create_2_req))
             if n != len(create_2_req):
                 raise RuntimeError("invalid write length")
             while not self.interrupt:
                 try: #Poll for event
+                    logging.debug(f"os.read({fd}, {EV_MAX_SIZE})")
                     eventBytes = os.read(fd, EV_MAX_SIZE)
                     self.log_received_bytes(eventBytes)
                     if isinstance(eventBytes, bytes) \
@@ -437,26 +431,33 @@ class UserDevice(threading.Thread):
                                         eventBytes[:UHID_EVENT_TYPE_SIZE])
                         self.process_event(eventType, eventBytes)
                     else:
-                        logging.error(f"Invalid event read :: {eventBytes}")
+                        logging.error(f"Invalid event read [{eventBytes}]")
                 except BlockingIOError: #No event
                     logging.debug("No data available (non-blocking read)")
                 if self.interrupt == True:
                     break
-                if not self.pending.empty(): #Send back queued events
-                    try:
+                try:
+                    while self.pending.qsize() > 0:
                         inData = self.pending.get(True, 0.00001) #10ns
-                        ev = UHIDInput2Event(ev_len=65, data=inData)
+                        logging.debug(f"inData: {inData[:4]}")
+                        logging.debug(f"{inData[0]}")
+                        logging.debug(f"{inData[0] == 0}")
+                        #if inData[0] == 0 and self.pending.qsize() > 0: #assigned cid
+                        #    logging.debug("adding report count")
+                        #    inData = self.pending.qsize().to_bytes() + inData
+                        ev = UHIDInput2Event(ev_len=64, data=inData) #.ljust(4096, b'\x00')
                         inBytes = ev.pack()
-                        self.log_received_bytes(inBytes)
+                        self.log_received_bytes(inBytes, io_type="OUT")
                         n = os.write(fd, bytearray(inBytes))
                         if n != len(inBytes):
                             raise RuntimeError(f"invalid write length {n} != {len(ev.pack())}")
                         else:
                             logging.debug("Event sent!")
-                    except queue.Empty:
-                        logging.debug("Could not get output event, not sending anything.")
+                        logging.debug(f"{self.pending.qsize()} events left in the que")
+                except queue.Empty:
+                    logging.debug("Could not get output event, not sending anything.")
                 if not self.interrupt:
-                    time.sleep(0.01) #poll every 10 ms
+                    time.sleep(0.001) #poll every 10 ms
         finally:
             if started:
                 self.destroy_ev(fd)
