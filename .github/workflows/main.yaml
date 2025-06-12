@@ -1,4 +1,4 @@
-name: deploy-gh-pages
+name: pypi-pusher
 
 # Only run this when the master branch changes
 on:
@@ -21,12 +21,14 @@ jobs:
 
     - name: Install dependencies
       run: |
-        pip install -r requirements.txt
+        pip install -r dev-requirements.txt
 
     # Build the doc 
-    - name: Build the project
+    - name: Build an test the project
       run: |
         python -m build
+        ./tests/unit_test.sh
+        ./tests/scenario_test.sh
 
     # Push to pypi
     - name: Publish python module

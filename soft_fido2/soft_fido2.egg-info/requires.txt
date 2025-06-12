@@ -1,0 +1,4 @@
+cbor2>=4.1.2
+cryptography>=38.0.1
+asn1>=2.2.0
+PyJwt>=0.6.1

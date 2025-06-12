@@ -1,4 +1,4 @@
-from setuptools import find_packages, setup
+from setuptools import find_packages, setup, Command
 import os
 
 from pathlib import Path
@@ -36,8 +36,7 @@ setup(
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
-    package_dir={"": "python_authenticator"},
-    packages=find_packages(where="python_authenticator"),
+    packages={"soft_fido2"},
     install_requires=[
         'cbor2>=4.1.2',
         'cryptography>=38.0.1',

@@ -1,16 +1,5 @@
-import hashlib
-import json
-import struct
-import re
-import base64
-import binascii
-import sys
-import array
-import os
-import time
-
+import hashlib, json, struct, re, base64, binascii, sys, array, os, time, logging, jwt
 import cbor2 as cbor
-import jwt
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
@@ -19,14 +8,16 @@ from cryptography import x509
 
 try:
     from soft_fido2.key_pair import KeyPair, KeyUtils
+    from soft_fido2.cert_utils import CertUtils    
 except:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from key_pair import KeyPair, KeyUtils
-try:
-    from soft_fido2.cert_utils import CertUtils
-except:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from cert_utils import CertUtils
+    try:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from cert_utils import CertUtils
+        from key_pair import KeyPair, KeyUtils
+    except Exception as e:
+        logging.debug("Module load error")
+        logging.exception(e)
+        raise e
 
 
 class Fido2Authenticator(object):
@@ -1040,26 +1031,32 @@ class Fido2Authenticator(object):
 ############################# MAIN ##############################
 
 if __name__ == "__main__":
+    if os.environ.get("FIDO_HOME") == None:
+        logging.debug("Cannot find passkey home \"FIDO_HOME\"")
+        sys.exit(1)
     authenticator = Fido2Authenticator()
     rsp = None
+    pubPath = open(os.path.join(os.environ.get('FIDO_HOME'), 'public.pem'))
+    pivPath = open(os.path.join(os.environ.get('FIDO_HOME'), 'private.pem'))
     if sys.argv[1] == 'attestation':
         rsp = authenticator.credential_create(sys.argv[3], atteStmtFmt=sys.argv[2], keyPair=authenticator.kp)
-        #write out keys usesd
-        with open('private.pem', 'wb') as key_file:
+        with open(pivPath, 'wb') as key_file:
             key_file.write(authenticator.kp.get_private_bytes())
 
-        with open('public.pem', 'wb') as key_file:
+        with open(pubPath, 'wb') as key_file:
             key_file.write(authenticator.kp.get_public_bytes())
-
-    else:
+    elif sys.argv[1] == 'assertion':
         privateKey = publicKey = None
-        with open('private.pem', 'rb') as key_file:
+        with open(pivPath, 'rb') as key_file:
             privateKey = serialization.load_pem_private_key(key_file.read(), password=None, backend=default_backend())
 
-        with open('public.pem', 'rb') as key_file:
+        with open(pubPath, 'rb') as key_file:
             publicKey = serialization.load_pem_public_key(key_file.read(), backend=default_backend())
 
         keyPair = KeyPair(privateKey, publicKey)
         authenticator.kp = keyPair
         rsp = authenticator.credential_request(sys.argv[2], authenticator.kp)
+    else:
+        logging.debug("Must specify a ceeremony (attestation || assertion) to perform.")
+        sys.exit(1)
     print(json.dumps(rsp, indent=4))

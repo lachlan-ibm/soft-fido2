@@ -9,6 +9,9 @@ echo -n -e "\nPasskey filename [default]: "
 read READ_PASSKEY
 PASSKEY="${READ_PASSKEY:-"default"}"
 FIDO2_DIR="$HOME/.fido2"
+if [ ! -z "$FIDO_HOME" ]; then
+    FIDO2_DIR="$FIDO_HOME"
+fi
 AUTHENTICATOR_FILE="$HOME/.fido2/$PASSKEY.passkey"
 mkdir -p $FIDO2_DIR
 
@@ -21,8 +24,8 @@ from cryptography import x509
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 sys.path.append(os.path.realpath(os.environ.get("PASSKEYSRCDIR")))
-from key_pair import KeyUtils, KeyPair
-from cert_utils import CertUtils
+from soft_fido2.key_pair import KeyUtils, KeyPair
+from soft_fido2.cert_utils import CertUtils
 
 pin, passkey = sys.stdin.read().splitlines()
 digest = hashes.Hash(hashes.SHA256())
