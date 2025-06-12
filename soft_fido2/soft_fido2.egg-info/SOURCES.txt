@@ -1,8 +1,0 @@
-README.md
-setup.py
-soft_fido2/soft_fido2.egg-info/PKG-INFO
-soft_fido2/soft_fido2.egg-info/SOURCES.txt
-soft_fido2/soft_fido2.egg-info/dependency_links.txt
-soft_fido2/soft_fido2.egg-info/not-zip-safe
-soft_fido2/soft_fido2.egg-info/requires.txt
-soft_fido2/soft_fido2.egg-info/top_level.txt

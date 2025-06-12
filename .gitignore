@@ -2,6 +2,7 @@
 build/
 dist/
 soft_FIDO2.egg-info/
+soft_fido2.egg-info/
 __pycache__
 .DS_Store
 *.pyc
