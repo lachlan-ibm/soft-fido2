@@ -11,10 +11,10 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes
 from cryptography.fernet import Fernet
 try:
-    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from key_pair import KeyPair, KeyUtils
-    from authenticator import Fido2Authenticator
-    from cert_utils import CertUtils
+    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from soft_fido2.key_pair import KeyPair, KeyUtils
+    from soft_fido2.authenticator import Fido2Authenticator
+    from soft_fido2.cert_utils import CertUtils
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
@@ -65,7 +65,8 @@ class Authenticator(object):
         # Try all .passkey files in the $HOME/.fido2 dir. If we parse out a cert/key then we have a 
         # valid pin and can cache the result and return an auth token.
         aesKey = algorithms.AES128(pinHash)
-        baseDir = os.path.realpath(os.path.join(os.environ.get("HOME"), '.fido2'))
+        home_dir = os.environ.get("FIDO_HOME")
+        baseDir = os.path.realpath(home_dir)
         for maybeKeyFile in os.listdir(baseDir):
             if not maybeKeyFile.endswith('.passkey'):
                 colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
@@ -128,6 +129,7 @@ class Authenticator(object):
     @classmethod
     def get_pin_token(cls, pin_req, cid):
         #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#getPinToken
+        logging.debug(f"pin_req: {pin_req}")
         platform_cose_key = pin_req[3]
         pin_hash_enc = pin_req[6]
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
@@ -581,6 +583,7 @@ class CTAP2HIDevice(UserDevice):
     def send_response_segments(self, cid, cbor_cmd):
         while len(cbor_cmd.response) > 0:
             self.send_response_segment(cid, cbor_cmd)
+            logging.debug(f"response left: {cbor_cmd}")
 
 
     def ctaphid_ping(self, usb_req):
@@ -674,7 +677,7 @@ class CTAP2HIDevice(UserDevice):
                                                                    self._bytes_to_str(bcnt)))
         dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor', 
                     msg='CBOR encoded bytes: ')
-        cbor_cmd = CBORCommand(cid, usb_req.data[5:])
+        cbor_cmd = CBORCommand(cid, usb_req.data[5:64])
         cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
         self.cids[cid]['cborCmd'] = cbor_cmd
         if cbor_cmd.response_ready == True: #We can respond immediatly
@@ -745,9 +748,9 @@ class CTAP2HIDevice(UserDevice):
         if context != None:
             transaction = context.get("cborCmd")
             if transaction != None and seqNum == transaction.request_segment:
-                transaction.append_segment(usb_req.data[5:])
+                transaction.append_segment(usb_req.data[5:64])
                 if transaction.response_ready == True:
-                    self.send_response_segment(cid, transaction)
+                    self.send_response_segments(cid, transaction)
                 else:
                     colour_print(colour=bcolors.OKPURPLE, component='CTAP2HIDevice._handle_incoming_sequence', 
                                  msg='Sequence number [{}] not the last expected sequence'.format(seqNum))
@@ -826,14 +829,3 @@ class CTAP2HIDevice(UserDevice):
             self.send_usb_req(b"\x01\x00",2, seqnum=usb_req.seqnum)
             pass
         return handled
-
-
-
-if __name__ == "__main__":
-    logging.debug("#TODO")
-    udev = CTAP2HIDevice('/dev/uhid')
-    udev.start()
-    while udev.is_alive():
-        time.sleep(0.25)
-    udev.join()
-    

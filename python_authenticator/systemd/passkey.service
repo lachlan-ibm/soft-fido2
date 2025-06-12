@@ -1,0 +1,12 @@
+[Unit]
+Description=Software FIDO2 Passkey
+After=basic.target
+
+[Service]
+ExecStart=/usr/bin/python -m soft_fido2
+Type=simple
+Restart=no
+EnvironmentFile=/etc/sysconfig/passkey.env
+
+[Install]
+RequiredBy=basic.target
