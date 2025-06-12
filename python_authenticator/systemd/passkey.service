@@ -6,7 +6,7 @@ After=basic.target
 ExecStart=/usr/bin/python -m soft_fido2
 Type=simple
 Restart=no
-EnvironmentFile=/etc/sysconfig/passkey.env
+EnvironmentFile=/var/soft_fido2/passkey.env
 
 [Install]
 RequiredBy=basic.target

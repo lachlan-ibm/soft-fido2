@@ -234,6 +234,18 @@ sudo modprobe vhci-hcd
 usbip attach -r 127.0.0.1 -b <bus_id, 1-1.1>
 ```
 
+# Python / UHID
+Requires
+- UHID
+- Python3
+
+Users must set the `FIDO_HOME` environment property. This should be a directory which will contain
+encrypted passkey files.
+
+Device can be started by running the module
+```
+python -m soft_fido2
+```
 # Rust
 
 ## Not yet implemented

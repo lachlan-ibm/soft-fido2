@@ -1,0 +1,39 @@
+name: deploy-gh-pages
+
+# Only run this when the master branch changes
+on:
+  push:
+    branches:
+    - stable
+
+# This job installs dependencies, builds the project's doc, and pushes it to `gh-pages`
+jobs:
+  deploy-gh-pages:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    # Install dependencies
+    - name: Set up Python 3.9
+      uses: actions/setup-python@v3
+      with:
+        python-version: 3.9
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    # Build the doc 
+    - name: Build the project
+      run: |
+        python -m build
+
+    # Push to pypi
+    - name: Publish python module
+      run: |
+        python -m build
+        twine upload --verbose dist/* -u $PYPI_API_USER -p $PYPI_API_KEY
+      env:
+        PYPI_API_USER: ${{ secrets.PYPI_API_USER }}
+        PYPI_API_KEY: ${{ secrets.PYPI_API_KEY }}
+      if: github.ref == 'refs/heads/stable'
