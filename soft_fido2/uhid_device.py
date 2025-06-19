@@ -9,7 +9,6 @@ from enum import Enum
 
 # Assisted by watsonx Code Assistant 
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(message)s')
 
 # Hey StackOverflow !
 class bcolors:
@@ -439,13 +438,7 @@ class UserDevice(threading.Thread):
                 try:
                     while self.pending.qsize() > 0:
                         inData = self.pending.get(True, 0.00001) #10ns
-                        logging.debug(f"inData: {inData[:4]}")
-                        logging.debug(f"{inData[0]}")
-                        logging.debug(f"{inData[0] == 0}")
-                        #if inData[0] == 0 and self.pending.qsize() > 0: #assigned cid
-                        #    logging.debug("adding report count")
-                        #    inData = self.pending.qsize().to_bytes() + inData
-                        ev = UHIDInput2Event(ev_len=64, data=inData) #.ljust(4096, b'\x00')
+                        ev = UHIDInput2Event(ev_len=64, data=inData)
                         inBytes = ev.pack()
                         self.log_received_bytes(inBytes, io_type="OUT")
                         n = os.write(fd, bytearray(inBytes))
@@ -453,7 +446,7 @@ class UserDevice(threading.Thread):
                             raise RuntimeError(f"invalid write length {n} != {len(ev.pack())}")
                         else:
                             logging.debug("Event sent!")
-                        logging.debug(f"{self.pending.qsize()} events left in the que")
+                        logging.debug(f"{self.pending.qsize()} events left in the queue")
                 except queue.Empty:
                     logging.debug("Could not get output event, not sending anything.")
                 if not self.interrupt:

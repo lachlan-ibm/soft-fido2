@@ -35,8 +35,8 @@ class KeyUtils(object):
 
     @classmethod
     def load_ec_key(cls, key):
-        c = {   ec.SECP256R1().name: ec.SECP256R1,
-                ec.SECP521R1().name: ec.SECP521R1
+        c = {   ec.SECP256R1.name: ec.SECP256R1,
+                ec.SECP521R1.name: ec.SECP521R1
             }.get(key.get('c'))()
         pk = ec.derive_private_key(key.get('pv'), c)
         return KeyPair(pk, pk.public_key())
@@ -51,14 +51,12 @@ class KeyUtils(object):
     @classmethod
     def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, ecdh=False):
         if isinstance(publicKey, rsa.RSAPublicKey):
-            if isinstance(alg, hashes.SHA256):
-                return -257
-            if isinstance(alg, hashes.SHA384):
-                return -258
-            elif isinstance(alg, hashes.SHA512):
-                return -259
-            elif isinstance(alg, hashes.SHA1):
-                return -65535
+            return {
+                hashes.SHA1: -65535,
+                hashes.SHA256: -257,
+                hashes.SHA384: -258,
+                hashes.SHA512: -259,
+            }.get(alg, 0)
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             if isinstance(alg, hashes.SHA256):
                 return -7 if ecdh == False else -25
@@ -74,9 +72,9 @@ class KeyUtils(object):
     def get_cose_key(cls, publicKey, alg, ecdh=False):
         if isinstance(publicKey, rsa.RSAPublicKey):
             return {1: 3,
-                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                     -1: cls._long_to_bytes(publicKey.public_numbers().n),
-                     -2: cls._long_to_bytes(publicKey.public_numbers().e)
+                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                   -1: cls._long_to_bytes(publicKey.public_numbers().n),
+                   -2: cls._long_to_bytes(publicKey.public_numbers().e)
                  }
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             if ecdh == True:
@@ -87,21 +85,20 @@ class KeyUtils(object):
                        -3: cls._long_to_bytes(publicKey.public_numbers().y)
                     }
             return {1: 2,
-                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                     -1: 1,
-                     -2: cls._long_to_bytes(publicKey.public_numbers().x),
-                     -3: cls._long_to_bytes(publicKey.public_numbers().y)
+                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                   -1: 1,
+                   -2: cls._long_to_bytes(publicKey.public_numbers().x),
+                   -3: cls._long_to_bytes(publicKey.public_numbers().y)
                  }
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             return {1: 6,
-                      3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                     -1: 6,
-                     -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
+                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                   -1: 6,
+                   -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
                                                   format=serialization.PublicFormat.Raw)
                  }
         else:
             raise Exception("Unsupported public key algorithm")
-
 
     @classmethod
     def update_passkey(cls, resCred, pinHash, passkeyFilename):

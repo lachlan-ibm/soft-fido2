@@ -1,4 +1,4 @@
-from setuptools import find_packages, setup, Command
+from setuptools import setup, Command
 import os
 
 from pathlib import Path
@@ -31,8 +31,8 @@ if BUILD_ID == 0:
 
 setup(
     name='soft_fido2',
-    version='0.4.%s' % BUILD_ID,
-    description='Software based FIDO2 Authenticator',
+    version='0.3.%s' % BUILD_ID,
+    description='Software FIDO2 Passkey Authenticator',
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
