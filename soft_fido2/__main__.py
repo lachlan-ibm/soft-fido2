@@ -1,5 +1,17 @@
-from .passkey_device import CTAP2HIDevice
+#!/bin/python
 import logging, sys, os, time
+try:
+    from .passkey_device import CTAP2HIDevice
+except:
+    try:
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from passkey_device import CTAP2HIDevice
+    except Exception as e:
+        logging.debug("Module load error")
+        logging.exception(e)
+        raise e
+
+
 if os.environ.get("FIDO_HOME") == None:
     sys.exit(1)
 logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')

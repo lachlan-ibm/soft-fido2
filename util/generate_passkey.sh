@@ -32,7 +32,7 @@ d = {'ca': pem.public_bytes(encoding=serialization.Encoding.DER),
              'c': kp.get_private().curve.name},
      'seed': base64.urlsafe_b64encode(secrets.token_bytes(32))
 }
-KeyUtils._save_passkey(d, passkey, pinHash)
+KeyUtils._save_passkey(d, pinHash, passkey)
 EOF
 )
 
