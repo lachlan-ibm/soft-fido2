@@ -450,9 +450,10 @@ class Fido2Authenticator(object):
             sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
         elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
             sig = keyPair.get_private().sign(toSign)
-
         else:
             raise Exception("Unsupported key type")
+
+        result[u"sig"] = sig
 
         #Maybe add X5c
         selfAttestation = True if 'self' in atteStmtFmt else False
@@ -473,8 +474,6 @@ class Fido2Authenticator(object):
                                               aaguid=self.get_aaguid(hexString=False))
             # Final trust chain to add to AttesationObject
             result['x5c'] = [CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate)]
-
-        result[u"sig"] = sig
         return result
 
     def build_fido_u2f_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):

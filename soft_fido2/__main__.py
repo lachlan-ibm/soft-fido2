@@ -14,9 +14,10 @@ except:
 
 if os.environ.get("FIDO_HOME") == None:
     sys.exit(1)
-logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')
-logging.basicConfig(filename=logPath, filemode='a', level=logging.DEBUG, format='%(message)s')
+#logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')
+logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 logging.debug("Starting the EyeBeeKey Passkey UHID Service")
+print("Starting the EyeBeeKey Passkey UHID Service")
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
 while udev.is_alive():
