@@ -14,9 +14,13 @@ except:
 
 if os.environ.get("FIDO_HOME") == None:
     sys.exit(1)
+ll = logging.INFO
+if "SOFT_FIDO2_DEBUG_LEVEL" in os.environ:
+    ll = os.environ.get("SOFT_FIDO2_DEBUG_LEVEL")
+
 #logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')
-logging.basicConfig(level=logging.DEBUG, format='%(message)s')
-logging.debug("Starting the EyeBeeKey Passkey UHID Service")
+logging.basicConfig(level=ll, format='%(message)s')
+logging.info("Starting the EyeBeeKey Passkey UHID Service")
 print("Starting the EyeBeeKey Passkey UHID Service")
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
