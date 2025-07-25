@@ -157,6 +157,14 @@ class Authenticator(object):
             return None, None
         ca = cls._open_keys.get(cid)
         kp = KeyPair.generate_ecdsa()
+        resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds') #
+        # Check for existing rpID:userID
+        if resCreds:
+            for i, cred in enumerate(resCreds):
+                if next(iter(cred)) == rp['id'] and resCreds[i]['user'] == user['id']:
+                    colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
+                                 msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
+                    return None, None
         authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca.get('kp'), 
                                             caCert=ca.get('pem'), fKey=ca.get('fKey'))
         credId = authenticator.get_credential_id(kp)
