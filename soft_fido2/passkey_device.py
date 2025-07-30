@@ -160,8 +160,8 @@ class Authenticator(object):
         resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds') #
         # Check for existing rpID:userID
         if resCreds:
-            for i, cred in enumerate(resCreds):
-                if next(iter(cred)) == rp['id'] and resCreds[i]['user'] == user['id']:
+            for cred in resCreds:
+                if rp['id'] in cred.keys() and cred['user'] == user['id']:
                     colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
                                  msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
                     return None, None
