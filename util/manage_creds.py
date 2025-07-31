@@ -30,11 +30,13 @@ print(f"Passkey {passkey} in {os.environ.get("FIDO_HOME")} "\
 newCreds = []
 prompt = "Remove credential for user {} on {}? Y:[N]"
 for cred in resCreds:
-    rpID = next(iter(cred))
-    rp, userID = cred[rpID], cred['user']
-    print("\nCredential for user \"{}\" on \"{}\"\n{}".format(userID, rpID, rp))
-    rsp = input(prompt.format(userID, rpID))
-    if rsp.upper() != 'Y':
-        newCreds += [cred]
+    for k, v in cred.items():
+        if k != 'user': #rpID
+            rpID = k
+            rp, userID = cred[rpID], cred['user']
+            print("\nCredential for user \"{}\" on \"{}\"\n{}".format(userID, rpID, rp))
+            rsp = input(prompt.format(userID, rpID))
+            if rsp.upper() != 'Y':
+                newCreds += [cred]
 d['res_creds'] = newCreds
 KeyUtils._save_passkey(d, pinHash, passkey)
