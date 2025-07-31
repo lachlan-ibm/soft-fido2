@@ -16,7 +16,11 @@ digest = hashes.Hash(hashes.SHA256())
 digest.update(pin.encode())
 pinHash = digest.finalize()[:16]
 
-d = KeyUtils._load_passkey(pinHash, passkey) #Throws if invalid
+try:
+    d = KeyUtils._load_passkey(pinHash, passkey) #Throws if invalid
+except Exception as e:
+    print("Pin is invalid or passkey does not exist")
+    exit(1)
 ca = d['ca']
 pk = d['pk']
 seed = d['seed']
