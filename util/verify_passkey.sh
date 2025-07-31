@@ -1,9 +1,9 @@
 #!/bin/bash
 
 #Read password/pin
-echo -n "Pin [0000]: "
+echo -n "Pin [00000000]: "
 read -s READ_PIN
-PIN="${READ_PIN:-"0000"}"
+PIN="${READ_PIN:-"00000000"}"
 #Get file name
 echo -n -e "\nPasskey filename [default]: "
 read READ_PASSKEY
