@@ -267,7 +267,7 @@ class CBORCommand(object):
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
         # Length of the incoming CBOR message (total).
-        self.length = int.from_bytes(ba[0:2])
+        self.length = int.from_bytes(ba[0:2])-1
         # Request buffer. This stores the incoming CBOR message and grows until all segments have been received
         self.request = ba[3:]
         # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
