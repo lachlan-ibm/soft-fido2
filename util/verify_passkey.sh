@@ -27,4 +27,8 @@ resCreds = d.get('res_creds', [])
 print("Resident creds: {}".format(resCreds))
 EOF
 )
-echo "Passkey $PASSKEY.passkey in $FIDO2_DIR can be validated with the provided pin! :)"
+if [[ $? == 0 ]]; then
+    echo "Passkey $PASSKEY.passkey in $FIDO2_DIR can be validated with the provided pin! :)"
+else
+    echo "Passkey $PASSKEY.passkey in $FIDO2_DIR cannot be validated with the provided pin! :("
+fi
