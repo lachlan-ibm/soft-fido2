@@ -1,8 +1,14 @@
 #!/bin/bash
 
 #Read password/pin
-echo -n "Pin [0000]: "
+echo -n "Pin [00000000]: "
 read -s READ_PIN
+READ_PIN="${READ_PIN:-"00000000"}"
+if [[ ${#READ_PIN} -lt 8 ]]; then
+        echo -e "\nMinimum pin length (8) not met"
+        exit 1
+fi
+
 #Get file name
 echo -n -e "\nPasskey filename [default]: "
 read READ_PASSKEY
@@ -11,7 +17,7 @@ FIDO2_DIR="$HOME/.fido2"
 AUTHENTICATOR_FILE="$HOME/.fido2/$PASSKEY.passkey"
 mkdir -p $FIDO2_DIR
 
-echo -e "${READ_PIN:-"0000"}\n$AUTHENTICATOR_FILE" | python <(cat <<EOF
+echo -e "$READ_PIN\n$AUTHENTICATOR_FILE" | python <(cat <<EOF
 import sys, secrets, base64
 import cbor2 as cbor
 from cryptography import x509
