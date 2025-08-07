@@ -157,6 +157,14 @@ class Authenticator(object):
             return None, None
         ca = cls._open_keys.get(cid)
         kp = KeyPair.generate_ecdsa()
+        resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds') #
+        # Check for existing rpID:userID
+        if resCreds:
+            for cred in resCreds:
+                if rp['id'] in cred.keys() and cred['user'] == user['id']:
+                    colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
+                                 msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
+                    return None, None
         authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca.get('kp'), 
                                             caCert=ca.get('pem'), fKey=ca.get('fKey'))
         credId = authenticator.get_credential_id(kp)
@@ -259,7 +267,7 @@ class CBORCommand(object):
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
         # Length of the incoming CBOR message (total).
-        self.length = int.from_bytes(ba[0:2])
+        self.length = int.from_bytes(ba[0:2])-1
         # Request buffer. This stores the incoming CBOR message and grows until all segments have been received
         self.request = ba[3:]
         # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
