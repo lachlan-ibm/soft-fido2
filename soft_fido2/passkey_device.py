@@ -401,7 +401,6 @@ class CBORCommand(object):
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
-        print("marco")
         result = {
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
