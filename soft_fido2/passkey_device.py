@@ -2,7 +2,7 @@
 # IBM Confidential
 # Assisted by watsonx Code Assistant
 
-import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback, logging
+import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback, logging, math
 import cbor2 as cbor
 from enum import Enum, IntEnum
 from cryptography import x509
@@ -39,17 +39,54 @@ class Authenticator(object):
     generate a new credential.
     '''
 
+    _exp_time = 30
+
     _open_keys = {}
+
+    _watchdog = None
+    _handler = None
     _lock = multiprocessing.Lock()
+    _thread_lock = threading.Lock()
 
     _pin_token_kp = None
     _pin_retry = 5
 
     def __new__(cls):
+        cls._watchdog = threading.Thread(target=cls._token_expiry_check)
+        cls._watchdog.start()
         cls._lock.acquire()
         if cls._pin_token_kp == None:
             cls._pin_token_kp = KeyPair.generate_ecdsa() #P-256 key, cose key type -25
         cls._lock.release()
+
+    @classmethod
+    def _handle_incoming_token(cls, cid, seed, ca, kp, passkeyFile, pinHash):
+        cls._thread_lock.acquire()
+        cls._open_keys[cid] = {
+                                'fKey': Fernet(seed),
+                                'pem': ca,
+                                'kp': kp,
+                                'file': passkeyFile,
+                                'ph': pinHash,
+                                'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
+                            }
+        cls._thread_lock.release()
+
+    @classmethod
+    def _token_expiry_check(cls):
+        '''
+        Expire in-memory passkeys handled by open CIDs after a short duration since use for authentication as they would no longer be used
+        '''
+        while True:
+            time.sleep(0.005)
+            cls._thread_lock.acquire()
+            cid_list = list(cls._open_keys.keys())
+            for cid in cid_list:
+                if math.floor(time.time() - cls._open_keys[cid]["tStart"]) == cls._exp_time:
+                    cls._open_keys.pop(cid)
+                    colour_print(colour=bcolors.FAIL, component='Authenticator_token_expiry_check',
+                                 msg='CID {} has expired!\nExisting tokens: {}'.format(cid, cls._open_keys))
+            cls._thread_lock.release()
 
     @classmethod
     def _validate_pin(cls, pinHash, cid):
@@ -73,7 +110,7 @@ class Authenticator(object):
             return None
         for maybeKeyFile in os.listdir(baseDir):
             if not maybeKeyFile.endswith('.passkey'):
-                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
+                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin',
                              msg='{} has invalid file type'.format(maybeKeyFile))
                 continue
             passkeyFile = None
@@ -87,14 +124,16 @@ class Authenticator(object):
                 seed = passkey.get('seed')
                 cls._pin_retry = 5 #Reset the counter
                 pinAuthToken = secrets.token_bytes(32)
-                cls._open_keys[cid] = {
-                            'fKey': Fernet(seed),
-                            'pem': ca,
-                            'kp': kp,
-                            'file': passkeyFile,
-                            'ph': pinHash
-                        }
-                return pinAuthToken
+
+                if cid in cls._open_keys:
+                    colour_print(colour=bcolors.FAIL, component='Authenticator_validate_pin',
+                                 msg='CID {} already exists in memory!'.format(cid))
+                else:
+                    cls._handler = threading.Thread(target=cls._handle_incoming_token, args=(cid, seed, ca, kp, passkeyFile, pinHash,))
+                    cls._handler.start()
+                    cls._handler.join()
+                    return pinAuthToken
+                return None
             except Exception as e:
                 colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
                              msg='Something bad happened:\n{}'.format(e))
@@ -293,14 +332,14 @@ class CBORCommand(object):
                     msg="request is segmented, wait for the whole message")
         else: #We have the whole message
             self.response = self.unpack()
-            dump_bytes(self.response, colour=bcolors.OKPINK, 
+            dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.__init__', msg='CTAP response')
 
     def append_segment(self, seg_buf):
         self.request += seg_buf
         if len(self.request) >= self.length:
             self.response = self.unpack()
-            dump_bytes(self.response, colour=bcolors.OKPINK, 
+            dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.append_segment', msg='CTAP response')
         else:
             self.request_segment += 1
@@ -338,6 +377,7 @@ class CBORCommand(object):
 
     def _client_pin(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
+
         pin_sub_cmds = { 
                       1: Authenticator.get_pin_retries,
                       2: Authenticator.get_pin_cose_key,
@@ -361,6 +401,7 @@ class CBORCommand(object):
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
+        print("marco")
         result = {
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
