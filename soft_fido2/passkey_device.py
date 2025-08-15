@@ -44,9 +44,7 @@ class Authenticator(object):
     _open_keys = {}
 
     _watchdog = None
-    _handler = None
     _lock = multiprocessing.Lock()
-    _thread_lock = threading.Lock()
 
     _pin_token_kp = None
     _pin_retry = 5
@@ -60,33 +58,20 @@ class Authenticator(object):
         cls._lock.release()
 
     @classmethod
-    def _handle_incoming_token(cls, cid, seed, ca, kp, passkeyFile, pinHash):
-        cls._thread_lock.acquire()
-        cls._open_keys[cid] = {
-                                'fKey': Fernet(seed),
-                                'pem': ca,
-                                'kp': kp,
-                                'file': passkeyFile,
-                                'ph': pinHash,
-                                'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
-                            }
-        cls._thread_lock.release()
-
-    @classmethod
     def _token_expiry_check(cls):
         '''
         Expire in-memory passkeys handled by open CIDs after a short duration since use for authentication as they would no longer be used
         '''
         while True:
             time.sleep(0.005)
-            cls._thread_lock.acquire()
+            cls._lock.acquire()
             cid_list = list(cls._open_keys.keys())
             for cid in cid_list:
                 if math.floor(time.time() - cls._open_keys[cid]["tStart"]) == cls._exp_time:
                     cls._open_keys.pop(cid)
                     colour_print(colour=bcolors.FAIL, component='Authenticator_token_expiry_check',
                                  msg='CID {} has expired!\nExisting tokens: {}'.format(cid, cls._open_keys))
-            cls._thread_lock.release()
+            cls._lock.release()
 
     @classmethod
     def _validate_pin(cls, pinHash, cid):
@@ -129,9 +114,16 @@ class Authenticator(object):
                     colour_print(colour=bcolors.FAIL, component='Authenticator_validate_pin',
                                  msg='CID {} already exists in memory!'.format(cid))
                 else:
-                    cls._handler = threading.Thread(target=cls._handle_incoming_token, args=(cid, seed, ca, kp, passkeyFile, pinHash,))
-                    cls._handler.start()
-                    cls._handler.join()
+                    cls._lock.acquire()
+                    cls._open_keys[cid] = {
+                                            'fKey': Fernet(seed),
+                                            'pem': ca,
+                                            'kp': kp,
+                                            'file': passkeyFile,
+                                            'ph': pinHash,
+                                            'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
+                                        }
+                    cls._lock.release()
                     return pinAuthToken
                 return None
             except Exception as e:
@@ -421,11 +413,15 @@ class CBORCommand(object):
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
+        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams'), (0x08, 'pinAuth')]:
             if not prop[0] in req.keys():
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
+                if prop[0] == 0x08:
+                    Authenticator._lock.acquire()
+        if 0x08 not in req.keys():
+            Authenticator._lock.release()
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
@@ -446,11 +442,15 @@ class CBORCommand(object):
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
+        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash'), (0x06, 'pinAuth')]:
             if not prop[0] in req:
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
+                if prop[0] == 0x06:
+                    Authenticator._lock.acquire()
+        if 0x06 not in req.keys():
+            Authenticator._lock.release()
         credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
