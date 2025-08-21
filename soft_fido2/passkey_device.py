@@ -8,19 +8,19 @@ from enum import Enum, IntEnum
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.fernet import Fernet
-try:
-    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from soft_fido2.key_pair import KeyPair, KeyUtils
-    from soft_fido2.authenticator import Fido2Authenticator
-    from soft_fido2.cert_utils import CertUtils
-except ImportError:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from key_pair import KeyPair, KeyUtils
-    from authenticator import Fido2Authenticator
-    from cert_utils import CertUtils
+# try:
+#     from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+#     from soft_fido2.key_pair import KeyPair, KeyUtils
+#     from soft_fido2.authenticator import Fido2Authenticator
+#     from soft_fido2.cert_utils import CertUtils
+# except ImportError:
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+from key_pair import KeyPair, KeyUtils
+from authenticator import Fido2Authenticator
+from cert_utils import CertUtils
 
 #max usb data frame size
 MAX_DATA_FRAME = 64
@@ -121,6 +121,7 @@ class Authenticator(object):
                                             'kp': kp,
                                             'file': passkeyFile,
                                             'ph': pinHash,
+                                            'pinAuth': pinAuthToken,
                                             'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
                                         }
                     cls._lock.release()
@@ -172,11 +173,14 @@ class Authenticator(object):
         sharedSecret = cls.decapsulate(platform_cose_key)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
                      msg='shared secret: {};'.format(sharedSecret))
-        decryptor = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16))).decryptor()
+        cipher = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16)))
+        decryptor = cipher.decryptor()
         pin_hash = decryptor.update(pin_hash_enc) + decryptor.finalize()
         pinAuthToken = cls._validate_pin(pin_hash, cid)
         if pinAuthToken != None:
-            return {2: pinAuthToken}
+            encryptor = cipher.encryptor()
+            pinAuthTokenEnc = encryptor.update(pinAuthToken) + encryptor.finalize()
+            return {2: pinAuthTokenEnc}
         return None
 
 
@@ -367,6 +371,27 @@ class CBORCommand(object):
             self.response = self.response[num_bytes:]
         return seg, seg_num
 
+    def _verify_pin_token(self, clientDataHash, pinUvAuthParam, result):
+        if pinUvAuthParam is not None:
+            Authenticator._lock.acquire()
+            # Find CID in open passkeys and then attempt ti acquire pinUvAuthToken
+            open_key = Authenticator._open_keys.get(self.cid, {})
+            pinAuth = open_key.get('pinAuth')
+            Authenticator._lock.release()
+            # Verify token using client data hash
+            h = hmac.HMAC(pinAuth, hashes.SHA256())
+            h.update(clientDataHash)
+            sig = h.finalize()
+            if pinUvAuthParam != sig[:16]: # Passkey cannot be validated if the first 16 bytes of signature doesn't match pinUvAuthParam
+                self.bcnt = len(result)
+                self.response_ready = True
+                return False
+        else:
+            self.bcnt = len(result)
+            self.response_ready = True
+            return False
+        return True
+
     def _client_pin(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
 
@@ -418,13 +443,12 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
-                if prop[0] == 0x08:
-                    Authenticator._lock.acquire()
-        if 0x08 not in req.keys():
-            Authenticator._lock.release()
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        # Request and validate pin-auth
+        if not self._verify_pin_token(req.get(0x01), req.get(0x08), result):
+            return result
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if authData and attStmt:
             rsp = {
                 0x01: 'packed', #fmt
@@ -447,13 +471,12 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
-                if prop[0] == 0x06:
-                    Authenticator._lock.acquire()
-        if 0x06 not in req.keys():
-            Authenticator._lock.release()
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        # Request and validate pin-auth
+        if not self._verify_pin_token(req.get(0x02), req.get(0x06), result):
+            return result
         credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if credential and authData and signature:
             rsp = {
                     0x01: credential,
