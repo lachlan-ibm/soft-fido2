@@ -10,17 +10,17 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.fernet import Fernet
-# try:
-#     from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-#     from soft_fido2.key_pair import KeyPair, KeyUtils
-#     from soft_fido2.authenticator import Fido2Authenticator
-#     from soft_fido2.cert_utils import CertUtils
-# except ImportError:
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-from key_pair import KeyPair, KeyUtils
-from authenticator import Fido2Authenticator
-from cert_utils import CertUtils
+try:
+    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from soft_fido2.key_pair import KeyPair, KeyUtils
+    from soft_fido2.authenticator import Fido2Authenticator
+    from soft_fido2.cert_utils import CertUtils
+except ImportError:
+    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from key_pair import KeyPair, KeyUtils
+    from authenticator import Fido2Authenticator
+    from cert_utils import CertUtils
 
 #max usb data frame size
 MAX_DATA_FRAME = 64
