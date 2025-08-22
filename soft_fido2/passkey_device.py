@@ -2,13 +2,13 @@
 # IBM Confidential
 # Assisted by watsonx Code Assistant
 
-import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback, logging
+import base64, datetime, multiprocessing, os, sys, random, queue, threading, time, secrets, traceback, logging, math
 import cbor2 as cbor
 from enum import Enum, IntEnum
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.fernet import Fernet
 try:
     from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
@@ -39,17 +39,39 @@ class Authenticator(object):
     generate a new credential.
     '''
 
+    _exp_time = 30
+
     _open_keys = {}
+
+    _watchdog = None
     _lock = multiprocessing.Lock()
 
     _pin_token_kp = None
     _pin_retry = 5
 
     def __new__(cls):
+        cls._watchdog = threading.Thread(target=cls._token_expiry_check)
+        cls._watchdog.start()
         cls._lock.acquire()
         if cls._pin_token_kp == None:
             cls._pin_token_kp = KeyPair.generate_ecdsa() #P-256 key, cose key type -25
         cls._lock.release()
+
+    @classmethod
+    def _token_expiry_check(cls):
+        '''
+        Expire in-memory passkeys handled by open CIDs after a short duration since use for authentication as they would no longer be used
+        '''
+        while True:
+            time.sleep(0.005)
+            cls._lock.acquire()
+            cid_list = list(cls._open_keys.keys())
+            for cid in cid_list:
+                if math.floor(time.time() - cls._open_keys[cid]["tStart"]) == cls._exp_time:
+                    cls._open_keys.pop(cid)
+                    colour_print(colour=bcolors.FAIL, component='Authenticator_token_expiry_check',
+                                 msg='CID {} has expired!\nExisting tokens: {}'.format(cid, cls._open_keys))
+            cls._lock.release()
 
     @classmethod
     def _validate_pin(cls, pinHash, cid):
@@ -73,7 +95,7 @@ class Authenticator(object):
             return None
         for maybeKeyFile in os.listdir(baseDir):
             if not maybeKeyFile.endswith('.passkey'):
-                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
+                colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin',
                              msg='{} has invalid file type'.format(maybeKeyFile))
                 continue
             passkeyFile = None
@@ -87,14 +109,24 @@ class Authenticator(object):
                 seed = passkey.get('seed')
                 cls._pin_retry = 5 #Reset the counter
                 pinAuthToken = secrets.token_bytes(32)
-                cls._open_keys[cid] = {
-                            'fKey': Fernet(seed),
-                            'pem': ca,
-                            'kp': kp,
-                            'file': passkeyFile,
-                            'ph': pinHash
-                        }
-                return pinAuthToken
+
+                if cid in cls._open_keys:
+                    colour_print(colour=bcolors.FAIL, component='Authenticator_validate_pin',
+                                 msg='CID {} already exists in memory!'.format(cid))
+                else:
+                    cls._lock.acquire()
+                    cls._open_keys[cid] = {
+                                            'fKey': Fernet(seed),
+                                            'pem': ca,
+                                            'kp': kp,
+                                            'file': passkeyFile,
+                                            'ph': pinHash,
+                                            'pinAuth': pinAuthToken,
+                                            'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
+                                        }
+                    cls._lock.release()
+                    return pinAuthToken
+                return None
             except Exception as e:
                 colour_print(colour=bcolors.WARNING, component='Authenticator_validate_pin', 
                              msg='Something bad happened:\n{}'.format(e))
@@ -141,11 +173,14 @@ class Authenticator(object):
         sharedSecret = cls.decapsulate(platform_cose_key)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
                      msg='shared secret: {};'.format(sharedSecret))
-        decryptor = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16))).decryptor()
+        cipher = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16)))
+        decryptor = cipher.decryptor()
         pin_hash = decryptor.update(pin_hash_enc) + decryptor.finalize()
         pinAuthToken = cls._validate_pin(pin_hash, cid)
         if pinAuthToken != None:
-            return {2: pinAuthToken}
+            encryptor = cipher.encryptor()
+            pinAuthTokenEnc = encryptor.update(pinAuthToken) + encryptor.finalize()
+            return {2: pinAuthTokenEnc}
         return None
 
 
@@ -293,14 +328,14 @@ class CBORCommand(object):
                     msg="request is segmented, wait for the whole message")
         else: #We have the whole message
             self.response = self.unpack()
-            dump_bytes(self.response, colour=bcolors.OKPINK, 
+            dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.__init__', msg='CTAP response')
 
     def append_segment(self, seg_buf):
         self.request += seg_buf
         if len(self.request) >= self.length:
             self.response = self.unpack()
-            dump_bytes(self.response, colour=bcolors.OKPINK, 
+            dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.append_segment', msg='CTAP response')
         else:
             self.request_segment += 1
@@ -336,8 +371,30 @@ class CBORCommand(object):
             self.response = self.response[num_bytes:]
         return seg, seg_num
 
+    def _verify_pin_token(self, clientDataHash, pinUvAuthParam, result):
+        if pinUvAuthParam is not None:
+            Authenticator._lock.acquire()
+            # Find CID in open passkeys and then attempt ti acquire pinUvAuthToken
+            open_key = Authenticator._open_keys.get(self.cid, {})
+            pinAuth = open_key.get('pinAuth')
+            Authenticator._lock.release()
+            # Verify token using client data hash
+            h = hmac.HMAC(pinAuth, hashes.SHA256())
+            h.update(clientDataHash)
+            sig = h.finalize()
+            if pinUvAuthParam != sig[:16]: # Passkey cannot be validated if the first 16 bytes of signature doesn't match pinUvAuthParam
+                self.bcnt = len(result)
+                self.response_ready = True
+                return False
+        else:
+            self.bcnt = len(result)
+            self.response_ready = True
+            return False
+        return True
+
     def _client_pin(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorClientPIN
+
         pin_sub_cmds = { 
                       1: Authenticator.get_pin_retries,
                       2: Authenticator.get_pin_cose_key,
@@ -381,14 +438,17 @@ class CBORCommand(object):
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
+        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams'), (0x08, 'pinAuth')]:
             if not prop[0] in req.keys():
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        # Request and validate pin-auth
+        if not self._verify_pin_token(req.get(0x01), req.get(0x08), result):
+            return result
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if authData and attStmt:
             rsp = {
                 0x01: 'packed', #fmt
@@ -406,14 +466,17 @@ class CBORCommand(object):
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
+        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash'), (0x06, 'pinAuth')]:
             if not prop[0] in req:
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 raise Exception("Missing required property %s" % prop[1])
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        # Request and validate pin-auth
+        if not self._verify_pin_token(req.get(0x02), req.get(0x06), result):
+            return result
         credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         if credential and authData and signature:
             rsp = {
                     0x01: credential,
