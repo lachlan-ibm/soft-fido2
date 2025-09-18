@@ -11,13 +11,13 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.fernet import Fernet
 try:
-    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print, DesktopNotificationPrompt
     from soft_fido2.key_pair import KeyPair, KeyUtils
     from soft_fido2.authenticator import Fido2Authenticator
     from soft_fido2.cert_utils import CertUtils
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
+    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print, DesktopNotificationPrompt
     from key_pair import KeyPair, KeyUtils
     from authenticator import Fido2Authenticator
     from cert_utils import CertUtils
@@ -49,6 +49,8 @@ class Authenticator(object):
     _pin_token_kp = None
     _pin_retry = 5
 
+    _quit = False
+
     def __new__(cls):
         cls._watchdog = threading.Thread(target=cls._token_expiry_check)
         cls._watchdog.start()
@@ -62,7 +64,7 @@ class Authenticator(object):
         '''
         Expire in-memory passkeys handled by open CIDs after a short duration since use for authentication as they would no longer be used
         '''
-        while True:
+        while not cls._quit:
             time.sleep(0.005)
             cls._lock.acquire()
             cid_list = list(cls._open_keys.keys())
@@ -259,6 +261,12 @@ class Authenticator(object):
                 continue
         return None, None, None, None
 
+    @classmethod
+    def quit(cls):
+        cls._quit = True
+        if cls._watchdog:
+            cls._watchdog.join()
+
 class CBORCommand(object):
 
     class CommandByte(Enum):
@@ -277,7 +285,9 @@ class CBORCommand(object):
     class CBORStatusCode(IntEnum):
         CTAP2_OK = 0x0
         CTAP1_ERR_INVALID_COMMAND = 0x01
+        CTAP1_ERR_TIMEOUT = 0x05
         CTAP2_ERR_INVALID_CBOR = 0x12
+        CTAP2_ERR_OPERATION_DENIED = 0x27
         CTAP2_ERR_PIN_INVALID = 0x31
         CTAP2_ERR_PIN_AUTH_INVALID = 0x33
         CTAP2_ERR_PUAT_REQUIRED = 0x36
@@ -549,8 +559,8 @@ class CTAP2HIDevice(UserDevice):
     #This will contain the current set of channel id's and associated state
     cids = {}
 
-    def __init__(self, devpath):
-        super().__init__(devPath=devpath)
+    def __init__(self, devpath, uts_msg_queue, stu_msg_queue):
+        super().__init__(devPath=devpath, uts_msg_queue=uts_msg_queue, stu_msg_queue=stu_msg_queue)
         self.start_time = datetime.datetime.now()
 
     def _bytes_to_str(self, b):
@@ -669,6 +679,10 @@ class CTAP2HIDevice(UserDevice):
             self.send_response_segment(cid, self.cids[cid]['cborCmd'])
 
     def ctaphid_init(self, usb_req):
+        prompt_result = DesktopNotificationPrompt.prompt_notification()
+        if prompt_result != DesktopNotificationPrompt.ACCEPT:
+            self.ctaphid_cancel(usb_req)
+            return
         cid = usb_req.data[0:4]
         cmd = usb_req.data[4:5]
         bcnt = usb_req.data[5:7]
@@ -684,7 +698,6 @@ class CTAP2HIDevice(UserDevice):
             data += int.to_bytes(i)
         dump_bytes(data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
-
         initCmd = CBORCommand(cid, None, skip_init=True)
         self.cids[assignedCID] = {'cborCmd': initCmd }
         initCmd.response = data
@@ -722,7 +735,8 @@ class CTAP2HIDevice(UserDevice):
         cid = usb_req.data[0:4]
         rsp = CBORCommand(cid, None, skip_init=True)
         rsp.response = b''
-        self.cids[cid]['cborCmd'] = rsp
+        if cid in self.cids:
+            self.cids[cid]['cborCmd'] = rsp
         self.send_response_segment(cid, rsp)
 
     def ctaphid_cancel(self, usb_req):
@@ -836,3 +850,7 @@ class CTAP2HIDevice(UserDevice):
             self.send_usb_req(b"\x01\x00",2, seqnum=usb_req.seqnum)
             pass
         return handled
+
+    def join(self):
+        super().join()
+        Authenticator.quit()
