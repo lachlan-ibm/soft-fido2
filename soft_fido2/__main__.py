@@ -2,12 +2,12 @@
 import logging, sys, os, time, queue
 try:
     from .passkey_device import CTAP2HIDevice
-    from .uhid_device import SysTrayIcon
+    from .systray_app import SysTrayIcon
 except:
     try:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from passkey_device import CTAP2HIDevice
-        from uhid_device import SysTrayIcon
+        from systray_app import SysTrayIcon
     except Exception as e:
         logging.debug("Module load error")
         logging.exception(e)
