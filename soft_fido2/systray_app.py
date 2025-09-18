@@ -2,7 +2,7 @@ import os, time, sys, subprocess, traceback
 
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QThread, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 try:
     from soft_fido2.uhid_device import QueueMessageType
 except:
@@ -144,4 +144,8 @@ class DesktopNotificationPrompt:
                 return cls.DECLINE
 
     def open_notification():
-        subprocess.Popen(['notify-send', '--app-name=soft_fido2', '--icon=info', 'soft_fido2 Authenticator', 'Starting the EyeBeeKey Passkey UHID Service']).communicate()
+        cmd = ['notify-send',
+            '--app-name=soft_fido2',
+            '--icon=info', 'soft_fido2 Authenticator',
+            'Starting the EyeBeeKey Passkey UHID Service']
+        subprocess.Popen(cmd).communicate()
