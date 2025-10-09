@@ -7,6 +7,13 @@ import os, struct, fcntl, errno, time, queue, threading, logging, re, signal, sy
 
 from enum import Enum
 
+try:
+    from soft_fido2.message_queues import QueueMessageType, MessageQueue
+    from soft_fido2.systray_app import SysTrayIcon
+except:
+    from message_queues import QueueMessageType, MessageQueue
+    from systray_app import SysTrayIcon
+
 # Assisted by watsonx Code Assistant 
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -298,12 +305,11 @@ class UserDevice(threading.Thread):
 
     #Pending input reports
     pending = queue.Queue(maxsize=100)
+    events = []
 
-    def __init__(self, uts_msg_queue, stu_msg_queue, devPath="/dev/uhid"):
+    def __init__(self, devPath="/dev/uhid"):
         super().__init__()
         self.device_path = devPath
-        self.uts_msg_queue = uts_msg_queue
-        self.stu_msg_queue = stu_msg_queue
         self.interrupt = False
         #self._stop_event = threading.Event()
         signal.signal(signal.SIGINT, self.interrupt)
@@ -351,6 +357,8 @@ class UserDevice(threading.Thread):
         ev = UHIDCloseEvent()
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
+        MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
+        MessageQueue.udev_get.put(QueueMessageType.AUTH_RESPONSE)
         return
 
     def process_output(self, event):
@@ -426,28 +434,33 @@ class UserDevice(threading.Thread):
                 try: #Poll for event
                     #logging.debug(f"os.read({fd}, {EV_MAX_SIZE})")
                     eventBytes = os.read(fd, EV_MAX_SIZE)
-                    self.log_received_bytes(eventBytes)
+                    #self.log_received_bytes(eventBytes)
                     if isinstance(eventBytes, bytes) \
                             and len(eventBytes) >= UHID_EVENT_TYPE_SIZE:
                         eventType = UHIDEventType.from_bytes(
                                         eventBytes[:UHID_EVENT_TYPE_SIZE])
-                        if eventType == UHIDEventType.OPEN:
-                            self.uts_msg_queue.put(QueueMessageType.USER_REQUEST)
-                        elif eventType == UHIDEventType.CLOSE:
-                            self.uts_msg_queue.put(QueueMessageType.AUTH_RESPONSE)
-                        self.process_event(eventType, eventBytes)
+                        thread = threading.Thread(target=self.process_event, args=(eventType, eventBytes))
+                        thread.start()
+                        self.events.append(thread)
                     else:
                         logging.error(f"Invalid event read [{eventBytes}]")
                 except BlockingIOError: #No event
                     #logging.debug("No data available (non-blocking read)")
                     pass
+                tempEvList = []
+                for ev in self.events:
+                    if not ev.is_alive():
+                        ev.join()
+                        tempEvList.append(ev)
+                for ev in tempEvList:
+                    self.events.remove(ev)
                 try:
                     # uhid device sends output to kernel
                     while self.pending.qsize() > 0:
                         inData = self.pending.get(True, 0.00001) #10ns
                         ev = UHIDInput2Event(ev_len=64, data=inData)
                         inBytes = ev.pack()
-                        self.log_received_bytes(inBytes, io_type="OUT")
+                        #self.log_received_bytes(inBytes, io_type="OUT")
                         n = os.write(fd, bytearray(inBytes))
                         if n != len(inBytes):
                             raise RuntimeError(f"invalid write length {n} != {len(ev.pack())}")
@@ -458,17 +471,12 @@ class UserDevice(threading.Thread):
                     logging.debug("Could not get output event, not sending anything.")
                 if not self.interrupt:
                     time.sleep(0.001) #poll every 10 ms
-                if self.stu_msg_queue.qsize() > 0:
-                    sysTrayMsg = self.stu_msg_queue.get()
+                if MessageQueue.notify_udev.qsize() > 0:
+                    sysTrayMsg = MessageQueue.notify_udev.get()
                     if sysTrayMsg == QueueMessageType.QUIT:
+                        MessageQueue.udev_get.put(QueueMessageType.QUIT)
                         break
         finally:
             if started:
                 self.destroy_ev(fd)
             os.close(fd)
-
-
-class QueueMessageType:
-    USER_REQUEST = 0
-    AUTH_RESPONSE = 1
-    QUIT = 2

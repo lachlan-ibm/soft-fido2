@@ -11,15 +11,17 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
 from cryptography.fernet import Fernet
 try:
+    from soft_fido2.message_queues import QueueMessageType, MessageQueue
+    from soft_fido2.systray_app import SysTrayIcon
     from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from soft_fido2.systray_app import DesktopNotificationPrompt
     from soft_fido2.key_pair import KeyPair, KeyUtils
     from soft_fido2.authenticator import Fido2Authenticator
     from soft_fido2.cert_utils import CertUtils
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+    from message_queues import QueueMessageType, MessageQueue
+    from systray_app import SysTrayIcon
     from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from systray_app import DesktopNotificationPrompt
     from key_pair import KeyPair, KeyUtils
     from authenticator import Fido2Authenticator
     from cert_utils import CertUtils
@@ -289,6 +291,7 @@ class CBORCommand(object):
         CTAP1_ERR_INVALID_COMMAND = 0x01
         CTAP1_ERR_TIMEOUT = 0x05
         CTAP2_ERR_INVALID_CBOR = 0x12
+        CTAP2_ERR_CREDENTIAL_EXCLUDED = 0x19
         CTAP2_ERR_OPERATION_DENIED = 0x27
         CTAP2_ERR_PIN_INVALID = 0x31
         CTAP2_ERR_PIN_AUTH_INVALID = 0x33
@@ -305,6 +308,7 @@ class CBORCommand(object):
     cmd = None
     ctaphid_cmd = 0
     bcnt = 0
+    pending = None
 
     def __init__(self, cid, ba, skip_init=False):
         self.cid = cid
@@ -383,8 +387,34 @@ class CBORCommand(object):
             self.response = self.response[num_bytes:]
         return seg, seg_num
 
+    @classmethod
+    def set_pending(cls, pending):
+        cls.pending = pending
+
+    def gather_user_presence(self):
+        if self.cid in Authenticator._open_keys:
+            return True
+        start_time = time.time()
+        MessageQueue.udev_get.queue.clear()
+        MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)
+        msg = None
+        worker = KeepAliveWorker(self.pending, self.cid)
+        worker.start()
+        current_time = time.time()
+        while not msg and current_time - start_time < 60:
+            time.sleep(0.002)
+            current_time = time.time()
+            if MessageQueue.udev_get.qsize() > 0:
+                msg = MessageQueue.udev_get.get()
+        worker.interrupt()
+        worker.join()
+        if msg == QueueMessageType.USER_RESPONSE_ACCEPT:
+            self.up = True
+            return True
+        return False
+
     def _verify_pin_token(self, clientDataHash, pinUvAuthParam, result):
-        if pinUvAuthParam is not None:
+        if pinUvAuthParam not in [None, b'']:
             Authenticator._lock.acquire()
             # Find CID in open passkeys and then attempt ti acquire pinUvAuthToken
             open_key = Authenticator._open_keys.get(self.cid, {})
@@ -430,6 +460,11 @@ class CBORCommand(object):
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
+        # if self.gather_user_presence() == False:
+        #     self.response = (self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()
+        #     self.bcnt = 1
+        #     self.response_ready = True
+        #     return self.response
         result = {
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
@@ -447,6 +482,11 @@ class CBORCommand(object):
 
     def _make_cred(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
+        if self.gather_user_presence() == False:
+            self.response = (self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()
+            self.bcnt = 1
+            self.response_ready = True
+            return self.response
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
@@ -458,6 +498,9 @@ class CBORCommand(object):
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         # Request and validate pin-auth
         if not self._verify_pin_token(req.get(0x01), req.get(0x08), result):
+            if self.cid in Authenticator._open_keys:
+                return result
+            result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
             return result
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
@@ -468,6 +511,8 @@ class CBORCommand(object):
                 0x03: attStmt
             }
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+        elif not authData and not attStmt:
+            result = (self.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED).to_bytes()
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -501,6 +546,14 @@ class CBORCommand(object):
         self.bcnt = len(result)
         self.response_ready = True
         return result
+
+    def handle_msg_queue(self):
+        prompt_result = SysTrayIcon.prompt_notification()
+        if prompt_result == SysTrayIcon.ACCEPT:
+            MessageQueue.udev_get.put(QueueMessageType.USER_RESPONSE_ACCEPT)
+        else:
+            MessageQueue.udev_get.put(QueueMessageType.USER_RESPONSE_REJECT)
+
 
 # Send this for every new message frame. Response contains
 class CTAPHIDInitPkt(BaseStructure):
@@ -556,52 +609,45 @@ class CTAPHIDSeqPkt(BaseStructure):
         super(CTAPHIDSeqPkt, self).__init__(**kwargs)
 
 
+class KeepAliveWorker(threading.Thread):
+
+    cid = 0xFFFFFFFF
+    not_alive = False
+    uhid = None
+
+    def __init__(self, pending, cid):
+        super().__init__()
+        self.pending = pending
+        self.cid = cid
+
+    def run(self):
+        while self.not_alive == False:
+            time.sleep(0.1)
+            colour_print(colour=bcolors.FAIL, component='KeepAliveWorker.reply_with_keepalive',
+                            msg='Thread reached timeout of 100ms before response buffer was recieved . . . sending heartbeat response')
+            #We need to reply with keep alive after 50ms this gives us some tolerance
+            #Our status is always still processing
+            rsp = CTAPHIDInitPkt(cid=int.from_bytes(self.cid),
+                                  cmd=0xBB,
+                                  bcnt=0x01,
+                                  data=b'\x02').pack()
+            self.pending.put(rsp)
+
+    def interrupt(self):
+        self.not_alive = True
+
 
 class CTAP2HIDevice(UserDevice):
     #This will contain the current set of channel id's and associated state
     cids = {}
 
-    def __init__(self, devpath, uts_msg_queue, stu_msg_queue):
-        super().__init__(devPath=devpath, uts_msg_queue=uts_msg_queue, stu_msg_queue=stu_msg_queue)
+    def __init__(self, devpath):
+        super().__init__(devPath=devpath)
         self.start_time = datetime.datetime.now()
+        CBORCommand.set_pending(self.pending)
 
     def _bytes_to_str(self, b):
         return ''.join("%02X" % x for x in b)
-
-
-    class KeepAliveWorker(object):
-
-        stop = False
-        my_thread = None
-        req = None
-        hid = None
-        start = None
-
-        def __init__(self, req, hid):
-            self.req = req
-            self.hid = hid
-
-        def reply_with_keepalive(self):
-            start = round(time.time() * 1000)
-            while self.stop == False:
-                now = round(time.time() * 1000)
-                wait_time = now - start
-                if(now >= start + 450) and self.stop == False: #If we get to 45ms, send heartbeat
-                    colour_print(colour=bcolors.FAIL, component='KeepAliveWorker.reply_with_keepalive',
-                                 msg='Thread reached timeout of {} ms before response buffer was recieved . . . sending heartbeat response'.format(wait_time))
-                    #We need to reply with keep alive after 50ms this gives us some tolerance
-                    #Our status is always still processing
-                    rsp = b'\x3B\x01\x01'
-                    self.hid.send_usb_req(rsp, len(rsp), start_frame=0xFFFFFFFF, packets=0, ep=0, direction=0, 
-                                       seqnum=self.req.seqnum)
-                    self.stop = True
-                    for idx, txn in enumerate(self.hid.pending): #If we sent a keep alive remove the transaction from the
-                        # list of pending transactions
-                        if txn.req is not None and txn.req.seqnum is not None and txn.req.seqnum == self.req.seqnum:
-                            del self.hid.pending[idx]
-                    return
-                time.sleep(5/1000) # sleep for 5 ms
-
 
     def send_response_segment(self, cid, cbor_cmd):
         rsp_data = None
@@ -659,6 +705,7 @@ class CTAP2HIDevice(UserDevice):
         cmd = usb_req.data[4:5]
         bcnt = usb_req.data[5:7]
         apdu = usb_req.data[7:]
+        print("ctaphid_msg", int.from_bytes(cmd))
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_msg', 
                     msg='cmd = {}; bcnt = {}; apdu = {}'.format(
                         self._bytes_to_str(cmd), self._bytes_to_str(bcnt), apdu))
@@ -681,10 +728,6 @@ class CTAP2HIDevice(UserDevice):
             self.send_response_segment(cid, self.cids[cid]['cborCmd'])
 
     def ctaphid_init(self, usb_req):
-        prompt_result = DesktopNotificationPrompt.prompt_notification()
-        if prompt_result != DesktopNotificationPrompt.ACCEPT:
-            self.ctaphid_cancel(usb_req)
-            return
         cid = usb_req.data[0:4]
         cmd = usb_req.data[4:5]
         bcnt = usb_req.data[5:7]
@@ -695,8 +738,8 @@ class CTAP2HIDevice(UserDevice):
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', 
                     msg='Assigning a new CID to {}'.format(self._bytes_to_str(assignedCID)))
         data = nonce + assignedCID
-        # protocol == 2; major version == 5; minor version = 1; build version = 2; flags === CAPABILITY_CBOR | CAPABILITY_NMSG
-        for i in [2, 5, 1, 2, 0x04 | 0x08]:
+        # protocol == 2; major version == 5; minor version = 1; build version = 2; flags === CAPABILITY_WINK | CAPABILITY_CBOR | CAPABILITY_NMSG
+        for i in [2, 5, 1, 2, 0x01 | 0x04 | 0x08]:
             data += int.to_bytes(i)
         dump_bytes(data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
@@ -740,6 +783,8 @@ class CTAP2HIDevice(UserDevice):
         if cid in self.cids:
             self.cids[cid]['cborCmd'] = rsp
         self.send_response_segment(cid, rsp)
+        MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
+        MessageQueue.udev_get.put(QueueMessageType.AUTH_RESPONSE)
 
     def ctaphid_cancel(self, usb_req):
         return self._ctap_ack(usb_req)
