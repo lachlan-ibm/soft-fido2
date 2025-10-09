@@ -8,6 +8,7 @@ Use at your own risk.
 ## Prerequisites:
 ### System
  * libnotify >= 0.8.7
+ * bcrypt >= 1.1
 ### Python
  * >= Python 3.7
 ### Pip modules
