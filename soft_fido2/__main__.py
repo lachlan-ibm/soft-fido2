@@ -1,5 +1,5 @@
 #!/bin/python
-import logging, sys, os, time, queue
+import logging, sys, os, time
 try:
     from .passkey_device import CTAP2HIDevice
     from .systray_app import SysTrayIcon

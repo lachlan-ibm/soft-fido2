@@ -460,11 +460,6 @@ class CBORCommand(object):
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
-        # if self.gather_user_presence() == False:
-        #     self.response = (self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()
-        #     self.bcnt = 1
-        #     self.response_ready = True
-        #     return self.response
         result = {
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
@@ -546,13 +541,6 @@ class CBORCommand(object):
         self.bcnt = len(result)
         self.response_ready = True
         return result
-
-    def handle_msg_queue(self):
-        prompt_result = SysTrayIcon.prompt_notification()
-        if prompt_result == SysTrayIcon.ACCEPT:
-            MessageQueue.udev_get.put(QueueMessageType.USER_RESPONSE_ACCEPT)
-        else:
-            MessageQueue.udev_get.put(QueueMessageType.USER_RESPONSE_REJECT)
 
 
 # Send this for every new message frame. Response contains
