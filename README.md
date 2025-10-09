@@ -254,16 +254,17 @@ encrypted passkey files.
 Virtual Passkey Device can be started by running the module as a user with sufficient permission to open
 the `/dev/uhid` device:
 ```bash
+# Root privileges are assumed
 # Give sufficient permissions to open /dev/uhid:
 # Create a rule in /etc/modules or /etc/modules-load.d so that the uhid module loads during boot
-echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
+echo 'uhid' | tee /etc/modules-load.d/uhid.conf
 # Create udev group and add user to it
-sudo groupadd udev
-sudo usermod -aG udev $USER
+groupadd udev
+usermod -aG udev $USER
 # Create udev rule with sufficient permissions
-echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' > /etc/udev/rules.d/90-uhid.rules
+echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | tee /etc/udev/rules.d/90-uhid.rules
 # Apply rule
-sudo udevadm control --reload-rules && udevadm trigger
+udevadm control --reload-rules && udevadm trigger
 # Reboot
 
 export FIDO_HOME=/opt/soft_fido2
