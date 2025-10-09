@@ -17,7 +17,7 @@ Use at your own risk.
  * cbor2 >= 4.1.2
  * PyJwt >= 0.6.1
  * PyQt6 >= 6.9.1
-### For GNOME Users (Version >= 48)
+### For GNOME Users (Tested on GNOME 48)
  * AppIndicator and KStatusNotifierItem Support (https://extensions.gnome.org/extension/615/appindicator-support/)
 
 ## Usage
