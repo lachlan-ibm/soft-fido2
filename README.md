@@ -264,7 +264,7 @@ echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' > /etc/udev/rules.d/90-uhid.rul
 sudo udevadm control --reload-rules && udevadm trigger
 # Reboot
 
-FIDO_HOME=/opt/soft_fido2
+export FIDO_HOME=/opt/soft_fido2
 mkdir -p $FIDO_HOME
 virtualenv $FIDO_HOME
 $FIDO_HOME/bin/python -m pip install --upgrade pip soft_fido2
@@ -305,13 +305,13 @@ Project can be build and installed locally using a python virtual environment.
 
 Set up a python virtual environment as follows:
 ```bash
-FIDO2_HOME="$HOME/.fido2"
-mkdir -p $FIDO2_HOME
-virtualenv $FIDO2_HOME
-$FIDO2_HOME/bin/python -m pip install --upgrade pip
-$FIDO2_HOME/bin/python -m pip install --upgrade -r dev-requirements.txt
+export FIDO_HOME="$HOME/.fido2"
+mkdir -p $FIDO_HOME
+virtualenv $FIDO_HOME
+$FIDO_HOME/bin/python -m pip install --upgrade pip
+$FIDO_HOME/bin/python -m pip install --upgrade -r dev-requirements.txt
 export GITHUB_RUN_NUMBER=9999
-$FIDO2_HOME/bin/python -m build
-$FIDO2_HOME/bin/python -m pip install --upgrade dist/soft_fido2-*-py3-none-any.whl 
-sudo FIDO2_HOME=${HOME}/.fido2 $FIDO2_HOME/bin/python -m soft_fido2
+$FIDO_HOME/bin/python -m build
+$FIDO_HOME/bin/python -m pip install --upgrade dist/soft_fido2-*-py3-none-any.whl 
+$FIDO_HOME/bin/python -m soft_fido2
 ```
