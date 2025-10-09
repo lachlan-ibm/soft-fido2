@@ -256,7 +256,7 @@ the `/dev/uhid` device:
 ```bash
 # Give sufficient permissions to open /dev/uhid:
 # Create a rule in /etc/modules or /etc/modules-load.d so that the uhid module loads during boot
-sudo echo 'uhid' > /etc/modules-load.d/uhid.conf
+echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
 # Create udev group and add user to it
 sudo groupadd udev
 sudo usermod -aG udev $USER
