@@ -6,6 +6,8 @@ known attestation types.
 Use at your own risk.
 
 ## Prerequisites:
+### System
+ * libnotify >= 0.8.7
 ### Python
  * >= Python 3.7
 ### Pip modules
@@ -13,6 +15,7 @@ Use at your own risk.
  * cryptography >= 38.0.1 
  * cbor2 >= 4.1.2
  * PyJwt >= 0.6.1
+ * PyQt6 >= 6.9.1
 
 ## Usage
 ### Command line
