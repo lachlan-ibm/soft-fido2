@@ -9,6 +9,7 @@ Use at your own risk.
 ### System
  * libnotify >= 0.8.7
  * bcrypt >= 1.1
+ * python3-virtualenv >= 20.29.1
 ### Python
  * >= Python 3.7
 ### Pip modules
@@ -258,15 +259,16 @@ the `/dev/uhid` device:
 # Give sufficient permissions to open /dev/uhid:
 # Create a rule in /etc/modules or /etc/modules-load.d so that the uhid module loads during boot
 echo 'uhid' | tee /etc/modules-load.d/uhid.conf
-# Create udev group and add user to it
+# Create udev group and add a user to it
 groupadd udev
 usermod -aG udev $USER
-# Create udev rule with sufficient permissions
+# Create udev rule for uhid access with sufficient permissions
 echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | tee /etc/udev/rules.d/90-uhid.rules
 # Apply rule
 udevadm control --reload-rules && udevadm trigger
-# Reboot
+# Reboot to load uhid module during next boot
 
+# Create systemd daemon
 export FIDO_HOME=/opt/soft_fido2
 mkdir -p $FIDO_HOME
 virtualenv $FIDO_HOME
