@@ -28,7 +28,7 @@ def _parse_attested_credential_data(auth_data: bytes):
 
 def _do_the_thing(pvtkey, pubkey, cid):
     kp = KeyPair(pvtkey, pubkey)
-    authenticator = Fido2Authenticator(key_pair=kp, cred_id=cid)
+    authenticator = Fido2Authenticator(keyPair=kp, credId=cid)
     challenge = base64.urlsafe_b64encode(os.urandom(64))
     create_credential_options = {
             "challenge": str(challenge),

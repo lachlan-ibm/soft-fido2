@@ -1,5 +1,5 @@
-
-
+# Copyrite IBM 2022, 2025
+# IBM Confidential
 
 import struct
 import cbor2 as cbor
@@ -52,8 +52,7 @@ class KeyUtils(object):
     @classmethod
     def load_ml44_key(cls, seed):
         from oqs.oqs import Signature
-        import oqs
-        ml_44: Signature = oqs.Signature("ML-KEM-44", seed)
+        ml_44: Signature = Signature("ML-KEM-44", seed)
         pubkey: bytes = ml_44.generate_keypair_seed()
         return KeyPair(ml_44, pubkey)
 
@@ -65,7 +64,7 @@ class KeyUtils(object):
                                 'c': pk.curve.name})
 
     @classmethod
-    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, ecdh=False):
+    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, eckx=False):
         if isinstance(publicKey, rsa.RSAPublicKey):
             return {
                 hashes.SHA1: -65535,
@@ -75,11 +74,11 @@ class KeyUtils(object):
             }.get(alg, 0)
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             if isinstance(alg, hashes.SHA256):
-                return -7 if ecdh == False else -25
+                return -7 if eckx == False else -25
             if isinstance(alg, hashes.SHA384):
                 return -35
             elif isinstance(alg, hashes.SHA512):
-                return -36 if ecdh == False else -26
+                return -36 if eckx == False else -26
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             return -8
         elif isinstance(publicKey, bytes): #TODO guessing poorly supported PQC
@@ -93,7 +92,14 @@ class KeyUtils(object):
         return 0
 
     @classmethod
-    def get_cose_key(cls, publicKey, alg, ecdh=False):
+    def get_cose_key(cls, publicKey, alg, eckx=False):
+        '''
+        COSE key representation of the public key
+        :param publicKey: public key interface
+        :param alg: hashing algorithm used
+        :param eckx: True if key is used for Elliptic Curve Key Exchange (modifies key type|kty)
+        :return:
+        '''
         if isinstance(publicKey, rsa.RSAPublicKey):
             return {1: 3,
                     3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
@@ -101,19 +107,12 @@ class KeyUtils(object):
                    -2: cls._long_to_bytes(publicKey.public_numbers().e)
                  }
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
-            if ecdh == True:
-                return {1: 2,
-                        3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg, ecdh),
-                       -1: 1,
-                       -2: cls._long_to_bytes(publicKey.public_numbers().x),
-                       -3: cls._long_to_bytes(publicKey.public_numbers().y)
-                    }
             return {1: 2,
-                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                   -1: 1,
-                   -2: cls._long_to_bytes(publicKey.public_numbers().x),
-                   -3: cls._long_to_bytes(publicKey.public_numbers().y)
-                 }
+                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg, eckx),
+                    -1: 1,
+                    -2: cls._long_to_bytes(publicKey.public_numbers().x),
+                    -3: cls._long_to_bytes(publicKey.public_numbers().y)
+                }
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             return {1: 6,
                     3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),

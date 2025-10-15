@@ -1,13 +1,19 @@
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+
 import os, time, sys, subprocess, traceback, shutil, threading
 
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
-from PyQt6.QtCore import QObject, QThread, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
 except:
     from message_queues import QueueMessageType, MessageQueue
 
+class WorkerSignals(QObject):
+    # Define signals as class attributes here
+    error = pyqtSignal(tuple)
 
 class Worker(QRunnable):
     def __init__(self, handle, *args, **kwargs):
@@ -15,7 +21,7 @@ class Worker(QRunnable):
         self.handle = handle
         self.args = args
         self.kwargs = kwargs
-        self.error = pyqtSignal(tuple)
+        self.signals = WorkerSignals()
 
     @pyqtSlot()
     def run(self):
@@ -24,7 +30,7 @@ class Worker(QRunnable):
         except Exception:
             traceback.print_exc()
             exctype, value = sys.exc_info()[:2]
-            self.error.emit((exctype, value, traceback.format_exc()))
+            self.signals.error.emit((exctype, value, traceback.format_exc()))
 
 
 class SysTrayIcon(QSystemTrayIcon):
@@ -56,13 +62,13 @@ class SysTrayIcon(QSystemTrayIcon):
         return {
             self.NotificationFramework.NOTIFY_SEND: NotifySend.launch_notification,
             self.NotificationFramework.QT: self._launch_notification_fallback
-            }.get(self.notification_fw)()
+            }.get(self.notification_fw, self._launch_notification_fallback)()
 
     def prompt_notification(self):
         return {
             self.NotificationFramework.NOTIFY_SEND: NotifySend.prompt_notification,
             self.NotificationFramework.QT: self._prompt_notification_fallback
-            }.get(self.notification_fw)()
+            }.get(self.notification_fw, self._prompt_notification_fallback)()
 
     def cancel_notification(self):
         NotifySend.cancel_notification()
@@ -198,7 +204,8 @@ class NotifySend:
         if cls.proc:
             cls.proc.terminate()
 
-    def launch_notification():
+    @classmethod
+    def launch_notification(cls):
         cmd = ['notify-send',
             '--app-name=soft_fido2',
             '--icon=info', 'soft_fido2 Authenticator',

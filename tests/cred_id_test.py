@@ -13,18 +13,18 @@ from soft_fido2.symmetric_key import SymmetricKey
 def test_Cred_id_Consturctor():
     u = str(uuid.uuid4()).encode()
     kp = KeyPair.generate_rsa()
-    authenticator = Fido2Authenticator(key_pair=kp, cred_id=u)
+    authenticator = Fido2Authenticator(keyPair=kp, credId=u)
     assert authenticator.get_credential_id() == u.decode(), "Cred Id does not match original"
 
 
 def test_Cred_Id_As_Encrypted_Key():
     fk = Fernet(Fernet.generate_key())
     kp = KeyPair.generate_ecdsa()
-    authenticator = Fido2Authenticator(key_pair=kp, f_key=fk)
+    authenticator = Fido2Authenticator(keyPair=kp, fKey=fk)
 
     credIdBytes = authenticator._get_credential_id_bytes(kp)
     credId = authenticator.get_credential_id().encode()
-    new_authenticator = Fido2Authenticator(cred_id=credId, f_key=fk)
+    new_authenticator = Fido2Authenticator(credId=credId, fKey=fk)
 
     original_key = kp.get_private_bytes()
     assert new_authenticator.kp, "Authenticator keypair is None"
@@ -36,14 +36,14 @@ def test_Cred_Id_As_Encrypted_Key():
 def test_CredId_As_Symmetric_Key():
     seed = SymmetricKey.generate_key()
     kp = KeyPair.generate_ecdsa()
-    authenticator = Fido2Authenticator(key_pair=kp, s_key=SymmetricKey(seed))
+    authenticator = Fido2Authenticator(keyPair=kp, sKey=SymmetricKey(seed))
 
 def test_CredId_migrate_fernet_to_symkey():
     seed = SymmetricKey.generate_key()
     sk = SymmetricKey(seed)
     fk = Fernet(seed)
     kp = KeyPair.generate_ecdsa()
-    authenticator = Fido2Authenticator(key_pair=kp, f_key=fk)
+    authenticator = Fido2Authenticator(keyPair=kp, fKey=fk)
     assert authenticator.kp, "Authenticatior Key Pair not found"
     credId = authenticator.get_credential_id(kp)
     newCredId = CredentialIdMigrator.migrate_credential_id(credId, seed=base64.urlsafe_b64decode(seed))
@@ -55,7 +55,7 @@ def test_CredId_migrate_fernet_to_symkey():
     print("NEW :: ", new_kp.get_private_bytes())
     assert authenticator.kp.get_private_bytes() == new_kp.get_private_bytes(), "Private keys are different"
 
-    new_authenticator = Fido2Authenticator(cred_id=newCredId.encode(), s_key=sk)
+    new_authenticator = Fido2Authenticator(credId=newCredId.encode(), sKey=sk)
     assert new_authenticator.kp, "Authenticatior Key Pair not found"
     print("BLA :: ", new_authenticator.kp.get_private_bytes())
     assert new_authenticator.kp.get_private_bytes() == authenticator.kp.get_private_bytes(), "Authenticator key pairs are different"

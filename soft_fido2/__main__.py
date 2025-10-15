@@ -1,5 +1,8 @@
 #!/bin/python
-import logging, sys, os, time
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+
+import logging, sys, os
 try:
     from .passkey_device import CTAP2HIDevice
     from .systray_app import SysTrayIcon

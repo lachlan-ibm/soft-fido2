@@ -1,3 +1,6 @@
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+
 import hashlib, json, struct, re, base64, binascii, sys, array, os, time, logging, jwt
 import cbor2 as cbor
 from typing import Optional, List
@@ -26,60 +29,60 @@ except:
 class Fido2Authenticator(object):
 
     def __init__(self,
-            key_pair: Optional[KeyPair] = None,
-            cred_id: Optional[bytes] = None,
+            keyPair: Optional[KeyPair] = None,
+            credId: Optional[bytes] = None,
             aaguid: Optional[List[int]] = None,
-            ca_key_pair: Optional[KeyPair] = None,
-            ca_cert: Optional[x509.Certificate] = None,
+            caKeyPair: Optional[KeyPair] = None,
+            caCert: Optional[x509.Certificate] = None,
             counter: int = 0,
-            hashing_alg: hashes.HashAlgorithm = hashes.SHA256(),
+            hashingAlg: hashes.HashAlgorithm = hashes.SHA256(),
             transports: Optional[List[str]] = None,
-            f_key: Optional[Fernet] = None,
-            s_key: Optional[SymmetricKey] = None,
-            disable_counter: bool = False
+            fKey: Optional[Fernet] = None,
+            sKey: Optional[SymmetricKey] = None,
+            disableCounter: bool = False
     ) -> None:
         """
         Args:
-            key_pair (KeyPair): public/private key pair to sign challenges with;
+            keyPair (KeyPair): public/private key pair to sign challenges with;
                     default = EC 256 key
-            cred_id (`obj`:str, optional): url base64 encoded credential Id to use with authenticator, if None
+            credId (`obj`:str, optional): url base64 encoded credential Id to use with authenticator, if None
                     credential Id will be the sha256 of the public key
             aaguid (:obj:`list` of :obj:`int`, optional): aaguid to associate with
                     authenticator; default = [0] * 16
-            ca_key_pair (KeyPair): public/private key of ca/intermadiate authority
+            caKeyPair (KeyPair): public/private key of ca/intermadiate authority
                     for BASIC/ATTCA attestation formats; default = None
-            ca_cert (`cryptography.x509.Certificate`): certificate to use as a trust anchor; default = None
+            caCert (`cryptography.x509.Certificate`): certificate to use as a trust anchor; default = None
             counter (`int`): Internal counter of token.
-            hashing_alg (`cryptography.hazmat.primitives.hashes.HashAlgorithm`): Hashing algorithm to use for "packed"
+            hashingAlg (`cryptography.hazmat.primitives.hashes.HashAlgorithm`): Hashing algorithm to use for "packed"
                         attesttation format.
             transports (list, optional): a list of support transports; default = None
-            f_key (cryptography.fernet.Fernet, optional): An optional symmetric key to generate 
+            fKey (cryptography.fernet.Fernet, optional): An optional symmetric key to generate 
                         the cred id with. Can be used to reconstruct private EC key for assertions.
-            s_key (SymmetricKey, optional): An optional symmetric key to generate the cred id with. Can be
+            sKey (SymmetricKey, optional): An optional symmetric key to generate the cred id with. Can be
                         used to reconstruct private EC key for assertions.
-            disable_counter (`bool`, optional): Optionally disable the attestation/assertion internal counter.
+            disableCounter (`bool`, optional): Optionally disable the attestation/assertion internal counter.
         """
         self.counter = counter
         self.userHandle = None
-        self.caCertificate = ca_cert
-        self.caKeyPair = ca_key_pair
-        self.hashAlg = hashing_alg
+        self.caCertificate = caCert
+        self.caKeyPair = caKeyPair
+        self.hashAlg = hashingAlg
         self.transports = transports
         self.cib = None
-        self.kp = key_pair
-        self.fKey = f_key
-        self.sKey = s_key
-        self.disable_counter = disable_counter
+        self.kp = keyPair
+        self.fKey = fKey
+        self.sKey = sKey
+        self.disable_counter = disableCounter
         self.aaguid = aaguid or [0] * 16
 
-        if self.kp == None and cred_id != None:
-            key = (f_key or s_key)
+        if self.kp == None and credId != None:
+            key = (fKey or sKey)
             if key != None:
                 try:
-                    self.kp = self._get_key_pair_from_credential_id(cred_id, key)
+                    self.kp = self._get_key_pair_from_credential_id(credId, key)
                 except Exception as e:
                     print(e) #set the bytes as the cred_id and generate a key
-                    self.cib = self._urlb64_decode(cred_id)
+                    self.cib = self._urlb64_decode(credId)
             else:
                 raise ValueError("Either Fernet or SymmetricKey must be provided")
 
@@ -88,8 +91,8 @@ class Fido2Authenticator(object):
             #self.kp = KeyPair.generate_ed25519()
             self.kp = KeyPair.generate_ecdsa()
 
-        if cred_id != None and self.cib == None: # We were not given a sym key so just use the credId as is
-            self.cib = self._urlb64_decode(cred_id)
+        if credId != None and self.cib == None: # We were not given a sym key so just use the credId as is
+            self.cib = self._urlb64_decode(credId)
 
 
 
