@@ -2,10 +2,12 @@
 import logging, sys, os, time
 try:
     from .passkey_device import CTAP2HIDevice
+    from .systray_app import SysTrayIcon
 except:
     try:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from passkey_device import CTAP2HIDevice
+        from systray_app import SysTrayIcon
     except Exception as e:
         logging.debug("Module load error")
         logging.exception(e)
@@ -20,10 +22,11 @@ if "SOFT_FIDO2_DEBUG_LEVEL" in os.environ:
 
 #logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')
 logging.basicConfig(level=ll, format='%(message)s')
+#logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 logging.info("Starting the EyeBeeKey Passkey UHID Service")
 print("Starting the EyeBeeKey Passkey UHID Service")
+
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
-while udev.is_alive():
-    time.sleep(0.25)
+systrayapp = SysTrayIcon()
 udev.join()

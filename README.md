@@ -6,6 +6,10 @@ known attestation types.
 Use at your own risk.
 
 ## Prerequisites:
+### System
+ * libnotify >= 0.8.7
+ * bcrypt >= 1.1
+ * python3-virtualenv >= 20.29.1
 ### Python
  * >= Python 3.7
 ### Pip modules
@@ -13,6 +17,9 @@ Use at your own risk.
  * cryptography >= 38.0.1 
  * cbor2 >= 4.1.2
  * PyJwt >= 0.6.1
+ * PyQt6 >= 6.9.1
+### For GNOME Users (Tested on GNOME 48)
+ * AppIndicator and KStatusNotifierItem Support (https://extensions.gnome.org/extension/615/appindicator-support/)
 
 ## Usage
 ### Command line
@@ -248,7 +255,21 @@ encrypted passkey files.
 Virtual Passkey Device can be started by running the module as a user with sufficient permission to open
 the `/dev/uhid` device:
 ```bash
-FIDO_HOME=/opt/soft_fido2
+# Root privileges are assumed
+# Give sufficient permissions to open /dev/uhid:
+# Create a rule in /etc/modules or /etc/modules-load.d so that the uhid module loads during boot
+echo 'uhid' | tee /etc/modules-load.d/uhid.conf
+# Create udev group and add a user to it
+groupadd udev
+usermod -aG udev $USER
+# Create udev rule for uhid access with sufficient permissions
+echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | tee /etc/udev/rules.d/90-uhid.rules
+# Apply rule
+udevadm control --reload-rules && udevadm trigger
+# Reboot to load uhid module during next boot
+
+# Create systemd daemon
+export FIDO_HOME=/opt/soft_fido2
 mkdir -p $FIDO_HOME
 virtualenv $FIDO_HOME
 $FIDO_HOME/bin/python -m pip install --upgrade pip soft_fido2
@@ -273,6 +294,15 @@ EOF
 systemctl daemon-reload
 systemctl enable passkey
 systemctl start passkey
+
+# Confirm authenticator is running
+hexdump -C "/sys/bus/hid/devices/$(ls /sys/bus/hid/devices | grep 1337:1337)/report_descriptor"
+# Output of command should be identical to the sequence below
+# 00000000  06 d0 f1 09 01 a1 01 09  20 15 00 26 ff 00 75 08  |........ ..&..u.|
+# 00000010  95 40 81 02 09 21 15 00  26 ff 00 75 08 95 40 91  |.@...!..&..u..@.|
+# 00000020  02 c0                                             |..|
+# 00000022
+
 ```
 
 # Development
@@ -280,13 +310,13 @@ Project can be build and installed locally using a python virtual environment.
 
 Set up a python virtual environment as follows:
 ```bash
-FIDO2_HOME="$HOME/.fido2"
-mkdir -p $FIDO2_HOME
-virtualenv $FIDO2_HOME
-$FIDO2_HOME/bin/python -m pip install --upgrade pip
-$FIDO2_HOME/bin/python -m pip install --upgrade -r dev-requirements.txt
+export FIDO_HOME="$HOME/.fido2"
+mkdir -p $FIDO_HOME
+virtualenv $FIDO_HOME
+$FIDO_HOME/bin/python -m pip install --upgrade pip
+$FIDO_HOME/bin/python -m pip install --upgrade -r dev-requirements.txt
 export GITHUB_RUN_NUMBER=9999
-$FIDO2_HOME/bin/python -m build
-$FIDO2_HOME/bin/python -m pip install --upgrade dist/soft_fido2-*-py3-none-any.whl 
-sudo FIDO2_HOME=${HOME}/.fido2 $FIDO2_HOME/bin/python -m soft_fido2
+$FIDO_HOME/bin/python -m build
+$FIDO_HOME/bin/python -m pip install --upgrade dist/soft_fido2-*-py3-none-any.whl 
+$FIDO_HOME/bin/python -m soft_fido2
 ```
