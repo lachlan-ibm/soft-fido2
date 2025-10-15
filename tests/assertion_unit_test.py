@@ -20,8 +20,9 @@ def test_E2E(fido2_server, fido2_authenticator):
     client_data = CollectedClientData(fido2_authenticator._urlb64_decode(assertion['response']['clientDataJSON']))
     authData = AuthenticatorData(fido2_authenticator._urlb64_decode(assertion['response']["authenticatorData"]))
     sigBytes = fido2_authenticator._urlb64_decode(assertion['response']["signature"])
-    response = AuthenticatorAssertionResponse(client_data, authData, sigBytes)
-    assertion_data = AuthenticationResponse(idBytes, response)
+    response = AuthenticatorAssertionResponse(
+                                                    client_data=client_data, authenticator_data=authData, signature=sigBytes)
+    assertion_data = AuthenticationResponse(raw_id=idBytes, response=response)
     fido2_server.authenticate_complete(state, [attested_data], assertion_data)
 
 

@@ -36,12 +36,13 @@ setup(
     author='Lachlan Gleeson',
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
-    packages={"soft_fido2"},
+    packages=["soft_fido2"],
     install_requires=[
         'cbor2>=4.1.2',
         'cryptography>=38.0.1',
         'asn1>=2.2.0',
         'PyJwt>=0.6.1'
+        #'liboqs-python' #TODO use cryptography bindings for pqc
     ],
     url='https://github.com/lachlan-ibm/soft-fido2',
     project_urls={

@@ -250,7 +250,7 @@ class Authenticator(object):
                 _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[b'\x00'*16], 
                                                     caKeyPair=ca_kp, caCert=ca_pem, fKey=fKey)
                 credential = {
-                        "id": _authenticator.cred_id_bytes, #Should be set by __init__()
+                        "id": _authenticator.credIdBytes, #Should be set by __init__()
                         "type" : "public-key"
                     }
                 #Generate the assertion response data

@@ -1,5 +1,6 @@
 #!/bin/python3
 
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from soft_fido2 import Fido2Authenticator, KeyPair, CertUtils
 import pytest
 from fido2.server import Fido2Server
@@ -35,7 +36,7 @@ def test_Authenticator_Data(fido2_server, fido2_authenticator, fido2_user):
     #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
-    from fido2.attestation import PackedAttestation
+    from fido2.attestation.packed import PackedAttestation
     verifier = PackedAttestation()
     serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
     serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
@@ -60,19 +61,21 @@ def test_Signing(fido2_server, fido2_authenticator, fido2_user):
     #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
     caKp = KeyPair.generate_rsa()
     subject = x509.Name([
-        x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root'),
-        x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Travis CI/CD')
+        x509.NameAttribute(x509.NameOID.COMMON_NAME, u'root'),
+        x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Travis CI/CD')
     ])
     caCert = CertUtils.gen_ca_cert(subject=subject, keyPair=caKp)
-    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_rsa(), caKeyPair=caKp, caCert=caCert)
+    authenticator = Fido2Authenticator(key_pair=KeyPair.generate_rsa(), ca_key_pair=caKp, ca_cert=caCert)
     attestation = authenticator.credential_create(attestation_options, atteStmtFmt='packed')
     cdj = base64.urlsafe_b64decode(attestation.get("response", {}).get("clientDataJSON"))
     clientDataHash = hashlib.sha256( cdj ).digest()
-    attestationObject = cbor.loads(base64.urlsafe_b64decode(attestation.get("response").get("attestationObject")))
+    attestationObject = cbor.loads(base64.urlsafe_b64decode(attestation.get("response", {}).get("attestationObject")))
     authData = attestationObject.get("authData")
     attStmt = attestationObject.get("attStmt")
     cert = x509.load_der_x509_certificate(attStmt.get('x5c')[0], default_backend())
     pubKey = cert.public_key()
+    if not isinstance(pubKey, RSAPublicKey):
+        assert False, "Wrogn key type"
     #RSA key
     pubKey.verify(attStmt.get('sig'), authData + clientDataHash, padding.PKCS1v15(), hashes.SHA256())
     #EC Key
@@ -88,7 +91,7 @@ def test_Attestation_Object(fido2_server, fido2_authenticator, fido2_user):
     #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
-    AttestationObject(base64.urlsafe_b64decode(attestation.get("response").get("attestationObject")))
+    AttestationObject(base64.urlsafe_b64decode(attestation.get("response", {}).get("attestationObject")))
 
 
 #### Attestation format tests ####

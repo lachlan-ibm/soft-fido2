@@ -1,12 +1,16 @@
+
+
+
 import struct
 import cbor2 as cbor
-import base64
 import secrets
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+
 
 
 class KeyUtils(object):
@@ -35,18 +39,30 @@ class KeyUtils(object):
 
     @classmethod
     def load_ec_key(cls, key):
+        if 'c' not in key:
+            raise ValueError("Key missing curve name")
+        if 'pv' not in key:
+            raise ValueError("Key missing scalar value")
         c = {   ec.SECP256R1.name: ec.SECP256R1,
                 ec.SECP521R1.name: ec.SECP521R1
-            }.get(key.get('c'))()
+            }[key['c']]()
         pk = ec.derive_private_key(key.get('pv'), c)
         return KeyPair(pk, pk.public_key())
+
+    @classmethod
+    def load_ml44_key(cls, seed):
+        from oqs.oqs import Signature
+        import oqs
+        ml_44: Signature = oqs.Signature("ML-KEM-44", seed)
+        pubkey: bytes = ml_44.generate_keypair_seed()
+        return KeyPair(ml_44, pubkey)
 
     @classmethod
     def cbor_ec_key(cls, pk):
         if pk == None or not isinstance(pk, ec.EllipticCurvePrivateKey):
             raise ValueError("{} not EllipticCurvePrivateKey".format(pk))
-        return cbor.dumps({ 'pv': pk.private_numbers.private_value,
-                            'c': pk.curve.name})
+        return cbor.dumps({ 'pv': pk.private_numbers().private_value,
+                                'c': pk.curve.name})
 
     @classmethod
     def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, ecdh=False):
@@ -66,6 +82,14 @@ class KeyUtils(object):
                 return -36 if ecdh == False else -26
         elif isinstance(publicKey, ed25519.Ed25519PublicKey):
             return -8
+        elif isinstance(publicKey, bytes): #TODO guessing poorly supported PQC
+            #Guess the type based on the length?
+            #print(f"bytes[{len(publicKey)}]: {publicKey}")
+            return {
+                1312: -48, # Draft ML-DSA-44 with SHA256?
+                1952: -49, # Draft ML-DSA-65 with SHA256?
+                2592: -50 # Draft ML-DSA-87 with SHA256?
+            }.get(len(publicKey), 9001)
         return 0
 
     @classmethod
@@ -97,6 +121,11 @@ class KeyUtils(object):
                    -2: publicKey.public_bytes(encoding=serialization.Encoding.Raw,
                                                   format=serialization.PublicFormat.Raw)
                  }
+        elif isinstance(publicKey, bytes): #guess poorly supported PQC pubkey
+            return {1: 7,
+                    3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
+                    -1: publicKey,
+            }
         else:
             raise Exception("Unsupported public key algorithm")
 
@@ -169,7 +198,7 @@ class KeyPair(object):
 
     @classmethod
     def create_pcks12_bag(cls, key, cert, name, secret, cas=None):
-        return serialization.pcks12.serialize_key_and_certificates(
+        return pkcs12.serialize_key_and_certificates(
                 name, key, cert, cas, serialization.BestAvailableEncryption(secret))
 
     @classmethod
@@ -177,7 +206,7 @@ class KeyPair(object):
         '''
         Returns Tuple(private_key, cert, additional_certs)
         '''
-        return serialization.pkcs12.load_pkcs12(data, secret)
+        return pkcs12.load_pkcs12(data, secret)
 
     def set_key(self, privateKey):
         self.private = privateKey

@@ -5,10 +5,9 @@ import cbor2 as cbor
 
 import fido2.features
 
-fido2.features.webauthn_json_mapping.enabled = True
 
 user = {"id": b"example_user", "name": "Example User"}
-rp = PublicKeyCredentialRpEntity("Fido2 Authenticator Test", "fido2.authenticator.test")
+rp = PublicKeyCredentialRpEntity(name="Fido2 Authenticator Test", id="fido2.authenticator.test")
 
 @pytest.fixture(scope='module', autouse=True)
 def fido2_rp():

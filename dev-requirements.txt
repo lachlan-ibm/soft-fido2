@@ -8,3 +8,4 @@ fido2
 pytest
 setuptools
 build
+oqs

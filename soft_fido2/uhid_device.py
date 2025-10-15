@@ -106,7 +106,7 @@ class UHIDEventType(Enum):
         except ValueError:
             raise ValueError(f"Unknown UHIDEventType value: {event_int}")
 
-    def pack():
+    def pack(self):
         return struct.pack('I', self.value)
 
 
@@ -152,7 +152,7 @@ class BaseStructure(object):
         for field in self._fields_:
             #logging.debug("Field: {}".format(field))
             if isinstance(field[1], BaseStructure):
-                values.append(getattr(self, field[0], 0).pack())
+                values.append(getattr(self, field[0], field[1]).pack())
             elif re.match(r'\d*x', field[1]):
                 #Skip padding
                 continue
@@ -242,7 +242,11 @@ class UHIDInput2Event(BaseStructure):
         ]
 
 class UHIDOutputEvent(BaseStructure):
-     _fields_ = [
+    ev_len = 0
+    type = UHIDReportType.OUTPUT_REPORT.value
+    data = []
+
+    _fields_ = [
             ('event', 'I', UHIDEventType.OUTPUT.value),
             ('data', '4096s', b'\x00' * 4096),
             ('ev_len', 'H', 0),
@@ -278,6 +282,8 @@ class UHIDGetReportReply(BaseStructure):
         ]
 
 class UHIDSetReport(BaseStructure):
+    report_type = 0x01
+
     _fields_ = [
             ('event', 'I', UHIDEventType.SET_REPORT.value),
             ('id', 'I'),
@@ -296,18 +302,20 @@ class UHIDSetReportReply(BaseStructure):
 
 class UserDevice(threading.Thread):
 
+
     #Pending input reports
     pending = queue.Queue(maxsize=100)
 
     def __init__(self, devPath="/dev/uhid"):
         super().__init__()
         self.device_path = devPath
-        self.interrupt = False
+        self._interrupt = False
         signal.signal(signal.SIGINT, self.interrupt)
         signal.signal(signal.SIGTERM, self.interrupt)
 
-    def interrupt():
-        self.interrupt = True
+    def interrupt(self, tid, frame):
+        logging.error(f"Recieved interrupt from {tid}: frame {frame}")
+        self._interrupt = True
 
     # Assisted by watsonx Code Assistant 
     def format_bytes(self, byte_array):
@@ -351,7 +359,7 @@ class UserDevice(threading.Thread):
         return
 
     def process_output(self, event):
-        raise NotImplemented("override me")
+        raise NotImplementedError("override me")
 
     def output_ev(self, ev_type, ev_bytes):
         logging.debug("Output event received!")
@@ -361,7 +369,7 @@ class UserDevice(threading.Thread):
         self.process_output(ev)
 
     def handle_unknown_control(self, ev_bytes):
-        raise NotImplemented("override me")
+        raise NotImplementedError("override me")
 
     def get_report_ev(self, ev_type, ev_bytes):
         logging.debug("Get report event received!")
@@ -376,7 +384,7 @@ class UserDevice(threading.Thread):
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
         if ev.report_type == UHIDReportType.FEATURE_REPORT:
-            raise NotImplemented("TODO")
+            raise NotImplementedError("TODO")
         else:
             raise NotImplementedError("unexpected request")
 
@@ -419,7 +427,7 @@ class UserDevice(threading.Thread):
             n = os.write(fd, bytearray(create_2_req))
             if n != len(create_2_req):
                 raise RuntimeError("invalid write length")
-            while not self.interrupt:
+            while not self._interrupt:
                 try: #Poll for event
                     logging.debug(f"os.read({fd}, {EV_MAX_SIZE})")
                     eventBytes = os.read(fd, EV_MAX_SIZE)
@@ -433,7 +441,7 @@ class UserDevice(threading.Thread):
                         logging.error(f"Invalid event read [{eventBytes}]")
                 except BlockingIOError: #No event
                     logging.debug("No data available (non-blocking read)")
-                if self.interrupt == True:
+                if self._interrupt == True:
                     break
                 try:
                     while self.pending.qsize() > 0:
@@ -449,7 +457,7 @@ class UserDevice(threading.Thread):
                         logging.debug(f"{self.pending.qsize()} events left in the queue")
                 except queue.Empty:
                     logging.debug("Could not get output event, not sending anything.")
-                if not self.interrupt:
+                if not self._interrupt:
                     time.sleep(0.001) #poll every 10 ms
         finally:
             if started:
