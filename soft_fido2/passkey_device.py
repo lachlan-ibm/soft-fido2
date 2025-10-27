@@ -217,9 +217,9 @@ class AuthenticatorAPI(object):
         )
         
         # Extract certificate and key pair
-        ca_cert = CertUtils.load_der_certificate(passkey.get('ca'))
-        key_pair = KeyUtils.load_ec_key(passkey.get('pk'))
-        seed = passkey.get('seed')
+        ca_x5c = CertUtils.load_der_certificate(passkey.get('x5c'))
+        key_pair = KeyUtils.load_ec_key(passkey.get('key'))
+        #seed = passkey.get('seed')
         
         # Reset PIN retry counter
         cls._pin_retry = 5
@@ -230,9 +230,7 @@ class AuthenticatorAPI(object):
         # Store the opened keys
         cls._lock.acquire()
         cls._open_keys[cid] = {
-            'fKey': Fernet(seed),
-            'sKey': SymmetricKey(seed),
-            'pem': ca_cert,
+            'x5c': ca_x5c,
             'kp': key_pair,
             'file': passkey_file,
             'ph': pinHash,
@@ -277,7 +275,7 @@ class AuthenticatorAPI(object):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
                      msg='plat cose key: {}; pinHashEnc: {}'.format(platform_cose_key, pin_hash_enc))
         sharedSecret = cls.decapsulate(platform_cose_key)
-        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token',
                      msg='shared secret: {};'.format(sharedSecret))
         cipher = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16))) # nosemgrep part of the CTAP2 spec
         decryptor = cipher.decryptor() # nosemgrep
@@ -294,21 +292,24 @@ class AuthenticatorAPI(object):
     def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts, cid):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='open keys: {}'.format(cls._open_keys))
-        error = None
         if not cid in cls._open_keys.keys():
-            return 0x27, None, None #CTAP2_ERR_OPERATION_DENIED
-        ca: dict = cls._open_keys[cid]
+            return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None
+        passkey: dict = cls._open_keys[cid]
+        ca_kp = passkey.get('key')
+        if not isinstance(ca_kp, KeyPair): # !panic
+            return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None
+        seed = KeyUtils.get_passkey_seed(rp['id'], ca_kp.get_private())
+        fkey = Fernet(seed)
         kp = KeyPair.generate_ecdsa()
-        resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds') #
-        # Check for existing rpID:userID
-        if resCreds:
+        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res_creds') #
+        if resCreds: # Check for existing rpID:userID
             for cred in resCreds:
                 if rp['id'] in cred.keys() and cred['user'] == user['id']:
                     colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
                                  msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
-                    return 0x19, None, None #CTAP2_ERR_CREDENTIAL_EXCLUDED
-        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca.get('kp'), 
-                                            caCert=ca.get('pem'), fKey=ca.get('fKey'))
+                    return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
+        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=passkey.get('kp'), 
+                                            caCert=passkey.get('pem'), fKey=fkey)
         credId = authenticator.get_credential_id(kp)
         pk = {'rp': rp} # authenticator.py expects this structure
         authData = authenticator.build_authenticator_data(pk, 'packed', kp, True, up=True, be=False, bs=False)
@@ -320,49 +321,60 @@ class AuthenticatorAPI(object):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
         #Since we set UV we can make these resident keys
-        KeyUtils.update_passkey({rp['id']: credId, 'user': user['id']}, ca['ph'], ca['file'])
-        return error, authData, attStmt
+        KeyUtils.update_passkey({rp['cred.id']: credId, 'user.id': user['id'], 'rp.id': rp['id']},
+                                passkey['ph'], passkey['file'])
+        return None, authData, attStmt
+
+
+    @classmethod
+    def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred): 
+        seed = KeyUtils.get_passkey_seed(rpId, ca_kp.get_private())
+        fkey = Fernet(seed)
+        skey = SymmetricKey(seed)
+        #Create the authenticator, creating the key pair will fail if we don'w own the credId
+        b64CredId = base64.urlsafe_b64encode(cred.get('id'))
+        kp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
+        colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
+                        msg='We have a usable key, sign the challenge')
+        _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[0*16], 
+                                            caKeyPair=ca_kp, caCert=ca_x5c, fKey=fkey, sKey=skey)
+        credential = {
+                "id": _authenticator._get_credential_id_bytes(None), #Should be set by __init__()
+                "type" : "public-key"
+            }
+        #Generate the assertion response data
+        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', kp, True, 
+                                                                up=True, be=False, bs=False)
+        #Sign it, authenticator method b64 encodeds the ba so we decode it right away
+        sig = _authenticator.assertion_signature(authData, clientDataHash, kp)
+        userHandle = cred.get("user")
+        return None, credential, authData, sig, userHandle
 
 
     @classmethod
     def assertion_out(cls, rpId, clientDataHash, allowedList, exts, cid):
         if not cid in cls._open_keys.keys():
             return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None, None, None
-        ca: dict = cls._open_keys[cid]
-        resCreds = KeyUtils._load_passkey(ca['ph'], ca['file']).get('res_creds')
+        passkey: dict = cls._open_keys[cid]
+        ca_x5c = passkey.get('x5c')
+        ca_kp = passkey.get('key')
+        if not isinstance(ca_kp, KeyPair): # !panic
+            return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None, None, None
+        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res_creds')
         if resCreds != None:
             colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                          msg='passkey has resident credentials, adding them to allowed list')
             for rc in resCreds:
-                if rc.get(rpId) != None:
-                    allowedList += [{'id': base64.urlsafe_b64decode(rc[rpId]), 
-                                     'user': rc.get('user')}]
+                if rc.get('rp.id') == rpId:
+                    allowedList += [{'id': rc.get('cred.id'), 
+                                     'user': rc.get('user.id')}]
         for cred in allowedList:
             try:
-                ca_pem = ca.get('pem')
-                ca_kp = ca.get('kp')
-                fKey = ca.get('fKey')
-                #Create the authenticator, creating the key pair will fail if we don'w own the credId
-                b64CredId = base64.urlsafe_b64encode(cred.get('id'))
-                kp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fKey)
-                colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
-                             msg='We have a usable key, sign the challenge')
-                _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[0*16], 
-                                                    caKeyPair=ca_kp, caCert=ca_pem, fKey=fKey)
-                credential = {
-                        "id": _authenticator._get_credential_id_bytes(None), #Should be set by __init__()
-                        "type" : "public-key"
-                    }
-                #Generate the assertion response data
-                authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', kp, True, 
-                                                                        up=True, be=False, bs=False)
-                #Sign it, authenticator method b64 encodeds the ba so we decode it right away
-                sig = _authenticator.assertion_signature(authData, clientDataHash, kp)
-                userHandle = cred.get("user")
-                return None, credential, authData, sig, userHandle
+                return cls._maybe_next_assertion(rpId, ca_kp, ca_x5c, clientDataHash, cred)
             except Exception as e:
                 colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
                              msg='Could not retrieve key pair from credential id {}'.format(cred))
+                logging.exception(e, stack_info=True)
                 continue
         return CBORCommand.CBORStatusCode.CTAP2_ERR_NO_CREDENTIALS, None, None, None, None
 
@@ -389,9 +401,10 @@ class CBORCommand(object):
 
     class CBORStatusCode(IntEnum):
         CTAP2_OK = 0x0
-        CTAP2_ERR_INVALID_COMMAND = 0x01
-        CTAP2_ERR_TIMEOUT = 0x05
+        CTAP1_ERR_INVALID_COMMAND = 0x01
+        CTAP1_ERR_TIMEOUT = 0x05
         CTAP2_ERR_INVALID_CBOR = 0x12
+        CTAP2_ERR_MISSING_PARAMETER = 0x14
         CTAP2_ERR_CREDENTIAL_EXCLUDED = 0x19
         CTAP2_ERR_OPERATION_DENIED = 0x27
         CTAP2_ERR_NO_CREDENTIALS = 0x2E
@@ -411,7 +424,7 @@ class CBORCommand(object):
     cmd = None
     ctaphid_cmd = 0
     bcnt = 0
-    pending = None
+    _pending = None
 
     def __init__(self, cid, ba, skip_init=False):
         self.cid = cid
@@ -460,7 +473,7 @@ class CBORCommand(object):
             self.request_segment += 1
 
     def _error(self, ba):
-        self.response = []
+        self.response = list(int.to_bytes(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND))
         self.bcnt = 0
         self.response_ready = True
 
@@ -475,6 +488,11 @@ class CBORCommand(object):
             self.CommandByte.GET_INFO: self._get_info,
             self.CommandByte.CLIENT_PIN: self._client_pin
             }.get(self.cmd, self._error)(bytes(self.request))
+
+    def _set_rsp_fields(self, rsp=[]):
+        self.response = rsp
+        self.bcnt = len(rsp)
+        self.response_ready = True
 
     def get_rsp_seg(self, num_bytes):
         if not isinstance(num_bytes, int):
@@ -498,7 +516,7 @@ class CBORCommand(object):
 
     @classmethod
     def set_pending(cls, pending):
-        cls.pending = pending
+        cls._pending = pending
 
     def gather_user_presence(self):
         if 'FIDO_SKIP_UP' in os.environ and bool(os.environ.get('FIDO_SKIP_UP')):
@@ -511,7 +529,7 @@ class CBORCommand(object):
         MessageQueue.udev_get.queue.clear()
         MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)
         msg = None
-        worker = KeepAliveWorker(self.pending, self.cid)
+        worker = KeepAliveWorker(self._pending, self.cid)
         worker.start()
         current_time = time.time()
         while not msg and current_time - start_time < 60:
@@ -558,16 +576,14 @@ class CBORCommand(object):
         result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes()
         if rsp != None:
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
-        self.bcnt = len(result)
-        self.response_ready = True
-        self.response = list(result)
+        return self._set_rsp_fields(list(result))
 
     # authenticatorGetInfo takes no inputs so return immediately
     def _get_info(self, ba):
         result = {
             0x01: ["U2F_V2", "FIDO_2_0"],
             0x02: ['hmac-secret'],
-            #0x03: b"\x01\x02\x03\x04" * 4,
+            #0x03: b"\x13\x37\xF1\xD0" * 4,
             0x03: b"\x00" * 16,
             0x04: {'rk': True, 'up': True, 'plat': False, 'clientPin': True},
             0x05: 1200,
@@ -575,16 +591,12 @@ class CBORCommand(object):
         }
         result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result)
         logging.debug(f"len: {len(result)}")
-        self.bcnt = len(result)
-        self.response_ready = True
-        self.response = list(result)
+        return self._set_rsp_fields(list(result))
 
     def _make_cred(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
         if self.gather_user_presence() == False:
-            self.response = list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes())
-            self.bcnt = 1
-            self.response_ready = True
+            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
@@ -592,15 +604,14 @@ class CBORCommand(object):
             if not prop[0] in req.keys():
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
-                raise Exception("Missing required property %s" % prop[1])
+                logging.debug("Missing required property %s" % prop[1])
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
         result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
         # Request and validate pin-auth
         if not self._verify_pin_token(req.get(0x01), req.get(0x08)):
             if self.cid in AuthenticatorAPI._open_keys:
                 result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
-            self.response = list(result)
-            self.bcnt = len(result)
-            self.response_ready = True
+            return self._set_rsp_fields(list(result))
         error, authData, attStmt = AuthenticatorAPI.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
         result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
@@ -613,13 +624,13 @@ class CBORCommand(object):
                 0x03: attStmt
             }
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
-        self.bcnt = len(result)
-        self.response_ready = True
-        self.response = list(result)
+        return self._set_rsp_fields(list(result))
 
 
     def _get_assertion(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
+        if self.gather_user_presence() == False:
+            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                      msg='CBOR request {}'.format(req))
@@ -627,16 +638,14 @@ class CBORCommand(object):
             if not prop[0] in req:
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
-                raise Exception("Missing required property %s" % prop[1])
+                logging.debug("Missing required property %s" % prop[1])
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
         result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
         # Request and validate pin-auth
         if not self._verify_pin_token(req.get(0x02), req.get(0x06)):
             if self.cid in AuthenticatorAPI._open_keys:
                 result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
-            self.response = list(result)
-            self.bcnt = len(result)
-            self.response_ready = True
-            return
+            return self._set_rsp_fields(list(result))
         error, credential, authData, signature, userHandle = AuthenticatorAPI.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
         if error:
@@ -650,9 +659,7 @@ class CBORCommand(object):
             if userHandle:
                 rsp[0x04] = {'id': userHandle}
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
-        self.bcnt = len(result)
-        self.response_ready = True
-        self.response = list(result)
+        return self._set_rsp_fields(list(result))
 
 
 # Send this for every new message frame. Response contains

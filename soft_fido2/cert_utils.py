@@ -8,11 +8,9 @@ import binascii
 
 import asn1
 
-from cbor2 import key
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import ObjectIdentifier
-from cryptography.x509.extensions import ExtensionType
 from cryptography import x509
 
 

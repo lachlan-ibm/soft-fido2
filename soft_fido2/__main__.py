@@ -31,5 +31,5 @@ print("Starting the EyeBeeKey Passkey UHID Service")
 
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
-systrayapp = SysTrayIcon()
+SysTrayIcon() # runs until quit
 udev.join()

@@ -1,6 +1,5 @@
 from turtle import pu
 from cryptography.hazmat.primitives import hashes
-from cryptography.x509 import base
 from soft_fido2 import Fido2Authenticator, KeyPair
 from oqs.oqs import Signature
 import os, json, base64, uuid, struct, cbor2
@@ -26,8 +25,7 @@ def _parse_attested_credential_data(auth_data: bytes):
 
 
 
-def _do_the_thing(pvtkey, pubkey, cid):
-    kp = KeyPair(pvtkey, pubkey)
+def _do_the_thing(kp, cid):
     authenticator = Fido2Authenticator(keyPair=kp, credId=cid)
     challenge = base64.urlsafe_b64encode(os.urandom(64))
     create_credential_options = {
@@ -80,11 +78,11 @@ def _verify_sig(msg, sig, alg, pubkey):
 
 
 def test_ML_DSA_44_sign():
-    ml_44 = Signature("ML-DSA-44")
-    pubkey = ml_44.generate_keypair()
     cid = base64.urlsafe_b64encode(os.urandom(64))
     #authenticator = Fido2Authenticator(cred_id=cid)
-    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(ml_44, pubkey, cid) 
+    kp = KeyPair.generate_mldsa("ML-DSA-44")
+    pubkey = kp.get_public()
+    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
     assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
@@ -101,11 +99,11 @@ def test_ML_DSA_44_sign():
     _verify_sig(to_sign, sig, "ML-DSA-44", pubkey)
 
 def test_ML_DSA_67_sign():
-    ml_65 = Signature("ML-DSA-65")
-    pubkey = ml_65.generate_keypair()
+    kp = KeyPair.generate_mldsa("ML-DSA-65")
+    pubkey = kp.get_public()
     cid = base64.urlsafe_b64encode(os.urandom(64))
     #authenticator = Fido2Authenticator(cred_id=cid)
-    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(ml_65, pubkey, cid) 
+    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
     assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
@@ -122,11 +120,11 @@ def test_ML_DSA_67_sign():
     _verify_sig(to_sign, sig, "ML-DSA-65", pubkey)
 
 def test_ML_DSA_87_sign():
-    ml_87 = Signature("ML-DSA-87")
-    pubkey = ml_87.generate_keypair()
+    kp = KeyPair.generate_mldsa("ML-DSA-87")
+    pubkey = kp.get_public()
     cid = base64.urlsafe_b64encode(os.urandom(64))
     #authenticator = Fido2Authenticator(cred_id=cid)
-    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(ml_87, pubkey, cid) 
+    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
     assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
@@ -142,3 +140,4 @@ def test_ML_DSA_87_sign():
     test_rp_hash = hasher.finalize()
     assert test_rp_hash == rp_id_hash, "returned hash does not match {} != {}".format(test_rp_hash, rp_id_hash)
     _verify_sig(to_sign, sig, "ML-DSA-87", pubkey)
+    #assert False, "Capture output for isfs2 cross contamination"

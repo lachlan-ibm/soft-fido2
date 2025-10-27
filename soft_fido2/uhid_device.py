@@ -317,7 +317,7 @@ class UserDevice(threading.Thread):
     def __init__(self, devPath="/dev/uhid"):
         super().__init__()
         self.device_path = devPath
-        self.interrupt = False
+        self._interrupt = False
         signal.signal(signal.SIGINT, self.interrupt)
         signal.signal(signal.SIGTERM, self.interrupt)
 
@@ -483,6 +483,7 @@ class UserDevice(threading.Thread):
                     sysTrayMsg = MessageQueue.notify_udev.get()
                     if sysTrayMsg == QueueMessageType.QUIT:
                         MessageQueue.udev_get.put(QueueMessageType.QUIT)
+                        self._interrupt = True
                         break
         finally:
             if started:

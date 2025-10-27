@@ -1,9 +1,5 @@
 import pytest
-from fido2.webauthn import PublicKeyCredentialRpEntity, AttestedCredentialData, CollectedClientData, AuthenticatorData, AttestationObject
-import base64
-import cbor2 as cbor
-
-import fido2.features
+from fido2.webauthn import PublicKeyCredentialRpEntity
 
 
 user = {"id": b"example_user", "name": "Example User"}
@@ -32,7 +28,17 @@ def fido2_authenticator(fido2_server, fido2_user):
     print(attestation_options)
     authenticator = Fido2Authenticator()
     attestation = authenticator.credential_create(attestation_options)
-    client_data = CollectedClientData(authenticator._urlb64_decode(attestation['response']['clientDataJSON']))
-    att_obj = AttestationObject(authenticator._urlb64_decode(attestation['response']['attestationObject']))
-    fido2_server.register_complete(state, client_data, att_obj)
+    # Create a registration response object that the server expects
+    # Create a response dictionary that matches what the server expects
+    response = {
+        'id': attestation['id'],
+        'rawId': attestation['rawId'],
+        'response': {
+            'clientDataJSON': attestation['response']['clientDataJSON'],
+            'attestationObject': attestation['response']['attestationObject']
+        },
+        'type': 'public-key'
+    }
+    
+    fido2_server.register_complete(state, response)
     yield authenticator
