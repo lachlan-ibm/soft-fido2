@@ -67,7 +67,7 @@ class KeyUtils(object):
         return result
 
     @classmethod
-    def load_ec_key(cls, key, secret=None):
+    def load_der_key(cls, key, secret=None):
         '''
         load DER encoded key, returns KeyPair
         '''
@@ -175,7 +175,7 @@ class KeyUtils(object):
         passkey_data = {
             'x5c': pem,
             'key': kp.get_private(),
-            #seed === sha256 of [rp.id, user.id] signed by key
+            #seed === sha256 of rp.id signed by key
         }
         return passkey_data
 
@@ -295,6 +295,8 @@ class KeyUtils(object):
                 raise ValueError('res_creds is not a list')
             elif len(res_creds) > 0 and not isinstance(res_creds[0], dict):
                 raise ValueError('res_creds is not a list of credentials')
+        else: 
+            raise ValueError("Could not find PKCS12 bytes")
         # Construct the passkey dictionary
         passkey = {
             'key': key.get_private(),
@@ -351,7 +353,7 @@ class KeyUtils(object):
     @classmethod
     def __get_platform_kp(cls, secret=None):
         # Get platform key to manage cached pin hashes
-        platform_key_path = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')) + '/platform.key'
+        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), 'platform.key')
         with open(platform_key_path, 'rb') as key_file:
             platform_key_pem = key_file.read()
             return KeyPair.load_key_pair(platform_key_pem, secret)
@@ -359,7 +361,7 @@ class KeyUtils(object):
     @classmethod
     def create_platform_key(cls, secret=None):
         plat_key = KeyPair.generate_ecdsa()
-        platform_key_path = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')) + '/platform.key'
+        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), 'platform.key')
         with open(platform_key_path, 'wb') as key_file:
             key_file.write(plat_key.get_private_bytes(secret=secret))
         return KeyPair(plat_key, plat_key.get_public())

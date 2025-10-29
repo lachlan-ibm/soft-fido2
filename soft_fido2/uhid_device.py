@@ -364,8 +364,7 @@ class UserDevice(threading.Thread):
         ev = UHIDCloseEvent()
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
-        MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
-        MessageQueue.udev_get.put(QueueMessageType.AUTH_RESPONSE)
+        MessageQueue.notify_auth.put(QueueMessageType.CLOSE_EVENT)
         return
 
     def process_output(self, event):
@@ -482,7 +481,6 @@ class UserDevice(threading.Thread):
                 if MessageQueue.notify_udev.qsize() > 0:
                     sysTrayMsg = MessageQueue.notify_udev.get()
                     if sysTrayMsg == QueueMessageType.QUIT:
-                        MessageQueue.udev_get.put(QueueMessageType.QUIT)
                         self._interrupt = True
                         break
         finally:

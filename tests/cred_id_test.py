@@ -2,7 +2,7 @@
 
 from hmac import new
 from soft_fido2 import Fido2Authenticator, KeyPair
-from soft_fido2.credential_id_decryptor import CredentialIdMigrator
+from soft_fido2.credential_id_migrator import CredentialIdMigrator
 import uuid
 import base64
 from cryptography.fernet import Fernet

@@ -180,7 +180,7 @@ class SysTrayIcon(QSystemTrayIcon):
                          QSystemTrayIcon.MessageIcon.Critical, 15000)
 
     def on_message_clicked(self):
-        MessageQueue.udev_get.put(QueueMessageType.USER_RESPONSE_ACCEPT)
+        MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
 
     def _menu_setup(self):
         menu = QMenu()
@@ -226,7 +226,12 @@ class SysTrayIcon(QSystemTrayIcon):
                 digest.update(pin.encode())
                 pin_hash = digest.finalize()
                 # Save passkey
-                fido_home = os.environ.get("FIDO_HOME", os.path.expanduser("~/.fido2"))
+                fido_home = os.environ.get("FIDO_HOME", None)
+                if not fido_home:
+                    self.showMessage("soft_fido2 Authenticator",
+                         "FIDO_HOME property not set, restart soft_fido2",
+                         QSystemTrayIcon.MessageIcon.Critical, 5000)
+                    return
                 os.makedirs(fido_home, exist_ok=True)
                 passkey_path = os.path.join(fido_home, f"{passkey_name}.passkey")   
                 KeyUtils._save_passkey(

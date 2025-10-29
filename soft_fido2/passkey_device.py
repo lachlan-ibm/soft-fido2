@@ -218,7 +218,7 @@ class AuthenticatorAPI(object):
         
         # Extract certificate and key pair
         ca_x5c = CertUtils.load_der_certificate(passkey.get('x5c'))
-        key_pair = KeyUtils.load_ec_key(passkey.get('key'))
+        key_pair = KeyUtils.load_der_key(passkey.get('key'))
         #seed = passkey.get('seed')
         
         # Reset PIN retry counter
@@ -321,7 +321,7 @@ class AuthenticatorAPI(object):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
         #Since we set UV we can make these resident keys
-        KeyUtils.update_passkey({rp['cred.id']: credId, 'user.id': user['id'], 'rp.id': rp['id']},
+        KeyUtils.update_passkey({'cred.id': credId, 'user.id': user['id'], 'rp.id': rp['id']},
                                 passkey['ph'], passkey['file'])
         return None, authData, attStmt
 
@@ -519,14 +519,15 @@ class CBORCommand(object):
         cls._pending = pending
 
     def gather_user_presence(self):
-        if 'FIDO_SKIP_UP' in os.environ and bool(os.environ.get('FIDO_SKIP_UP')):
+        if os.environ.get('SOFT_FIDO_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
             colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence', 
                     msg='Skipping user presence check')
             return True
         elif AuthenticatorAPI.has_cached_up(self.cid):
             return True
+
         start_time = time.time()
-        MessageQueue.udev_get.queue.clear()
+        MessageQueue.notify_auth.queue.clear()
         MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)
         msg = None
         worker = KeepAliveWorker(self._pending, self.cid)
@@ -535,8 +536,8 @@ class CBORCommand(object):
         while not msg and current_time - start_time < 60:
             time.sleep(0.002)
             current_time = time.time()
-            if MessageQueue.udev_get.qsize() > 0:
-                msg = MessageQueue.udev_get.get()
+            if MessageQueue.notify_auth.qsize() > 0:
+                msg = MessageQueue.notify_auth.get()
         worker.interrupt()
         worker.join()
         if msg == QueueMessageType.USER_RESPONSE_ACCEPT:
@@ -891,8 +892,6 @@ class CTAP2HIDevice(UserDevice):
         if cid in self.cids:
             self.cids[cid]['cborCmd'] = rsp
         self.send_response_segment(cid, rsp)
-        MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
-        MessageQueue.udev_get.put(QueueMessageType.AUTH_RESPONSE)
 
     def ctaphid_cancel(self, usb_req):
         return self._ctap_ack(usb_req)

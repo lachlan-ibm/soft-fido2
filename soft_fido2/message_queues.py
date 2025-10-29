@@ -14,11 +14,13 @@ class QueueMessageType:
     KEEPALIVE = 6
     KEEPALIVE_CANCEL = 7
     QUIT = 8
+    CLOSE_EVENT = 9
 
 
 class MessageQueue:
+    ''' read by uhid_device.py '''
     notify_udev = queue.Queue(maxsize=100)
+    ''' read by systray_app.py '''
     notify_sysapp = queue.Queue(maxsize=100)
+    ''' read by passkey_device.py.Authenticator '''
     notify_auth = queue.Queue(maxsize=100)
-    sysapp_get = queue.Queue(maxsize=100)
-    udev_get = queue.Queue(maxsize=100)

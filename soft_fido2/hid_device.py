@@ -134,8 +134,8 @@ class Authenticator(object):
                 passkey = KeyUtils._load_passkey(pinHash, encBagF)
                 colour_print(colour=bcolors.OKPINK, component='Authenticator_validate_pin', 
                              msg='Pin decrypted a .passkey file')
-                ca = CertUtils.load_der_certificate(passkey.get('ca'))
-                kp = KeyUtils.load_ec_key(passkey.get('pk'))
+                ca = CertUtils.load_der_certificate(passkey.get('x5c'))
+                kp = KeyUtils.load_der_key(passkey.get('key'))
                 seed = passkey.get('seed')
                 cls._pin_retry = 5 #Reset the counter
                 pinAuthToken = secrets.token_bytes(32)
