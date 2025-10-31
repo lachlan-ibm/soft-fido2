@@ -1,9 +1,9 @@
 # Copyrite IBM 2022, 2025
 # IBM Confidential
 
+import logging
 import struct
 import os
-from turtle import pu
 import cbor2 as cbor
 import secrets
 import base64
@@ -29,19 +29,23 @@ class KeyUtils(object):
         Entropy is typically the bytes of the rp.id. Key is an Elliptic Curve key.
 
         Entropy is hashed using SHA256 before signing.
+
+        Returned bytestring is b64_url encoded.
         """
         if not isinstance(entropy, bytes):
-            raise ValueError("Entropy must be bytes")
+            raise ValueError(f"Entropy must be bytes: {entropy}")
         if not isinstance(key, ec.EllipticCurvePrivateKey):
-            raise ValueError("Key must be an EllipticCurvePrivateKey")
+            raise ValueError(f"Key must be an EllipticCurvePrivateKey: {key}")
         theHash = hashes.SHA256()
         digester = hashes.Hash(theHash)
         digester.update(entropy)
         sig = key.sign(digester.finalize(),
-                        ec.ECDSA(utils.Prehashed(theHash)))
+                        ec.ECDSA(utils.Prehashed(theHash), deterministic_signing=True))
         digester = hashes.Hash(theHash)
         digester.update(sig)
-        return digester.finalize()
+        result = base64.urlsafe_b64encode(digester.finalize()[:32])
+        #logging.debug(f"start: {entropy}; sig: {sig}; return {result}")
+        return result
 
 
     @classmethod
@@ -351,17 +355,17 @@ class KeyUtils(object):
             f.close()
 
     @classmethod
-    def __get_platform_kp(cls, secret=None):
+    def __get_platform_kp(cls, secret=None, filename='platform.key'):
         # Get platform key to manage cached pin hashes
-        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), 'platform.key')
+        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename)
         with open(platform_key_path, 'rb') as key_file:
             platform_key_pem = key_file.read()
             return KeyPair.load_key_pair(platform_key_pem, secret)
 
     @classmethod
-    def create_platform_key(cls, secret=None):
+    def create_platform_key(cls, secret=None, filename='platform.key'):
         plat_key = KeyPair.generate_ecdsa()
-        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), 'platform.key')
+        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename)
         with open(platform_key_path, 'wb') as key_file:
             key_file.write(plat_key.get_private_bytes(secret=secret))
         return KeyPair(plat_key, plat_key.get_public())

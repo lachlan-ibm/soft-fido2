@@ -189,9 +189,12 @@ class Fido2Authenticator(object):
             return self.cib
         key = (self.sKey or self.fKey) #skey preferred
         if key and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
+            #logging.debug(f"Encryping cred id with {key}")
             self.cib = key.encrypt(keyPair.get_private_bytes())
+            #logging.debug(f"self.cib {self.cib}")
             return self.cib
         else:
+            #logging.debug("using hash of public key as cib")
             return hashlib.sha256(keyPair.get_public_bytes()).digest()
 
     def get_credential_id(self, keyPair=None):
@@ -1056,13 +1059,11 @@ class Fido2Authenticator(object):
             "clientDataJSON": str(base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8'),
             "authenticatorData": str(base64.urlsafe_b64encode(authData), 'utf-8')
         }
-        if self.userHandle != None:
+        if hasattr(self, 'userHandle') and isinstance(self.userHandle, (str, bytes)):
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
         if "attestation" in cro.keys():
             raise RuntimeError("TODO")
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8')).digest())
-
-        credIdBytes = self._get_credential_id_bytes(keyPair)
 
         saar['signature'] = str(base64.urlsafe_b64encode(self.assertion_signature(
                                                             authData, clientDataHash, keyPair)), 'utf-8')
@@ -1088,8 +1089,8 @@ if __name__ == "__main__":
         sys.exit(1)
     authenticator = Fido2Authenticator()
     rsp = None
-    pubPath = os.path.join(os.environ['FIDO_HOME'], 'public.pem')
-    pivPath = os.path.join(os.environ['FIDO_HOME'], 'private.pem')
+    pubPath = os.path.join(os.environ['FIDO_HOME'], 'test_public.pem')
+    pivPath = os.path.join(os.environ['FIDO_HOME'], 'test_private.pem')
     if sys.argv[1] == 'attestation':
         if authenticator.kp is not None:
             rsp = authenticator.credential_create(sys.argv[3], 

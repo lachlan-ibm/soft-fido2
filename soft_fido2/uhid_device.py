@@ -3,16 +3,15 @@
 # Assisted by watsonx Code Assistant
 # Copyright IBM Corp. 2025
 
-import os, struct, fcntl, errno, time, queue, threading, logging, re, signal, sys
+import signal
+import os, struct, fcntl, time, queue, threading, logging, re
 
 from enum import Enum
 
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
-    from soft_fido2.systray_app import SysTrayIcon
 except:
     from message_queues import QueueMessageType, MessageQueue
-    from systray_app import SysTrayIcon
 
 # Assisted by watsonx Code Assistant 
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -251,7 +250,7 @@ class UHIDInput2Event(BaseStructure):
 class UHIDOutputEvent(BaseStructure):
     ev_len = 0
     type = UHIDReportType.OUTPUT_REPORT.value
-    data = []
+    data = b'\x00'
 
     _fields_ = [
             ('event', 'I', UHIDEventType.OUTPUT.value),
@@ -318,12 +317,16 @@ class UserDevice(threading.Thread):
         super().__init__()
         self.device_path = devPath
         self._interrupt = False
-        signal.signal(signal.SIGINT, self.interrupt)
-        signal.signal(signal.SIGTERM, self.interrupt)
+        #signal.signal(signal.SIGINT, self.stop_device)
+        #signal.signal(signal.SIGTERM, self.stop_device)
 
-    def interrupt(self, tid, frame):
-        logging.error(f"Recieved interrupt from {tid}: frame {frame}")
+
+
+    def stop_device(self, tid, frame):
+        logging.error(f"Received interrupt from {tid}: frame {frame}")
         self._interrupt = True
+        if MessageQueue.notify_sysapp is not None:
+            MessageQueue.notify_sysapp.put(QueueMessageType.QUIT)
 
     # Assisted by watsonx Code Assistant 
     def format_bytes(self, byte_array):
@@ -374,7 +377,8 @@ class UserDevice(threading.Thread):
         logging.debug("Output event received!")
         ev = UHIDOutputEvent()
         ev.unpack(ev_bytes[:len(ev.pack())])
-        logging.debug(f"event : {ev.ev_len} {ev.type} {ev.data[:ev.ev_len]}")
+        if ev.data:
+            logging.debug(f"event : {ev.ev_len} {ev.type} {ev.data[:ev.ev_len]}")
         self.process_output(ev)
 
     def handle_unknown_control(self, ev_bytes):
@@ -480,6 +484,7 @@ class UserDevice(threading.Thread):
                     time.sleep(0.001) #poll every 10 ms
                 if MessageQueue.notify_udev.qsize() > 0:
                     sysTrayMsg = MessageQueue.notify_udev.get()
+                    logging.debug(f"Event from systeray_app: {sysTrayMsg}") 
                     if sysTrayMsg == QueueMessageType.QUIT:
                         self._interrupt = True
                         break

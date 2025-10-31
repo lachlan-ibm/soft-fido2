@@ -217,8 +217,11 @@ class AuthenticatorAPI(object):
         )
         
         # Extract certificate and key pair
-        ca_x5c = CertUtils.load_der_certificate(passkey.get('x5c'))
-        key_pair = KeyUtils.load_der_key(passkey.get('key'))
+        ca_x5c = passkey.get('x5c')
+        key = passkey.get('key')
+        if not isinstance(key, ec.EllipticCurvePrivateKey):
+            raise ValueError("Key must be an ECPrivateKey")
+        key_pair = KeyPair(key, key.public_key())
         #seed = passkey.get('seed')
         
         # Reset PIN retry counter
@@ -229,21 +232,25 @@ class AuthenticatorAPI(object):
         
         # Store the opened keys
         cls._lock.acquire()
-        cls._open_keys[cid] = {
-            'x5c': ca_x5c,
-            'kp': key_pair,
-            'file': passkey_file,
-            'ph': pinHash,
-            'pinAuth': pin_auth_token,
-            'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
-        }
-        cls._lock.release()
-        return pin_auth_token
+        try:
+            cls._open_keys[cid] = {
+                'x5c': ca_x5c,
+                'kp': key_pair,
+                'file': passkey_file,
+                'ph': pinHash,
+                'pinAuth': pin_auth_token,
+                'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
+            }
+            return pin_auth_token
+        finally:
+            cls._lock.release()
+
 
     @classmethod
     def get_pin_cose_key(cls, pin_req, cid):
-        if cls._pin_token_kp != None:
-            return {1: KeyUtils.get_cose_key(cls._pin_token_kp.get_public(), hashes.SHA256(), eckx=True)}
+        if cls._pin_token_kp == None:
+            cls._pin_token_kp = KeyPair.generate_ecdsa()
+        return {1: KeyUtils.get_cose_key(cls._pin_token_kp.get_public(), hashes.SHA256(), eckx=True)}
 
     @classmethod
     def get_pin_retries(cls, pin_req, cid):
@@ -295,29 +302,34 @@ class AuthenticatorAPI(object):
         if not cid in cls._open_keys.keys():
             return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None
         passkey: dict = cls._open_keys[cid]
-        ca_kp = passkey.get('key')
+        ca_kp = passkey.get('kp')
         if not isinstance(ca_kp, KeyPair): # !panic
+            colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', msg="panic!")
             return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None
-        seed = KeyUtils.get_passkey_seed(rp['id'], ca_kp.get_private())
+        seed = KeyUtils.get_passkey_seed(rp['id'].encode(), ca_kp.get_private())
+        #logging.debug(f"seed : {seed}")
         fkey = Fernet(seed)
         kp = KeyPair.generate_ecdsa()
-        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res_creds') #
+        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res.creds') #
+        #logging.debug(f"checking for existing registration for {rp} and {user} in {resCreds}")
         if resCreds: # Check for existing rpID:userID
             for cred in resCreds:
-                if rp['id'] in cred.keys() and cred['user'] == user['id']:
+                if rp['id'] == cred['rp.id'] and user['id'] == cred['user.id']:
                     colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
                                  msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
                     return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
-        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=passkey.get('kp'), 
-                                            caCert=passkey.get('pem'), fKey=fkey)
-        credId = authenticator.get_credential_id(kp)
+                #else:
+                #    logging.debug(f"{rp['id']} != {cred['rp.id']} or {user['id']} != {cred['user.id']}")
+        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca_kp, 
+                                            caCert=passkey.get('x5c'), fKey=fkey)
+        credId = authenticator._get_credential_id_bytes(kp)
         pk = {'rp': rp} # authenticator.py expects this structure
         authData = authenticator.build_authenticator_data(pk, 'packed', kp, True, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='credId: {}; toSign: {}'.format(credId, 
                             base64.b64encode(bytes([*authData, *clientDataHash ])).decode()))
         attStmt = authenticator.build_packed_attestation_statement('packed', 
-                                                    clientDataHash, authData, None, kp)
+                                                    clientDataHash, authData, None, kp,)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
         #Since we set UV we can make these resident keys
@@ -328,25 +340,26 @@ class AuthenticatorAPI(object):
 
     @classmethod
     def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred): 
-        seed = KeyUtils.get_passkey_seed(rpId, ca_kp.get_private())
+        seed = KeyUtils.get_passkey_seed(rpId.encode(), ca_kp.get_private())
+        #logging.debug(f"seed : {seed}")
         fkey = Fernet(seed)
-        skey = SymmetricKey(seed)
-        #Create the authenticator, creating the key pair will fail if we don'w own the credId
+        #skey = SymmetricKey(seed.decode())
+        #Create the authenticator from the raw id, creating the key pair will fail if we don't own the credId
         b64CredId = base64.urlsafe_b64encode(cred.get('id'))
-        kp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
+        decryptedKp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
         colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                         msg='We have a usable key, sign the challenge')
-        _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[0*16], 
-                                            caKeyPair=ca_kp, caCert=ca_x5c, fKey=fkey, sKey=skey)
+        _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16, 
+                                            caKeyPair=ca_kp, caCert=ca_x5c, fKey=fkey)
         credential = {
-                "id": _authenticator._get_credential_id_bytes(None), #Should be set by __init__()
+                "id": _authenticator._get_credential_id_bytes(_authenticator.kp), #Should be set by __init__()
                 "type" : "public-key"
             }
         #Generate the assertion response data
-        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', kp, True, 
-                                                                up=True, be=False, bs=False)
+        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', _authenticator.kp,
+                                                                 True, up=True, be=False, bs=False)
         #Sign it, authenticator method b64 encodeds the ba so we decode it right away
-        sig = _authenticator.assertion_signature(authData, clientDataHash, kp)
+        sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
         userHandle = cred.get("user")
         return None, credential, authData, sig, userHandle
 
@@ -357,19 +370,20 @@ class AuthenticatorAPI(object):
             return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None, None, None
         passkey: dict = cls._open_keys[cid]
         ca_x5c = passkey.get('x5c')
-        ca_kp = passkey.get('key')
+        ca_kp = passkey.get('kp')
         if not isinstance(ca_kp, KeyPair): # !panic
             return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None, None, None
-        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res_creds')
+        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res.creds')
         if resCreds != None:
             colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                          msg='passkey has resident credentials, adding them to allowed list')
-            for rc in resCreds:
-                if rc.get('rp.id') == rpId:
-                    allowedList += [{'id': rc.get('cred.id'), 
-                                     'user': rc.get('user.id')}]
+            for cred in resCreds:
+                if cred.get('rp.id') == rpId:
+                    allowedList += [{'id': cred.get('cred.id'), 
+                                     'user': cred.get('user.id')}]
         for cred in allowedList:
             try:
+                #logging.debug(f"Try {cred}")
                 return cls._maybe_next_assertion(rpId, ca_kp, ca_x5c, clientDataHash, cred)
             except Exception as e:
                 colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
@@ -590,7 +604,7 @@ class CBORCommand(object):
             0x05: 1200,
             0x06: [1]
         }
-        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result)
+        result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result) )
         logging.debug(f"len: {len(result)}")
         return self._set_rsp_fields(list(result))
 
@@ -719,7 +733,7 @@ class CTAPHIDSeqPkt(BaseStructure):
 
 class KeepAliveWorker(threading.Thread):
 
-    cid = 0xFFFFFFFF
+    cid = b'0xFFFFFFFF'
     not_alive = False
     uhid = None
 
@@ -735,7 +749,7 @@ class KeepAliveWorker(threading.Thread):
                             msg='Thread reached timeout of 100ms before response buffer was recieved . . . sending heartbeat response')
             #We need to reply with keep alive after 50ms this gives us some tolerance
             #Our status is always still processing
-            rsp = CTAPHIDInitPkt(cid=self.cid,
+            rsp = CTAPHIDInitPkt(cid=int.from_bytes(self.cid),
                                   cmd=0xBB,
                                   bcnt=0x01,
                                   data=b'\x02').pack()
@@ -767,14 +781,14 @@ class CTAP2HIDevice(UserDevice):
             rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), 
                                     cmd=cbor_cmd.ctaphid_cmd,
                                     bcnt=cbor_cmd.bcnt,
-                                    data=data).pack()
+                                    data=bytes(data)).pack()
         else: #We send the continue sequence pkt
             data, seq_num = cbor_cmd.get_rsp_seg(59)
             colour_print(colour=bcolors.WARNING, component='send_response_segment', 
                     msg='Sequence number {}'.format(seq_num))
             rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid),
                                      seq=seq_num,
-                                     data=data).pack()
+                                     data=bytes(data)).pack()
         colour_print(colour=bcolors.WARNING, component='send_response_segment', 
                 msg='pad with {} 0 bytes'.format(MAX_DATA_FRAME - len(rsp_data)))
         rsp_data += b'\00' * (MAX_DATA_FRAME - len(rsp_data)) # pad the 64 byte frame with 0x00 if required
@@ -794,7 +808,6 @@ class CTAP2HIDevice(UserDevice):
         cborCmd = CBORCommand(cid, None, skip_init=True)
         cborCmd.ctaphid_cmd = 0x01
         cborCmd.response = list(b'U2F_V2')
-        self.cids[cid]['cborCmd'] = cborCmd
         self.send_response_segment(cid, cborCmd)
 
     def ctaphid_msg(self, usb_req):
@@ -833,7 +846,6 @@ class CTAP2HIDevice(UserDevice):
             cborCmd.ctaphid_cmd = int.from_bytes(cmd)
             cborCmd.bcnt = 6
             cborCmd.response = list(b'U2F_V2')
-            self.cids[cid]['cborCmd'] = cborCmd
             self.send_response_segment(cid, self.cids[cid]['cborCmd'])
 
     def ctaphid_init(self, usb_req):
@@ -853,11 +865,11 @@ class CTAP2HIDevice(UserDevice):
         dump_bytes(data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         initCmd = CBORCommand(cid, None, skip_init=True)
-        self.cids[assignedCID] = {'cborCmd': initCmd }
+        self.cids[assignedCID] = { }
         initCmd.response = data
         initCmd.ctaphid_cmd = int.from_bytes(cmd)
         initCmd.bcnt = 17
-        self.send_response_segment(cid, self.cids[assignedCID]['cborCmd'])
+        self.send_response_segment(cid, initCmd)
 
     def ctaphid_cbor(self, usb_req):
         cid = usb_req.data[0:4]
@@ -875,12 +887,12 @@ class CTAP2HIDevice(UserDevice):
                     msg='CBOR encoded bytes: ')
         cbor_cmd = CBORCommand(cid, usb_req.data[5:MAX_DATA_FRAME])
         cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
-        self.cids[cid]['cborCmd'] = cbor_cmd
         if cbor_cmd.response_ready == True: #We can respond immediatly
-            dump_bytes(self.cids[cid]['cborCmd'].response, colour=bcolors.OKGREEN, 
+            dump_bytes(cbor_cmd.response, colour=bcolors.OKGREEN, 
                        component='CTAP2HIDevice.ctaphid_cbor', msg='CBOR response: ')
             return self.send_response_segments(cid, cbor_cmd)
         else:
+            self.cids[cid]['cborCmd'] = cbor_cmd
             colour_print(colour=bcolors.OKYELLOW, component='CTAP2HIDevice.ctaphid_cbor', 
                          msg="Waiting for rest of command to arrive . . .")
             return
@@ -889,8 +901,8 @@ class CTAP2HIDevice(UserDevice):
         cid = usb_req.data[0:4]
         rsp = CBORCommand(cid, None, skip_init=True)
         rsp.response = []
-        if cid in self.cids:
-            self.cids[cid]['cborCmd'] = rsp
+        #if cid in self.cids:
+        #    self.cids[cid]['cborCmd'] = rsp
         self.send_response_segment(cid, rsp)
 
     def ctaphid_cancel(self, usb_req):
@@ -932,6 +944,7 @@ class CTAP2HIDevice(UserDevice):
             if transaction != None and seqNum == transaction.request_segment:
                 transaction.append_segment(usb_req.data[5:MAX_DATA_FRAME])
                 if transaction.response_ready == True:
+                    del self.cids[cid]['cborCmd']
                     self.send_response_segments(cid, transaction)
                 else:
                     colour_print(colour=bcolors.OKPURPLE, component='CTAP2HIDevice._handle_incoming_sequence', 

@@ -1,5 +1,8 @@
 import os
 import sys
+from cryptography.hazmat.primitives import serialization
+from cryptography import x509
+from cryptography.hazmat.primitives.asymmetric import ec
 import pytest
 import cbor2 as cbor
 import tempfile
@@ -11,6 +14,8 @@ from typing import Dict, Any, Optional
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
+from soft_fido2.cert_utils import CertUtils
+from soft_fido2.key_pair import KeyPair
 from soft_fido2.passkey_device import (
     AuthenticatorAPI, CBORCommand, CTAPHIDInitPkt, CTAPHIDSeqPkt, 
     KeepAliveWorker, CTAP2HIDevice
@@ -355,9 +360,6 @@ class TestCTAP2HIDevice:
             
             # Verify the first argument was the test_cid
             assert mock_send_response.call_args[0][0] == test_cid
-            
-            # Verify the cborCmd was updated in the device's cids dictionary
-            assert device.cids[test_cid]['cborCmd'] is mock_cbor
     
     def test_send_response_segments(self, mock_device):
         """Test sending a response in multiple segments"""
@@ -975,12 +977,14 @@ class TestAuthenticatorAPI:
     def test_validate_pin_success(self, mock_environment):
         """Test successful PIN validation"""
         _, _, mock_key_utils, mock_cert_utils = mock_environment
-        
+        kp = KeyPair.generate_ecdsa()
+        start_key = kp.get_private()
+        cert = CertUtils.gen_ca_cert(x509.Name([x509.NameAttribute(x509.NameOID.COMMON_NAME, u"root")]), 
+                                          365, 123456, kp)
         # Mock the KeyUtils._load_passkey method
         mock_key_utils._load_passkey.return_value = {
-            'x5c': b'cert_data',
-            'key': b'key_data',
-            'seed': b'seed_data'
+            'x5c': cert,
+            'key': start_key,
         }
         
         # Mock the CertUtils.load_der_certificate method
@@ -998,13 +1002,13 @@ class TestAuthenticatorAPI:
         
         # Verify the result is a token
         assert result is not None
-        if result is not None:  # Add explicit check for type checker
-            assert len(result) == 32  # Should be a 32-byte token
+        assert isinstance(result, bytes), f"{result} not a pin auth token"
+        assert len(result) == 32, f"{result} != 32 bytes"
         
         # Verify the open keys were updated
         assert cid in AuthenticatorAPI._open_keys
-        assert AuthenticatorAPI._open_keys[cid]['x5c'] == 'cert_obj'
-        assert AuthenticatorAPI._open_keys[cid]['kp'] == 'key_pair_obj'
+        assert AuthenticatorAPI._open_keys[cid]['x5c'] == cert, f"{cert} != {AuthenticatorAPI._open_keys[cid]['x5c']}"
+        assert AuthenticatorAPI._open_keys[cid]['kp'].get_private_bytes() == kp.get_private_bytes(), f"{AuthenticatorAPI._open_keys[cid]['kp']} != {kp}"
         assert AuthenticatorAPI._open_keys[cid]['ph'] == pin_hash
         assert AuthenticatorAPI._open_keys[cid]['pinAuth'] == result
         assert 'tStart' in AuthenticatorAPI._open_keys[cid], f"Key must have a start time: {AuthenticatorAPI._open_keys[cid].keys()}"

@@ -5,12 +5,12 @@
 import logging, sys, os
 try:
     from .passkey_device import CTAP2HIDevice
-    from .systray_app import SysTrayIcon
+    from .systray_app import SysTrayApp
 except:
     try:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from passkey_device import CTAP2HIDevice
-        from systray_app import SysTrayIcon
+        from systray_app import SysTrayApp
     except Exception as e:
         logging.debug("Module load error")
         logging.exception(e)
@@ -29,7 +29,8 @@ logging.basicConfig(level=ll, format='%(message)s')
 logging.info("Starting the EyeBeeKey Passkey UHID Service")
 print("Starting the EyeBeeKey Passkey UHID Service")
 
+
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
-SysTrayIcon() # runs until quit
+app = SysTrayApp() # runs until quit
 udev.join()

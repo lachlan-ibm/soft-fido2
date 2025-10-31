@@ -261,6 +261,7 @@ usbip attach -r 127.0.0.1 -b <bus_id, 1-1.1>
 Requires
 - UHID (Fedora)
 - Python3
+- Notify Send (libnotify)
 
 Users must set the `FIDO_HOME` environment property. This should be a directory which will contain
 encrypted passkey files.
@@ -280,6 +281,9 @@ echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | tee /etc/udev/rules.d/90-uhid
 # Apply rule
 udevadm control --reload-rules && udevadm trigger
 # Reboot to load uhid module during next boot
+
+# Create key pair for encrypting half of the pin hash, this should be done for all users using software passkeys
+openssl ecparam -name prime256v1 -genkey -noout -out $HOME/.fido/platform.key
 
 # Create systemd daemon
 export FIDO_HOME=/opt/soft_fido2
