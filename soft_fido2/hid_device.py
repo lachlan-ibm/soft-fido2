@@ -134,8 +134,8 @@ class Authenticator(object):
                 passkey = KeyUtils._load_passkey(pinHash, encBagF)
                 colour_print(colour=bcolors.OKPINK, component='Authenticator_validate_pin', 
                              msg='Pin decrypted a .passkey file')
-                ca = CertUtils.load_der_certificate(passkey.get('ca'))
-                kp = KeyUtils.load_ec_key(passkey.get('pk'))
+                ca = CertUtils.load_der_certificate(passkey.get('x5c'))
+                kp = KeyUtils.load_der_key(passkey.get('key'))
                 seed = passkey.get('seed')
                 cls._pin_retry = 5 #Reset the counter
                 pinAuthToken = secrets.token_bytes(32)
@@ -250,7 +250,7 @@ class Authenticator(object):
                 _authenticator = Fido2Authenticator(keyPair=kp, credId=b64CredId, aaguid=[b'\x00'*16], 
                                                     caKeyPair=ca_kp, caCert=ca_pem, fKey=fKey)
                 credential = {
-                        "id": _authenticator.cred_id_bytes, #Should be set by __init__()
+                        "id": _authenticator.cib, #Should be set by __init__()
                         "type" : "public-key"
                     }
                 #Generate the assertion response data

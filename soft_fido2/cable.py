@@ -1,4 +1,5 @@
-
+# Copyrite IBM 2022, 2025
+# IBM Confidential
 
 import cbor2 as cbor
 

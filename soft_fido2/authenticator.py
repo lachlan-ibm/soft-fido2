@@ -1,19 +1,27 @@
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+
 import hashlib, json, struct, re, base64, binascii, sys, array, os, time, logging, jwt
 import cbor2 as cbor
+from typing import Optional, List
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography import x509
+from cryptography.fernet import Fernet
+
 
 try:
     from soft_fido2.key_pair import KeyPair, KeyUtils
-    from soft_fido2.cert_utils import CertUtils    
+    from soft_fido2.cert_utils import CertUtils
+    from soft_fido2.symmetric_key import SymmetricKey
 except:
     try:
         sys.path.append(os.path.dirname(os.path.abspath(__file__)))
         from cert_utils import CertUtils
         from key_pair import KeyPair, KeyUtils
+        from symmetric_key import SymmetricKey    
     except Exception as e:
         logging.debug("Module load error")
         logging.exception(e)
@@ -23,76 +31,91 @@ except:
 class Fido2Authenticator(object):
 
     def __init__(self,
-                 keyPair=None,
-                 credId=None,
-                 aaguid=None,
-                 caKeyPair=None,
-                 caCert=None,
-                 counter=0,
-                 hashingAlg=hashes.SHA256(),
-                 transports=None,
-                 fKey=None,
-                 disable_counter=False):
-        """
+            keyPair: Optional[KeyPair] = None,
+            credId: Optional[bytes] = None,
+            aaguid: Optional[List[int]] = None,
+            caKeyPair: Optional[KeyPair] = None,
+            caCert: Optional[x509.Certificate] = None,
+            counter: int = 0,
+            hashingAlg: hashes.HashAlgorithm = hashes.SHA256(),
+            transports: Optional[List[str]] = None,
+            fKey: Optional[Fernet] = None,
+            sKey: Optional[SymmetricKey] = None,
+            disableCounter: bool = False
+    ) -> None:
+        """Initialize a FIDO2 Authenticator with the specified parameters.
+        
         Args:
-            keyPair (KeyPair): public/private key pair to sign challenges with;
-                    default = RSA 2048 key
-            credId (`obj`:str, optional): url base64 encoded credential Id to use with authenticator, if None
-                    credential Id will be the sha256 of the public key
-            aaguid (:obj:`list` of :obj:`int`, optional): aaguid to associate with
-                    authenticator; default = [0] * 16
-            caKeyPair (KeyPair): public/private key of ca/intermadiate authority
-                    for BASIC/ATTCA attestation formats; default = None
-            caCert (`cryptography.x509.Certificate`): certificate to use as a trust anchor; default = None
-            counter (`int`): Internal counter of token.
-            hashingAlg (`cryptography.hazmat.primitives.hashes.HashAlgorithm`): Hashing algorithm to use for "packed"
-                        attesttation format.
-            transports (list, optional): a list of support transports; default = None
-            fKey (cryptography.fernet.Fernet, optional): An optional symmetric key to generate 
-                        the cred id with. Can be used to reconstruct private EC key for assertions.
-            disable_counter (`bool`, optional): Optionally disable the attestation/assertion internal counter.
+            keyPair (KeyPair, optional): Public/private key pair to sign challenges with.
+                    Default = None (EC 256 key will be generated)
+            credId (bytes, optional): Credential ID to use with authenticator.
+                    Default = None (will be derived from keyPair)
+            aaguid (List[int], optional): AAGUID to associate with authenticator.
+                    Default = None (will use null aaguid)
+            caKeyPair (KeyPair, optional): Public/private key of CA/intermediate authority
+                    for BASIC/ATTCA/TPM/Android attestation formats. Default = None
+            caCert (x509.Certificate, optional): Certificate to use as a trust anchor.
+                    Default = None
+            counter (int): Internal counter of token. Default = 0
+            hashingAlg (hashes.HashAlgorithm): Hashing algorithm for "packed" attestation.
+                    Default = SHA256
+            transports (List[str], optional): List of supported transports. Default = None
+            fKey (Fernet, optional): Symmetric key to generate credential ID.
+                    Can be used to reconstruct private EC key for assertions. Default = None
+            sKey (SymmetricKey, optional): Alternative symmetric key to generate credential ID.
+                    Can be used to reconstruct private EC key for assertions. Default = None
+            disableCounter (bool): Whether to disable the attestation/assertion counter.
+                    Default = False
         """
+        if aaguid and len(aaguid) != 16:
+            raise ValueError("AAGUID must be 16 bytes long")
+        elif not aaguid:
+            aaguid = [0] * 16
+
+        # Core authenticator properties
         self.counter = counter
-        self.userHandle = None
-        self.caCertificate = caCert
-        self.caKeyPair = caKeyPair
         self.hashAlg = hashingAlg
-        self.transports = transports
-        self.cred_id_bytes = None
+        self.disable_counter = disableCounter
+        self.aaguid = aaguid
+        
+        # Credential and key management
         self.kp = keyPair
         self.fKey = fKey
-        self.disable_counter = disable_counter
+        self.sKey = sKey
+        self.cib = None  # Credential ID bytes
+        
+        # Certificate and trust chain
+        self.caCertificate = caCert
+        self.caKeyPair = caKeyPair
+        # Transports
+        self.transports = transports
+        
+        # Initialize key pair based on credential ID
+        self._init_key_pair(credId)
 
-        if self.kp == None and credId != None and fKey != None:
-            try:
-                self.kp = self._get_key_pair_from_credential_id(credId, fKey)
-            except Exception as e:
-                print(e) #set the bytes as the cred_id and generate a key
-                self.cred_id_bytes = self._urlb64_decode(credId)
-
-        if self.kp == None:
-            #self.kp = KeyPair.generate_rsa()
-            #self.kp = KeyPair.generate_ed25519()
+    def _init_key_pair(self, credId):
+        if credId is not None:
+            self.cib = self._urlb64_decode(credId)
+            key = self.fKey or self.sKey
+            if self.kp is None and key is not None:
+                try:
+                    self.kp = self._get_key_pair_from_credential_id(credId, key)
+                except Exception:
+                    pass
+        # Generate a new key pair if we still don't have one
+        if self.kp is None:
             self.kp = KeyPair.generate_ecdsa()
-
-        if credId != None and self.cred_id_bytes == None: # We were not given a sym key so just use the credId as is
-            self.cred_id_bytes = self._urlb64_decode(credId)
-
-        if aaguid == None:
-            self.aaguid = [0] * 16
-        else:
-            self.aaguid = aaguid
-
 
     @classmethod
     def _urlb64_decode(cls, b64String):
         """Helper function to decode b64 urlencoded strings which may be missing
-        the traling padding that python required
+        the trailing padding that Python requires.
 
         Args:
-            b64String (str): string to decode
+            b64String (str): URL-safe base64 encoded string to decode
 
-            str: decoded string
+        Returns:
+            bytes: Decoded bytes
         """
         pad = len(b64String) % 4
         if pad:
@@ -113,6 +136,7 @@ class Fido2Authenticator(object):
         b64String = str(base64.urlsafe_b64encode(byteString), 'utf-8')
         return re.sub(r'=*$', '', b64String)
 
+    @classmethod
     def _long_to_bytes(cls, l):
         """Convert a long to a byte representation
 
@@ -140,7 +164,7 @@ class Fido2Authenticator(object):
             long: value of bytes as a long
         """
         l = len(b) / 4
-        parts = struct.unpack(">" + 'L' * l, b)[::-1]
+        parts = struct.unpack(">" + 'L' * int(l), b)[::-1]
         result = 0
         for i in range(len(parts)):
             temp = parts[i] << (32 * i)
@@ -161,13 +185,16 @@ class Fido2Authenticator(object):
         Return:
             bytes: credential Id for given key pair and ca key pair
         """
-        if self.cred_id_bytes != None:
-            return self.cred_id_bytes
-        elif self.fKey != None and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            keyBytes  = keyPair.get_private_bytes()
-            self.cred_id_bytes = self.fKey.encrypt(keyPair.get_private_bytes())
-            return self.cred_id_bytes
+        if self.cib != None:
+            return self.cib
+        key = (self.sKey or self.fKey) #skey preferred
+        if key and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
+            #logging.debug(f"Encryping cred id with {key}")
+            self.cib = key.encrypt(keyPair.get_private_bytes())
+            #logging.debug(f"self.cib {self.cib}")
+            return self.cib
         else:
+            #logging.debug("using hash of public key as cib")
             return hashlib.sha256(keyPair.get_public_bytes()).digest()
 
     def get_credential_id(self, keyPair=None):
@@ -186,20 +213,20 @@ class Fido2Authenticator(object):
 
 
     @classmethod
-    def _get_key_pair_from_credential_id(cls, credId, fKey):
+    def _get_key_pair_from_credential_id(cls, credId, decryptor):
         """Given a credId and caKeyPair attempt to reconstruct the private/public
         key pair
 
         Args:
             credId (str): url safe base64 encoded private key encrypted using keyPair
-            keyPair (KeyPair): key pair usedd to encrypt private key
+            decryptor (Union[Fernet,SymmetricKey]): key previously used to encrypt private key
 
         Return:
             KeyPair: original key pair stored in credId
         """
         encBytes = cls._urlb64_decode(credId)
-        #decrypt the bytes using the Fernet key
-        keyBytes = fKey.decrypt(encBytes)
+        #decrypt the bytes using the given key
+        keyBytes = decryptor.decrypt(encBytes)
         #Finally reconstruct the key
         return KeyPair.load_key_pair(keyBytes)
 
@@ -228,7 +255,7 @@ class Fido2Authenticator(object):
         return result
 
     def credential_create(self, jsonOptions, atteStmtFmt='packed-self', keyPair=None, uv=True, up=True, be=False, bs=False):
-        '''Reponds to requests to navigator.credentail.create(). jsonOptions should be
+        '''Responds to requests to navigator.credential.create(). jsonOptions should be
         either a dictionary or a JSON string of the attestation options and usually has the form:
         {
             "rp": {
@@ -262,19 +289,20 @@ class Fido2Authenticator(object):
         }
 
         Args:
-            jsonOptions (dict) :dictionary of options for navigator.credential.create
-            atteStmtFormat (:obj:`str`, optional): https://w3c.github.io/webauthn/#defined-attestation-formats
-                    default = 'packed-self'
-                    for compound attestation the string is prefixed with 'compound:' and the required compound
-                    statements are listed with a ',' (comma) separator. eg: `compound:packed-self,tpm`
-            keyPair (:obj:`KeyPair`, optional): private/public key pair to sign the attestation; default = self.kp
-            uv (:obj:`bool`, optional): if the authenticator should set the user verification flag; default = True
-            up (:obj:`bool`, optional): if the authenticator should set the user presence flag; default = True
-            be (:obj:`bool`, optional): if the authenticator should set the backup eligible flag; default = False
-            bs (:obj:`bool`, optional): if the authenticator should set the backup state flag; default = False
+            jsonOptions (dict or str): Dictionary or JSON string of options for navigator.credential.create
+            atteStmtFmt (str, optional): Attestation statement format as defined in
+                    https://w3c.github.io/webauthn/#defined-attestation-formats
+                    Defaults to 'packed-self'.
+                    For compound attestation, the string is prefixed with 'compound:' and the required compound
+                    statements are listed with a ',' (comma) separator. e.g.: `compound:packed-self,tpm`
+            keyPair (KeyPair, optional): Private/public key pair to sign the attestation. Defaults to self.kp.
+            uv (bool, optional): Whether the authenticator should set the user verification flag. Defaults to True.
+            up (bool, optional): Whether the authenticator should set the user presence flag. Defaults to True.
+            be (bool, optional): Whether the authenticator should set the backup eligible flag. Defaults to False.
+            bs (bool, optional): Whether the authenticator should set the backup state flag. Defaults to False.
 
         Returns:
-            dict: response to navigator.credential.create
+            dict: Response to navigator.credential.create containing the attestation
         '''
         if keyPair is None:
             keyPair = self.kp
@@ -363,23 +391,23 @@ class Fido2Authenticator(object):
         return attestedCredDataBytes
 
     def build_authenticator_data(self, pk, attStmtFmt, keyPair, uv, up=True, be=False, bs=False):
-        """create the authenticator data for the attestation or assertion request
+        """Create the authenticator data for the attestation or assertion request.
 
         Args:
-            pk (dict): public key dictionary from request options,
-                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
-                    https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
-            attStmtFmt (str): attestation statement format,
+            pk (dict): Public key dictionary from request options.
+                    For attestation: https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialcreationoptions
+                    For assertion: https://www.w3.org/TR/webauthn/#dictdef-publickeycredentialrequestoptions
+            attStmtFmt (str): Attestation statement format as defined in
                     https://www.w3.org/TR/webauthn/#defined-attestation-formats
-            keyPair (KeyPair): public/private key pair to use
-            up (bool): toggle setting the user presence flag
-            uv (bool): toggle setting the user verification flag
-            be (bool): toggle setting the backup eligible flag
-            bs (bool): toggle setting the backup state flag
+            keyPair (KeyPair): Public/private key pair to use
+            uv (bool): Whether to set the user verification flag
+            up (bool, optional): Whether to set the user presence flag. Defaults to True.
+            be (bool, optional): Whether to set the backup eligible flag. Defaults to False.
+            bs (bool, optional): Whether to set the backup state flag. Defaults to False.
 
         Returns:
-            str: byte string of authenticator data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
+            bytes: Authenticator data as defined in
+                  https://www.w3.org/TR/webauthn/#sec-authenticator-data
         """
         authDataBytes = []
 
@@ -451,7 +479,15 @@ class Fido2Authenticator(object):
         elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
             sig = keyPair.get_private().sign(toSign)
         else:
-            raise Exception("Unsupported key type")
+            # TODO promote PQC to 1st class
+            try:
+                from oqs.oqs import Signature
+                if isinstance(keyPair.get_private(), Signature):
+                    sig = keyPair.get_private().sign(toSign)
+                else:
+                    raise RuntimeError("Unsupported key type")
+            except ImportError:
+                raise Exception("Unsupported key type")
 
         result[u"sig"] = sig
 
@@ -462,10 +498,10 @@ class Fido2Authenticator(object):
                 raise RuntimeError("Packed Attestation requires a CA certificate to be "\
                         "present when the authenticator is created")
             leafSubj = x509.Name([
-                x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'),
-                x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-                x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
-                x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
+                x509.NameAttribute(x509.NameOID.COMMON_NAME, u'leaf'),
+                x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
+                x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
+                x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
             ])
             leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
                                               issuer=self.caCertificate.subject,
@@ -496,13 +532,13 @@ class Fido2Authenticator(object):
         if not isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
             raise Exception("FIDO U2F only supports ECDSA keys")
 
-        pubKey = ['\x04']
-        pubKey += self._long_to_bytes(keyPair.get_public().public_numbers().x)
-        pubKey += self._long_to_bytes(keyPair.get_public().public_numbers().y)
+        pubKey = bytearray(b'\x04')
+        pubKey.extend(self._long_to_bytes(keyPair.get_public().public_numbers().x))
+        pubKey.extend(self._long_to_bytes(keyPair.get_public().public_numbers().y))
 
         subject = x509.Name([
-            x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'root'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security')
+            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'root'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security')
         ])
         cert = CertUtils.gen_ca_cert(subject=subject, keyPair=keyPair)
 
@@ -582,30 +618,30 @@ class Fido2Authenticator(object):
         return bytes(certInfo)
 
     def build_tpm_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the TPM format
+        """Create an attestation statement with the TPM format.
 
         Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
+            atteStmtFmt (str): Statement format ('tpm')
+            clientDataHash (bytes): Hash of the client data as defined in
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
+            authData (bytes): Authenticator data as defined in
                     https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
+            credIdBytes (bytes): Credential ID bytes
+            keyPair (KeyPair): Public/private key pair to sign data with
 
         Returns:
-            dict: tpm attestation statement,
-                    https://www.w3.org/TR/webauthn/#fido-u2f-attestation
+            dict: TPM attestation statement as defined in
+                  https://www.w3.org/TR/webauthn/#tpm-attestation
         """
         if not self.caCertificate:
             raise RuntimeError("TPM Attestation requires a CA certificate to be "\
                     "present when the authenticator is created")
         #Generate TPM certificates
         vendorId = CertUtils._long_to_bytes(CertUtils.TPM_VENDOR_ID).hex()
-        tpmSan = x509.name.Name([
-            x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_MANUFACTURER), u"id:{}".format(vendorId)),
-            x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
-            x509.NameAttribute(x509.oid.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
+        tpmSan = x509.Name([
+            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_MANUFACTURER), u"id:{}".format(vendorId)),
+            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
+            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
         ])
         tpmCert = CertUtils.gen_aik_cert(subject=x509.Name([]),
                                          issuer=self.caCertificate.subject,
@@ -621,13 +657,15 @@ class Fido2Authenticator(object):
                     self._build_ec_public_area(keyPair)
         certInfo = self._build_cert_info(toSign, pubArea)
         sig = None
+        theHash = hashes.SHA256()
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
-            sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), hashes.SHA256())
+            keyPair.get_private().sign(certInfo, padding.PKCS1v15(), theHash)
+            sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), theHash)
         else:
             digest = hashes.Hash(hashes.SHA256())
             digest.update(certInfo)
-            sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
+            sig = keyPair.get_private().sign(digest.finalize(),
+                                                  ec.ECDSA(utils.Prehashed(theHash)) )
 
 
         # Build attestation
@@ -636,7 +674,7 @@ class Fido2Authenticator(object):
             u"certInfo": certInfo,
             u"sig": sig,
             u"ver": u"2.0",
-            u"alg": -257 if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else -7,  # SHA256 /w RSA (-257) or EC (-7)
+            u"alg": KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), theHash),
             u"x5c": x5c
         }
         return result
@@ -678,11 +716,14 @@ class Fido2Authenticator(object):
         """
         if(isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey)):
            raise RuntimeError("Android safetynet Attestation requires a RSA key")
+        if self.caCertificate is None:
+            raise RuntimeError("Android safetynet Attestation requires a CA certificate to be" + \
+                    " set for the authenticator")
         leafSubj = x509.Name([
-            x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'attest.android.com'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
+            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'attest.android.com'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
+            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
                                           issuer=self.caCertificate.subject,
@@ -729,10 +770,10 @@ class Fido2Authenticator(object):
 
         #Build x5c chain
         leafSubj = x509.Name([
-            x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'leaf'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
+            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'leaf'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
+            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
                                           issuer=self.caCertificate.subject,
@@ -748,7 +789,8 @@ class Fido2Authenticator(object):
         else: #Must be EC key
             digest = hashes.Hash(hashes.SHA256())
             digest.update(bytes(toSign))
-            sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
+            sig = keyPair.get_private().sign(digest.finalize(),
+                                                  ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
 
         result = {
             u"x5c": x5c,
@@ -758,20 +800,19 @@ class Fido2Authenticator(object):
         return result
 
     def build_apple_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestaion statement with the Apple Platform format
+        """Create an attestation statement with the Apple Platform format.
 
         Args:
-            atteStmtFmt (str): statement format, 'apple'
-            clientDataHash (str): byte string of clientDataHash,
+            atteStmtFmt (str): Statement format ('apple')
+            clientDataHash (bytes): Hash of the client data as defined in
                     https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
+            authData (bytes): Authenticator data as defined in
                     https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
+            credIdBytes (bytes): Credential ID bytes
+            keyPair (KeyPair): Public/private key pair to sign data with
 
         Returns:
-            dict: Apple platform attestation statement,
-                    #TODO has not been published
+            dict: Apple platform attestation statement containing x5c certificate chain
         """
         if not self.caCertificate:
             raise RuntimeError("Apple Attestation requires a CA certificate to be "\
@@ -782,10 +823,10 @@ class Fido2Authenticator(object):
         nonceBytes += clientDataHash
         nonceHash = hashlib.sha256(bytes(nonceBytes)).digest()
         leafSubj = x509.Name([
-            x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, u'apple'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.oid.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.oid.NameOID.ORGANIZATION_NAME, u'IBM')
+            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'apple'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
+            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
+            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
         ])
         appleCert = CertUtils.gen_apple_cert(subject=leafSubj,
                                              issuer=self.caCertificate.subject,
@@ -795,21 +836,20 @@ class Fido2Authenticator(object):
         print(CertUtils.get_encoded(appleCert))
         return {'x5c': [CertUtils.get_encoded(appleCert), CertUtils.get_encoded(self.caCertificate)]}
 
-    def _process_att_stmt(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        try:
-            return {
-                "none": self.build_none_attestation_statement,
-                "packed": self.build_packed_attestation_statement,
-                "fido-u2f": self.build_fido_u2f_attestation_statement,
-                "packed-self": self.build_packed_attestation_statement,
-                "android-key": self.build_android_key_attestation_statement,
-                "android-safetynet": self.build_android_safetynet_attestation_statement,
-                "tpm": self.build_tpm_attestation_statement,
-                "apple": self.build_apple_attestation_statement
-            }.get(atteStmtFmt)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
-        except KeyError:
-            raise Exception("Unsupported attestation statement format [{}]".format(atteStmtFmt))
+    def _error(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+            raise ValueError("Unsupported attestation statement format")
 
+    def _process_att_stmt(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
+        return {
+            "none": self.build_none_attestation_statement,
+            "packed": self.build_packed_attestation_statement,
+            "fido-u2f": self.build_fido_u2f_attestation_statement,
+            "packed-self": self.build_packed_attestation_statement,
+            "android-key": self.build_android_key_attestation_statement,
+            "android-safetynet": self.build_android_safetynet_attestation_statement,
+            "tpm": self.build_tpm_attestation_statement,
+            "apple": self.build_apple_attestation_statement
+        }.get(atteStmtFmt, self._error)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
 
     def process_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
         """Helper function that chooses an attestation statement function based on the atteStmtFmt variable
@@ -843,14 +883,16 @@ class Fido2Authenticator(object):
         return self._process_att_stmt(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
 
     def attestation_options_response_to_credential_create_options(self, options):
-        """Take the options provided by the relyig party and extract required information to
-        generate the attestation
+        """Take the options provided by the relying party and extract required information to
+        generate the attestation.
 
         Args:
-            options (dict): options from navigator.credential.create
+            options (dict): Options from navigator.credential.create as defined in
                     https://www.w3.org/TR/webauthn/#credentialcreationoptions-extension
+
         Returns:
-            dict: https://www.w3.org/TR/webauthn/#dictionary-makecredentialoptions
+            dict: Credential creation options as defined in
+                  https://www.w3.org/TR/webauthn/#dictionary-makecredentialoptions
         """
         pkcco = {'rp': options['rp']}
         user = {'id': self._urlb64_decode(options['user']['id'].encode('UTF-8'))}
@@ -927,6 +969,19 @@ class Fido2Authenticator(object):
         return spkc
 
     def assertion_signature(self, authData, clientDataHash, keyPair):
+        """Generate a signature for an assertion using the appropriate algorithm for the key type.
+
+        Args:
+            authData (bytes): Authenticator data
+            clientDataHash (bytes): Hash of the client data
+            keyPair (KeyPair): Public/private key pair to sign with
+
+        Returns:
+            bytes: Signature of the combined authenticator data and client data hash
+
+        Raises:
+            Exception: If the key algorithm is not supported
+        """
         toSign = []
         toSign += authData
         toSign += clientDataHash
@@ -937,11 +992,12 @@ class Fido2Authenticator(object):
         elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey) == True:
             hasher = hashes.Hash(self.hashAlg)
             hasher.update(toSignStr)
-            sig = keyPair.get_private().sign(hasher.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
+            sig = keyPair.get_private().sign(hasher.finalize(),
+                                                  ec.ECDSA(utils.Prehashed(self.hashAlg)))
         elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
             sig = keyPair.get_private().sign(toSignStr)
         else:
-            raise Exception("Unsupported key alg")
+            raise Exception("Unsupported key algorithm")
         return sig
 
     def assertion_options_response_to_credential_request_options(self, options):
@@ -1003,13 +1059,11 @@ class Fido2Authenticator(object):
             "clientDataJSON": str(base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8'),
             "authenticatorData": str(base64.urlsafe_b64encode(authData), 'utf-8')
         }
-        if self.userHandle != None:
+        if hasattr(self, 'userHandle') and isinstance(self.userHandle, (str, bytes)):
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
         if "attestation" in cro.keys():
             raise RuntimeError("TODO")
         clientDataHash = bytearray(hashlib.sha256(clientDataJSON.encode('utf-8')).digest())
-
-        credIdBytes = self._get_credential_id_bytes(keyPair)
 
         saar['signature'] = str(base64.urlsafe_b64encode(self.assertion_signature(
                                                             authData, clientDataHash, keyPair)), 'utf-8')
@@ -1030,27 +1084,32 @@ class Fido2Authenticator(object):
 ############################# MAIN ##############################
 
 if __name__ == "__main__":
-    if os.environ.get("FIDO_HOME") == None:
+    if "FIDO_HOME" not in os.environ:
         logging.debug("Cannot find passkey home \"FIDO_HOME\"")
         sys.exit(1)
     authenticator = Fido2Authenticator()
     rsp = None
-    pubPath = open(os.path.join(os.environ.get('FIDO_HOME'), 'public.pem'))
-    pivPath = open(os.path.join(os.environ.get('FIDO_HOME'), 'private.pem'))
+    pubPath = os.path.join(os.environ['FIDO_HOME'], 'test_public.pem')
+    pivPath = os.path.join(os.environ['FIDO_HOME'], 'test_private.pem')
     if sys.argv[1] == 'attestation':
-        rsp = authenticator.credential_create(sys.argv[3], atteStmtFmt=sys.argv[2], keyPair=authenticator.kp)
-        with open(pivPath, 'wb') as key_file:
-            key_file.write(authenticator.kp.get_private_bytes())
-
-        with open(pubPath, 'wb') as key_file:
-            key_file.write(authenticator.kp.get_public_bytes())
+        if authenticator.kp is not None:
+            rsp = authenticator.credential_create(sys.argv[3], 
+                                                                  atteStmtFmt=sys.argv[2], 
+                                                                  keyPair=authenticator.kp)
+            with open(pivPath, 'wb') as key_file:
+                key_file.write(authenticator.kp.get_private_bytes())
+            with open(pubPath, 'wb') as key_file:
+                key_file.write(authenticator.kp.get_public_bytes())
     elif sys.argv[1] == 'assertion':
         privateKey = publicKey = None
         with open(pivPath, 'rb') as key_file:
-            privateKey = serialization.load_pem_private_key(key_file.read(), password=None, backend=default_backend())
+            privateKey = serialization.load_pem_private_key(key_file.read(), 
+                                                                             password=None,
+                                                                             backend=default_backend())
 
         with open(pubPath, 'rb') as key_file:
-            publicKey = serialization.load_pem_public_key(key_file.read(), backend=default_backend())
+            publicKey = serialization.load_pem_public_key(key_file.read(),
+                                                                          backend=default_backend())
 
         keyPair = KeyPair(privateKey, publicKey)
         authenticator.kp = keyPair

@@ -3,21 +3,19 @@
 # Assisted by watsonx Code Assistant
 # Copyright IBM Corp. 2025
 
-import os, struct, fcntl, errno, time, queue, threading, logging, re, signal, sys
+import os, struct, fcntl, time, queue, threading, logging, re
 
 from enum import Enum
 
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
-    from soft_fido2.systray_app import SysTrayIcon
 except:
     from message_queues import QueueMessageType, MessageQueue
-    from systray_app import SysTrayIcon
 
 # Assisted by watsonx Code Assistant 
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Hey StackOverflow !
+# Thanks StackOverflow !
 class bcolors:
     HEADER = '\033[95m'
     OKBLUE = '\033[94m'
@@ -113,7 +111,7 @@ class UHIDEventType(Enum):
         except ValueError:
             raise ValueError(f"Unknown UHIDEventType value: {event_int}")
 
-    def pack():
+    def pack(self):
         return struct.pack('I', self.value)
 
 
@@ -159,7 +157,7 @@ class BaseStructure(object):
         for field in self._fields_:
             #logging.debug("Field: {}".format(field))
             if isinstance(field[1], BaseStructure):
-                values.append(getattr(self, field[0], 0).pack())
+                values.append(getattr(self, field[0], field[1]).pack())
             elif re.match(r'\d*x', field[1]):
                 #Skip padding
                 continue
@@ -249,7 +247,11 @@ class UHIDInput2Event(BaseStructure):
         ]
 
 class UHIDOutputEvent(BaseStructure):
-     _fields_ = [
+    ev_len = 0
+    type = UHIDReportType.OUTPUT_REPORT.value
+    data = b'\x00'
+
+    _fields_ = [
             ('event', 'I', UHIDEventType.OUTPUT.value),
             ('data', '4096s', b'\x00' * 4096),
             ('ev_len', 'H', 0),
@@ -285,6 +287,8 @@ class UHIDGetReportReply(BaseStructure):
         ]
 
 class UHIDSetReport(BaseStructure):
+    report_type = 0x01
+
     _fields_ = [
             ('event', 'I', UHIDEventType.SET_REPORT.value),
             ('id', 'I'),
@@ -303,6 +307,7 @@ class UHIDSetReportReply(BaseStructure):
 
 class UserDevice(threading.Thread):
 
+
     #Pending input reports
     pending = queue.Queue(maxsize=100)
     events = []
@@ -310,13 +315,18 @@ class UserDevice(threading.Thread):
     def __init__(self, devPath="/dev/uhid"):
         super().__init__()
         self.device_path = devPath
-        self.interrupt = False
-        #self._stop_event = threading.Event()
-        signal.signal(signal.SIGINT, self.interrupt)
-        signal.signal(signal.SIGTERM, self.interrupt)
+        self._interrupt = False
+        #import signal
+        #signal.signal(signal.SIGINT, self.stop_device)
+        #signal.signal(signal.SIGTERM, self.stop_device)
 
-    def interrupt():
-        self.interrupt = True
+
+
+    def stop_device(self, tid, frame):
+        logging.error(f"Received interrupt from {tid}: frame {frame}")
+        self._interrupt = True
+        if MessageQueue.notify_sysapp is not None:
+            MessageQueue.notify_sysapp.put(QueueMessageType.QUIT)
 
     # Assisted by watsonx Code Assistant 
     def format_bytes(self, byte_array):
@@ -357,22 +367,22 @@ class UserDevice(threading.Thread):
         ev = UHIDCloseEvent()
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
-        MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
-        MessageQueue.udev_get.put(QueueMessageType.AUTH_RESPONSE)
+        MessageQueue.notify_auth.put(QueueMessageType.CLOSE_EVENT)
         return
 
     def process_output(self, event):
-        raise NotImplemented("override me")
+        raise NotImplementedError("override me")
 
     def output_ev(self, ev_type, ev_bytes):
         logging.debug("Output event received!")
         ev = UHIDOutputEvent()
         ev.unpack(ev_bytes[:len(ev.pack())])
-        logging.debug(f"event : {ev.ev_len} {ev.type} {ev.data[:ev.ev_len]}")
+        if ev.data:
+            logging.debug(f"event : {ev.ev_len} {ev.type} {ev.data[:ev.ev_len]}")
         self.process_output(ev)
 
     def handle_unknown_control(self, ev_bytes):
-        raise NotImplemented("override me")
+        raise NotImplementedError("override me")
 
     def get_report_ev(self, ev_type, ev_bytes):
         logging.debug("Get report event received!")
@@ -387,7 +397,7 @@ class UserDevice(threading.Thread):
         ev.unpack(ev_bytes[:len(ev.pack())])
         logging.debug(f"ev: {ev}")
         if ev.report_type == UHIDReportType.FEATURE_REPORT:
-            raise NotImplemented("TODO")
+            raise NotImplementedError("TODO")
         else:
             raise NotImplementedError("unexpected request")
 
@@ -411,6 +421,47 @@ class UserDevice(threading.Thread):
         ev = UHIDInput2Event(event=UHIDEventType.DESTROY.value, ev_len=0)
         os.write(fd, ev.pack())
 
+    def _maybe_in(self, fd):
+        try: #Poll for event
+            eventBytes = os.read(fd, EV_MAX_SIZE)
+            #self.log_received_bytes(eventBytes)
+            if isinstance(eventBytes, bytes) \
+                    and len(eventBytes) >= UHID_EVENT_TYPE_SIZE:
+                eventType = UHIDEventType.from_bytes(
+                                eventBytes[:UHID_EVENT_TYPE_SIZE])
+                thread = threading.Thread(target=self.process_event, args=(eventType, eventBytes))
+                thread.start()
+                self.events.append(thread)
+            else:
+                logging.error(f"Invalid event read [{eventBytes}]")
+        except BlockingIOError: #No event
+            #logging.debug("No data available (non-blocking read)") #very very very verbose
+            pass
+        tempEvList = []
+        for ev in self.events:
+            if not ev.is_alive():
+                ev.join()
+                tempEvList.append(ev)
+        for ev in tempEvList:
+            self.events.remove(ev)
+
+    def _maybe_out(self, fd):
+        try:
+            while self.pending.qsize() > 0: # uhid device sends output to kernel
+                inData = self.pending.get(True, 0.00001) #10ns
+                ev = UHIDInput2Event(ev_len=64, data=inData)
+                inBytes = ev.pack()
+                #self.log_received_bytes(inBytes, io_type="OUT")
+                n = os.write(fd, bytearray(inBytes))
+                if n != len(inBytes):
+                    raise RuntimeError(f"invalid write length {n} != {len(ev.pack())}")
+                else:
+                    logging.debug("Event sent!")
+                logging.debug(f"{self.pending.qsize()} events left in the queue")
+        except queue.Empty:
+            logging.debug("Failed to get more output events, not sending anything else.")
+
+
     def run(self):
         fd = None
         started = False
@@ -418,11 +469,10 @@ class UserDevice(threading.Thread):
             fd = os.open('/dev/uhid', os.O_RDWR)  #| os.O_CLOEXEC| os.O_NONBLOCK
             fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
         except OSError as e:
-            logging.debug("OSError with uhid fd")
-            logging.exception(e)
+            logging.exception(f"OSError with uhid fd: {e}")
             return
         if fd == None:
-            logging.debug("Error with udev fd")
+            logging.error("udev fd is null")
             return
         try:
             #Send create
@@ -430,51 +480,16 @@ class UserDevice(threading.Thread):
             n = os.write(fd, bytearray(create_2_req))
             if n != len(create_2_req):
                 raise RuntimeError("invalid write length")
-            while not self.interrupt:
-                try: #Poll for event
-                    #logging.debug(f"os.read({fd}, {EV_MAX_SIZE})")
-                    eventBytes = os.read(fd, EV_MAX_SIZE)
-                    #self.log_received_bytes(eventBytes)
-                    if isinstance(eventBytes, bytes) \
-                            and len(eventBytes) >= UHID_EVENT_TYPE_SIZE:
-                        eventType = UHIDEventType.from_bytes(
-                                        eventBytes[:UHID_EVENT_TYPE_SIZE])
-                        thread = threading.Thread(target=self.process_event, args=(eventType, eventBytes))
-                        thread.start()
-                        self.events.append(thread)
-                    else:
-                        logging.error(f"Invalid event read [{eventBytes}]")
-                except BlockingIOError: #No event
-                    #logging.debug("No data available (non-blocking read)")
-                    pass
-                tempEvList = []
-                for ev in self.events:
-                    if not ev.is_alive():
-                        ev.join()
-                        tempEvList.append(ev)
-                for ev in tempEvList:
-                    self.events.remove(ev)
-                try:
-                    # uhid device sends output to kernel
-                    while self.pending.qsize() > 0:
-                        inData = self.pending.get(True, 0.00001) #10ns
-                        ev = UHIDInput2Event(ev_len=64, data=inData)
-                        inBytes = ev.pack()
-                        #self.log_received_bytes(inBytes, io_type="OUT")
-                        n = os.write(fd, bytearray(inBytes))
-                        if n != len(inBytes):
-                            raise RuntimeError(f"invalid write length {n} != {len(ev.pack())}")
-                        else:
-                            logging.debug("Event sent!")
-                        logging.debug(f"{self.pending.qsize()} events left in the queue")
-                except queue.Empty:
-                    logging.debug("Could not get output event, not sending anything.")
-                if not self.interrupt:
-                    time.sleep(0.001) #poll every 10 ms
+            while not self._interrupt:
+                self._maybe_in(fd)
+                self._maybe_out(fd)
+                if not self._interrupt:
+                    time.sleep(0.001) #poll respective queues every ms
                 if MessageQueue.notify_udev.qsize() > 0:
                     sysTrayMsg = MessageQueue.notify_udev.get()
+                    logging.debug(f"Event from systeray_app: {sysTrayMsg}") 
                     if sysTrayMsg == QueueMessageType.QUIT:
-                        MessageQueue.udev_get.put(QueueMessageType.QUIT)
+                        self._interrupt = True
                         break
         finally:
             if started:
