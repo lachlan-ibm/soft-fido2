@@ -104,7 +104,7 @@ class ManageCredentialsDialog(QDialog):
         """Create the Load and Delete buttons."""
         layout = QHBoxLayout()
         
-        self.load_button = QPushButton("Load Credentials")
+        self.load_button = QPushButton("(re)Load Credentials")
         self.load_button.clicked.connect(self.load_credentials)
         
         self.delete_button = QPushButton("Delete Selected")
@@ -157,6 +157,18 @@ class ManageCredentialsDialog(QDialog):
                 # Add to list widget
                 item_text = f"uri: {rp_id} | user id: {user_id}"
                 self.creds_list.addItem(item_text)
+            
+            # Maybe update the cached pin hash by writing the passkey back to file
+            # This uses the full pin hash that was collected and just verified
+            # by _load_passkey 
+            #TODO concurency problems
+            KeyUtils._save_passkey(
+                self.passkey['key'],
+                self.passkey['x5c'],
+                self.credentials,
+                self.passkey['pin.hash'],
+                passkey_path
+            )
                 
         except Exception as e:
             logging.exception(f"failed to load the credentials from {self.name_input.currentText()} : {e}")
@@ -263,7 +275,7 @@ class CollectPlatformSecretDialog(QDialog):
 class GeneratePasskeyDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Generate Passkey")
+        self.setWindowTitle("Generate New Passkey")
         layout = QVBoxLayout()
         
         # PIN input with password masking
@@ -393,13 +405,13 @@ class SysTrayApp(QDialog):
         NotifySend.cancel_notification()
 
     def _launch_notification_fallback(self):
-        self._tray_icon.showMessage("soft_fido2 Authenticator",
-                         "EyeBeeKey Passkey UHID Service: use the init option to get started",
-                         QSystemTrayIcon.MessageIcon.Information, 5000)
+        self._tray_icon.showMessage("EyeBeeKey",
+                         "Use the Generate Cache Key option to get started",
+                         QSystemTrayIcon.MessageIcon.Information, 3000)
 
     def _prompt_notification_fallback(self):
-        self._tray_icon.showMessage("soft_fido2 Authenticator",
-                         "Authenticator is making a request. Do you accept?",
+        self._tray_icon.showMessage("EyeBeeKey",
+                         "Pirate key recieved a webauthn ceremony, should I respond?",
                          QSystemTrayIcon.MessageIcon.Critical, 15000)
 
     def on_message_clicked(self):
@@ -426,7 +438,7 @@ class SysTrayApp(QDialog):
         return icon
 
     def __generate_platform_key_action_setup(self):
-        action = QAction('Generate Platform Key', self.app)
+        action = QAction('Generate Cache Key', self.app)
         action.triggered.connect(self.__generate_platform_key)
         return action
 
@@ -499,7 +511,9 @@ class SysTrayApp(QDialog):
                     return
             
             # Create the platform key
-            KeyUtils.create_platform_key(secret=pin if pin and len(pin) > 0 else None, filename=filename)
+            nonce = pin if pin and len(pin) > 0 else None
+            logging.debug(f"Platform key nonce: {nonce}")
+            KeyUtils.create_platform_key(secret=nonce, filename=filename)
             
             QMessageBox.information(
                 self,
@@ -544,8 +558,8 @@ class SysTrayApp(QDialog):
             # Save passkey
             fido_home = os.environ.get("FIDO_HOME", None)
             if not fido_home:
-                self._tray_icon.showMessage("soft_fido2 Authenticator",
-                     "FIDO_HOME property not set, restart soft_fido2",
+                self._tray_icon.showMessage("EyeBeeKey",
+                     "FIDO_HOME property not set, restart passkey process",
                      QSystemTrayIcon.MessageIcon.Critical, 7500)
                 return
             os.makedirs(fido_home, exist_ok=True)
@@ -687,9 +701,9 @@ class NotifySend:
             '--action=default=default',
             '--expire-time={}'.format(timeout),
             '--icon=info',
-            '--app-name=soft_fido2',
-            'soft_fido2 Authenticator',
-            'Authenticator is making a request. Do you accept?']
+            '--app-name=EyeBeeKey',
+            'I challenge thee',
+            'Pirate key recieved a webauthn ceremony, should I respond?']
         cls.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         while cls.proc.poll() is None:
             time.sleep(0.002)
@@ -709,9 +723,9 @@ class NotifySend:
     @classmethod
     def launch_notification(cls):
         cmd = ['notify-send',
-            '--app-name=soft_fido2',
-            '--icon=info', 'soft_fido2 Authenticator',
-            'Starting the EyeBeeKey Passkey UHID Service']
+            '--app-name=EyeBeeKey',
+            '--icon=info', 'EyeBeeKey',
+            'Starting the Pirate Passkey UHID Service']
         subprocess.Popen(cmd).communicate()
 
 # Made with Bob

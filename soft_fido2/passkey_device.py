@@ -533,7 +533,7 @@ class CBORCommand(object):
         cls._pending = pending
 
     def gather_user_presence(self):
-        if os.environ.get('SOFT_FIDO_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
+        if os.environ.get('SOFT_FIDO2_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
             colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence', 
                     msg='Skipping user presence check')
             return True

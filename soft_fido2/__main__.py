@@ -22,9 +22,13 @@ if os.environ.get("FIDO_HOME") == None:
 ll = logging.INFO
 if "SOFT_FIDO2_DEBUG_LEVEL" in os.environ:
     ll = os.environ.get("SOFT_FIDO2_DEBUG_LEVEL")
+logFile = None # > stdout/stderr
+if "SOFT_FIDO2_LOG_FILE" in os.environ:
+    logFile = os.path.join(
+                        os.environ["FIDO_HOME"], os.environ["SOFT_FIDO2_LOG_FILE"])
 
 #logPath = os.path.join(os.environ.get("FIDO_HOME"), 'passkey.log')
-logging.basicConfig(level=ll, format='%(message)s')
+logging.basicConfig(level=ll, format='%(message)s', filename=logFile)
 #logging.basicConfig(level=logging.DEBUG, format='%(message)s')
 logging.info("Starting the EyeBeeKey Passkey UHID Service")
 print("Starting the EyeBeeKey Passkey UHID Service")
