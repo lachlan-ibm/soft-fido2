@@ -172,6 +172,11 @@ class ManageCredentialsDialog(QDialog):
                 
         except Exception as e:
             logging.exception(f"failed to load the credentials from {self.name_input.currentText()} : {e}")
+            self.creds_list.clear()
+            self.passkey = None
+            self.credentials = []
+            self.name_input.clear()
+            self.name_input.setFocus()
         
     def delete_credential(self):
         # Get selected items
