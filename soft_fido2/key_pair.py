@@ -202,20 +202,20 @@ class KeyUtils(object):
     Passkey File:
         key: EC key
         x5c: X509 certificate issued to key
-        res.creds: list of resident credentials
+        res.creds: list of resident credentials (dictionary of "rp.id", "user.id", "cred.id")
         pin.hash: SHA256 of user provided secret, only the lower half (16 bytes) of this value
                   is provided during pin auth protocol 1
 
         File: Header | Body
-        Header: enc.upper.hash: bytes(32)
+        Header: enc.upper.hash: bytes(230)
         Body: pkcs12.len: bytes(4) | pkcs12.file: bytes(pcks12.len) | enc.res.creds: bytes(remaining)
 
     Write file process:
-        upper.hash: pin.hash[16:]
+        upper.hash: bytes 16-32 of the full 32-byte hash of pin (pin.hash)
         enc.upper.hash: ec_encrypt upper.hash with ${FIDO_HOME}/platform.key
         header: enc.upper.hash
         pkcs12.bytes: use pin.hash as secret to generate encrypted pkcs12 bytes of key + x5c
-        pcks12.bytes.len: len(pcks12.bytes)
+        pkcs12.bytes.len: len(pcks12.bytes)
         enc.res.creds : encrypt cbor.encode(res_creds) with key
         body: concatenate pcks12.bytes.len | pkcs12.bytes | enc.res.creds
         file: concatenate header | body
@@ -225,7 +225,7 @@ class KeyUtils(object):
         collect pin (lower pin hash for pin auth protocol, ect,)
         read file, split header from body
         upper.hash: ec_decrypt enc.upper.hash with ${FIDO_HOME}/platform.key
-        pin.hash: concatenate upper.hash | lower.hash
+        pin.hash: concatenate lower.hash | upper.hash
         read pkcs12.bytes.len
         read pkcs12.bytes 
         key | x5c: use pin hash to decrypt pcks12 file
@@ -300,7 +300,7 @@ class KeyUtils(object):
             elif len(res_creds) > 0 and not isinstance(res_creds[0], dict):
                 raise ValueError('res_creds is not a list of credentials')
         else: 
-            raise ValueError("Could not find PKCS12 bytes")
+            raise ValueError("No resident credentials found")
         # Construct the passkey dictionary
         passkey = {
             'key': key.get_private(),
