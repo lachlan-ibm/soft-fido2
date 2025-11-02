@@ -1,12 +1,13 @@
 # Copyrite IBM 2022, 2025
 # IBM Confidential
 
-import os, time, sys, subprocess, traceback, shutil, threading, logging, signal, socket, ctypes
+import os, time, sys, subprocess, traceback, shutil, threading, logging, signal
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
-                QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSystemTrayIcon, QMenu, QVBoxLayout,
-                QComboBox)
-from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, QTimer, Qt, QMetaObject, QSocketNotifier
+                QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSystemTrayIcon, 
+                QMenu, QVBoxLayout, QComboBox)
+from PyQt6.QtCore import (QObject, QRunnable, QThreadPool, pyqtSignal, pyqtSlot, 
+                        QTimer, Qt, QMetaObject)
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
     from soft_fido2.key_pair import KeyUtils
@@ -104,10 +105,10 @@ class ManageCredentialsDialog(QDialog):
         """Create the Load and Delete buttons."""
         layout = QHBoxLayout()
         
-        self.load_button = QPushButton("(re)Load Credentials")
+        self.load_button = QPushButton("(re)Load Credentials (and Cache pin)")
         self.load_button.clicked.connect(self.load_credentials)
         
-        self.delete_button = QPushButton("Delete Selected")
+        self.delete_button = QPushButton("Delete Resident Credential")
         self.delete_button.clicked.connect(self.delete_credential)
         
         layout.addWidget(self.load_button)
@@ -127,21 +128,31 @@ class ManageCredentialsDialog(QDialog):
             for passkey_file in passkey_files:
                 # Add just the basename to the dropdown
                 self.name_input.addItem(os.path.basename(passkey_file))
-    
+
+    def _try_cache_pin(self, nonce, passkey_path):
+        """ Load then Save passkey. This will update the cached upper pin hash
+        with the provided secret if it successfully unpacks the passkey file. """
+        self.passkey = KeyUtils._load_passkey(nonce, passkey_path)
+        self.credentials = self.passkey['res.creds']
+        KeyUtils._save_passkey(
+            self.passkey['key'],
+            self.passkey['x5c'],
+            self.passkey['res.creds'],
+            self.passkey['pin.hash'],
+            passkey_path
+        )
+
     def load_credentials(self):
         try:
-            # Get PIN hash using the same method as in __handle_generate_passkey_dialog
+            # Get PIN hash
             pin = self.pin_input.text()
             nonce = KeyUtils.get_pin_hash(pin)
             # Get the selected passkey filename
             passkey_name = self.name_input.currentText()
-
-            # Get the full path to the passkey file
             passkey_path = os.path.join(self.fido_home, passkey_name)
             
-            self.passkey = KeyUtils._load_passkey(nonce, passkey_path)
-            self.credentials = self.passkey['res.creds']
-            
+            self._try_cache_pin(nonce, passkey_path)
+            # Success
             # Clear the list widget
             self.creds_list.clear()
             
@@ -157,21 +168,15 @@ class ManageCredentialsDialog(QDialog):
                 # Add to list widget
                 item_text = f"uri: {rp_id} | user id: {user_id}"
                 self.creds_list.addItem(item_text)
-            
-            # Maybe update the cached pin hash by writing the passkey back to file
-            # This uses the full pin hash that was collected and just verified
-            # by _load_passkey 
-            #TODO concurency problems
-            KeyUtils._save_passkey(
-                self.passkey['key'],
-                self.passkey['x5c'],
-                self.credentials,
-                self.passkey['pin.hash'],
-                passkey_path
-            )
                 
+            
         except Exception as e:
             logging.exception(f"failed to load the credentials from {self.name_input.currentText()} : {e}")
+            self.creds_list.clear()
+            self.passkey = None
+            self.credentials = []
+            self.pin_input.clear()
+            self.pin_input.setFocus()
         
     def delete_credential(self):
         # Get selected items
@@ -201,6 +206,8 @@ class ManageCredentialsDialog(QDialog):
         self.write_passkey()
 
     def write_passkey(self): 
+        if not self.passkey:
+            return
         # Update the passkey and save it back to disk
         self.passkey['res.creds'] = self.credentials
         try:
@@ -479,6 +486,16 @@ class SysTrayApp(QDialog):
         self._active_dialog = dialog
         dialog.show()
             
+    def __validate_filename_input(self, filename):
+        # Ensure filename has .key extension
+        if not filename.endswith('.key'):
+            filename += '.key'
+        
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        os.makedirs(fido_home, exist_ok=True)
+        return os.path.join(fido_home, filename)
+
+
     def __handle_platform_key_dialog(self, dialog):
         '''
         Handle the platform key dialog's accepted signal.
@@ -489,15 +506,8 @@ class SysTrayApp(QDialog):
             pin = dialog.get_pin()
             filename = dialog.get_filename()
             
-            # Ensure filename has .key extension
-            if not filename.endswith('.key'):
-                filename += '.key'
-            
-            # Check if file already exists
-            fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
-            os.makedirs(fido_home, exist_ok=True)
-            platform_key_path = os.path.join(fido_home, filename)
-            
+            platform_key_path = self.__validate_filename_input(filename)
+            # Check if file already exists            
             if os.path.exists(platform_key_path):
                 # Ask for confirmation before overwriting
                 confirm = QMessageBox.question(
@@ -512,7 +522,6 @@ class SysTrayApp(QDialog):
             
             # Create the platform key
             nonce = pin if pin and len(pin) > 0 else None
-            logging.debug(f"Platform key nonce: {nonce}")
             KeyUtils.create_platform_key(secret=nonce, filename=filename)
             
             QMessageBox.information(
