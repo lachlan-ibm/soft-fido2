@@ -425,9 +425,14 @@ class KeyUtils(object):
             raise ValueError("Key must be an EllipticCurvePrivateKey")
         iv = secrets.token_bytes(16)
         anon_kp = KeyPair.generate_ecdsa()
-        shared = anon_kp.get_private().exchange(ec.ECDH(), key.public_key())
+        shared_raw = anon_kp.get_private().exchange(ec.ECDH(), key.public_key())
         
-        encryptor = Cipher(algorithms.AES256(shared), 
+        # Hash the shared secret with SHA-256 to match Java's implementation
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_raw)
+        shared = digest.finalize()
+        
+        encryptor = Cipher(algorithms.AES256(shared),
                                                   modes.GCM(iv)).encryptor()
         ciphertext = encryptor.update(plaintext) + encryptor.finalize()
         anon_pub = anon_kp.get_public_bytes()
@@ -446,7 +451,13 @@ class KeyUtils(object):
         ciphertext = encrypted[pub_bytes_len + 4:]
         iv = ciphertext[:16]
         tag = ciphertext[16:32]
-        shared = key.exchange(ec.ECDH(), pubkey)
+        shared_raw = key.exchange(ec.ECDH(), pubkey)
+        
+        # Hash the shared secret with SHA-256 to match Java's implementation
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_raw)
+        shared = digest.finalize()
+        
         decryptor = Cipher(algorithms.AES256(shared),
                                      modes.GCM(iv, tag=tag)).decryptor()
         return decryptor.update(ciphertext[32:]) + decryptor.finalize()
