@@ -310,7 +310,7 @@ class CBORCommand(object):
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
         # Length of the incoming CBOR message (total).
-        self.length = int.from_bytes(ba[0:2])
+        self.length = int.from_bytes(ba[0:2], 'big')
         # Request buffer. This stores the incoming CBOR message and grows until all segments have been recieved
         self.request = ba[3:]
         # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
@@ -324,7 +324,7 @@ class CBORCommand(object):
         # Command recieved in CTAPHID frame, this is likely 0x90 (CBOR_MSG) but might be different
         self.ctaphid_cmd = 0
         # Authenticator API command byte recieved in initial packet
-        self.cmd = self.CommandByte(int.from_bytes(ba[2:3]))
+        self.cmd = self.CommandByte(int.from_bytes(ba[2:3], 'big'))
         #Length of the payload bytes
         self.bcnt = 0
         # Signal that the response buffer is ready to be sent back to the client
@@ -629,14 +629,14 @@ class CTAP2HIDevice(USBDevice):
         rsp_data = None
         if cbor_cmd.response_segment == 0: #We send the init pkt
             data, _ = cbor_cmd.get_rsp_seg(57)
-            rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), 
+            rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid, 'big'), 
                                     cmd=cbor_cmd.ctaphid_cmd,
                                     bcnt=cbor_cmd.bcnt,
                                     data=data).pack()
         else: #We send the continue sequence pkt
             data, seq_num = cbor_cmd.get_rsp_seg(59)
             colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='Sequence number {}'.format(seq_num))
-            rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid),
+            rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid, 'big'),
                                      seq=seq_num,
                                      data=data).pack()
         colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='pad with {} 0 bytes'.format(64 - len(rsp_data)))
@@ -702,7 +702,7 @@ class CTAP2HIDevice(USBDevice):
         if u2f_cla == b'\x00' and u2f_ins == b'\x03':
             #U2F_VERSION request, send the expected response
             cborCmd = CBORCommand(cid, None, skip_init=True)
-            cborCmd.ctaphid_cmd = int.from_bytes(cmd)
+            cborCmd.ctaphid_cmd = int.from_bytes(cmd, 'big')
             cborCmd.bcnt = 6
             cborCmd.response = b'U2F_V2'
             self.cids[cid]['cborCmd'] = cborCmd
@@ -727,7 +727,7 @@ class CTAP2HIDevice(USBDevice):
         #dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
         self.cids[assignedCID] = {'cborCmd': CBORCommand(cid, None, skip_init=True) }
         self.cids[assignedCID]['cborCmd'].response = data
-        self.cids[assignedCID]['cborCmd'].ctaphid_cmd = int.from_bytes(cmd)
+        self.cids[assignedCID]['cborCmd'].ctaphid_cmd = int.from_bytes(cmd, 'big')
         self.cids[assignedCID]['cborCmd'].bcnt = 17
         #return self.send_usb_req(usb_req, rsp, 64, ep=0x81, start_frame=int.from_bytes(cid))
         #self.send_usb_req(usb_req, b'', 0, ep=usb_req.ep)
@@ -743,15 +743,15 @@ class CTAP2HIDevice(USBDevice):
         cmd = usb_req.data_frame[4:5]
         bcnt = usb_req.data_frame[5:7]
         ctap_cmd = usb_req.data_frame[7:8]
-        print(int.from_bytes(bcnt) - 1)
-        cbor_data = usb_req.data_frame[8: 7 + int.from_bytes(bcnt)]
+        print(int.from_bytes(bcnt, 'big') - 1)
+        cbor_data = usb_req.data_frame[8: 7 + int.from_bytes(bcnt, 'big')]
         colour_print(colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
                      msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
                                                                    self._bytes_to_str(bcnt)))
         dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_cbor', 
                     msg='CBOR encoded bytes: ')
         cbor_cmd = CBORCommand(cid, usb_req.data_frame[5:])
-        cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
+        cbor_cmd.ctaphid_cmd = int.from_bytes(cmd, 'big')
         self.cids[cid]['cborCmd'] = cbor_cmd
         if cbor_cmd.response_ready == True: #We can respond immediatly
             dump_bytes(self.cids[cid]['cborCmd'].response, colour=bcolors.OKGREEN, 
@@ -791,7 +791,7 @@ class CTAP2HIDevice(USBDevice):
                 return
 
     def _handle_incoming_cmd(self, cmd, usb_req):
-        ctapCmd = int.from_bytes(cmd) & 0x7F
+        ctapCmd = int.from_bytes(cmd, 'big') & 0x7F
         colour_print(colour=bcolors.OKGREEN, component='USBDevice._handle_incoming_cmd', 
                     msg='recieved command {}'.format(ctapCmd))
         return {
@@ -805,7 +805,7 @@ class CTAP2HIDevice(USBDevice):
         }.get(ctapCmd, self.ctaphid_unknown)(usb_req)
 
     def _handle_incoming_sequence(self, cid, usb_req):
-        seqNum = int.from_bytes(usb_req.data_frame[4:5])
+        seqNum = int.from_bytes(usb_req.data_frame[4:5], 'big')
         context = self.cids.get(cid)
         if context != None:
             transaction = context.get("cborCmd")
@@ -835,7 +835,7 @@ class CTAP2HIDevice(USBDevice):
         cmd = usb_req.data_frame[4:5]
         colour_print(colour=bcolors.OKGREEN, component='USBDevice._handle_incoming', 
                     msg='CID: {}; command: {}'.format(self._bytes_to_str(cid), self._bytes_to_str(cmd)))
-        if(int.from_bytes(cmd) & 0x80) > 0:
+        if(int.from_bytes(cmd, 'big') & 0x80) > 0:
             colour_print(colour=bcolors.FAIL, component='USBDevice._handle_incoming', 
                         msg='bit 8 set we got a command msg')
             return self._handle_incoming_cmd(cmd, usb_req)
