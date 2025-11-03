@@ -1,3 +1,6 @@
+# Copyrite IBM 2022, 2025
+# IBM Confidential
+
 import datetime
 import struct
 import base64
@@ -8,7 +11,6 @@ import asn1
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography.x509.oid import ObjectIdentifier
-from cryptography.x509.extensions import ExtensionType
 from cryptography import x509
 
 
@@ -114,6 +116,20 @@ class CertUtils(object):
           unverified,
           failed
         }
+
+
+        MIICyjCCAnCgAwIBAgIBATAKBggqhkjOPQQDAjCBiDELMAkGA1UEBhMCVVMxEzARBgNVBAgMCkNhbGlm
+        b3JuaWExFTATBgNVBAoMDEdvb2dsZSwgSW5jLjEQMA4GA1UECwwHQW5kcm9pZDE7MDkGA1UEAwwyQW5k
+        cm9pZCBLZXlzdG9yZSBTb2Z0d2FyZSBBdHRlc3RhdGlvbiBJbnRlcm1lZGlhdGUwHhcNMTgxMjAyMDkx
+        MDI1WhcNMjgxMjAyMDkxMDI1WjAfMR0wGwYDVQQDDBRBbmRyb2lkIEtleXN0b3JlIEtleTBZMBMGByqG
+        SM49AgEGCCqGSM49AwEHA0IABDhJog/eJsNLAIg5GlgneD3/k4gLFlQIiq369XollUmhdDxLUkXPJoXP
+        kQVDZ81Pr7lITnBZNlEBH8DcznYhxo+jggExMIIBLTALBgNVHQ8EBAMCB4AwgfwGCisGAQQB1nkCAREE
+        ge0wgeoCAQIKAQACAQEKAQEEICpDgte72J2LW98Xcs/syhQ5JIe5/VcfLrcr35feBtS2BAAwgYK/gxAI
+        AgYBZ24u4XC/gxEIAgYBsOqNrXC/gxIIAgYBsOqNrXC/hT0IAgYBZ24u3+i/hUVOBEwwSjEkMCIEHWNv
+        bS5nb29nbGUuYXR0ZXN0YXRpb25leGFtcGxlAgEBMSIEIFrQXsIhyPg6ImEn3sVXUAw+V0vGASWp3CHL
+        C+SgBmCVMDOhBTEDAgECogMCAQOjBAICAQClBTEDAgEEqgMCAQG/g3gDAgEXv4N5AwIBHr+FPgMCAQAw
+        HwYDVR0jBBgwFoAUP/ys1hqxOp6BILjVJRzFZbsekakwCgYIKoZIzj0EAwIDSAAwRQIgZ3c5CJOAVf1j
+        TuQT6q/CHYrHqUQb35evY5FPmzsAr/4CIQC5wMiUWMJSjisl+ojE1j3cdeG8gPuU3MYiiVLQT4EkGA==
         '''
 
         def __init__(self, nonce, oid=ObjectIdentifier("1.3.6.1.4.1.11129.2.1.17")):
@@ -175,6 +191,8 @@ class CertUtils(object):
 
     @classmethod
     def __cert_builder(cls, subject=None, issuer=None, lifetime=265, serial=None, keyPair=None):
+        if not subject or not issuer or not serial or not keyPair:
+            raise ValueError("Missing required parameters")
         return x509.CertificateBuilder() \
                     .subject_name(subject) \
                     .issuer_name(issuer) \
@@ -219,6 +237,8 @@ class CertUtils(object):
         '''
         extension should be tuple (extension, isCritical=False)
         '''
+        if not keyPair:
+            raise ValueError("Must provide a keypair")
         if issuer == None:  #Self signed
             issuer = subject
         if signKeyPair == None:  # self signed
@@ -240,6 +260,8 @@ class CertUtils(object):
         generate certificate that can be used as a ca certificate for authenticators. This
         certificate contains the ski extension
         '''
+        if not keyPair:
+            raise ValueError("Must provide a keypair")
         # CA cert requires basic contraint, ski, key usage and san extensions
         extensions = [
             x509.SubjectKeyIdentifier.from_public_key(keyPair.get_public()),
@@ -268,7 +290,7 @@ class CertUtils(object):
         '''
         if san is None:
             sanId = cls._long_to_bytes(cls.TPM_VENDOR_ID)
-            san = x509.name.Name([
+            san = x509.Name([
                 x509.NameAttribute(ObjectIdentifier(cls.TPM_MANUFACTURER), u"IBM"),
                 x509.NameAttribute(ObjectIdentifier(cls.TPM_VENDOR), u"id:{}".format(binascii.b2a_uu(sanId))),
                 x509.NameAttribute(ObjectIdentifier(cls.TPM_FW_VERSION), u"id:1")
@@ -324,14 +346,3 @@ class CertUtils(object):
         '''
         extensions = [CertUtils.AppleNonceExtension(nonce)]
         return cls.gen_cert(subject, issuer, lifetime, serial, extensions, keyPair, signKeyPair, signer, backend)
-
-    @classmethod
-    def derive_aes_key_from_x509(cls, cert, key):
-        '''
-        Use the Elliptic Curve key exchange with ourself to generate a AES key we can use
-        to seed the Fido2Authenticator with.
-        '''
-        for ext in cert.extensions:
-            if ext.oid == CertUtils.EncryptedAesKeyExtension.OID:
-                return key.exchange(ec.ECDH(), cert.public_key())
-        return None

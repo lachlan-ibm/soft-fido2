@@ -6,3 +6,7 @@ wheel
 twine
 fido2
 pytest
+setuptools
+build
+oqs
+PyQt6

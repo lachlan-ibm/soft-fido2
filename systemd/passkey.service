@@ -1,0 +1,13 @@
+[Unit]
+Description=Software FIDO2 Passkey
+After=basic.target
+
+[Service]
+ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
+Type=simple
+Restart=no
+EnvironmentFile=/opt/soft_fido2/passkey.env
+
+[Install]
+WantedBy=multi-user.target
+EOF
