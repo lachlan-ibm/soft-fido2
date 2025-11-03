@@ -487,7 +487,7 @@ class CBORCommand(object):
             self.request_segment += 1
 
     def _error(self, ba):
-        self.response = list(int.to_bytes(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND))
+        self.response = list(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND.to_bytes(1, 'big'))
         self.bcnt = 0
         self.response_ready = True
 
@@ -588,9 +588,9 @@ class CBORCommand(object):
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='pin sub_cmd: {}'.format(sub_cmd))
         rsp = pin_sub_cmds[sub_cmd](req_data, self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes()
+        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes(1, 'big')
         if rsp != None:
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
     # authenticatorGetInfo takes no inputs so return immediately
@@ -604,14 +604,14 @@ class CBORCommand(object):
             0x05: 1200,
             0x06: [1]
         }
-        result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result) )
+        result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(result) )
         logging.debug(f"len: {len(result)}")
         return self._set_rsp_fields(list(result))
 
     def _make_cred(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
         if self.gather_user_presence() == False:
-            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
+            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big')) )
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
@@ -620,32 +620,32 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
-                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes(1, 'big')) )
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')
         # Request and validate pin-auth
         if not self._verify_pin_token(req.get(0x01), req.get(0x08)):
             if self.cid in AuthenticatorAPI._open_keys:
-                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes(1, 'big')
             return self._set_rsp_fields(list(result))
         error, authData, attStmt = AuthenticatorAPI.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
-        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
+        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes(1, 'big')
         if error:
-            result = error.to_bytes()
+            result = error.to_bytes(1, 'big')
         if authData and attStmt:
             rsp = {
                 0x01: 'packed', #fmt
                 0x02: authData,
                 0x03: attStmt
             }
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
 
     def _get_assertion(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
         if self.gather_user_presence() == False:
-            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
+            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big')) )
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                      msg='CBOR request {}'.format(req))
@@ -654,17 +654,17 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
-                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
-        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes(1, 'big')) )
+        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes(1, 'big')
         # Request and validate pin-auth
         if not self._verify_pin_token(req.get(0x02), req.get(0x06)):
             if self.cid in AuthenticatorAPI._open_keys:
-                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes(1, 'big')
             return self._set_rsp_fields(list(result))
         error, credential, authData, signature, userHandle = AuthenticatorAPI.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
         if error:
-            result = error.to_bytes()
+            result = error.to_bytes(1, 'big')
         elif credential and authData and signature:
             rsp = {
                     0x01: credential,
@@ -673,7 +673,7 @@ class CBORCommand(object):
             }
             if userHandle:
                 rsp[0x04] = {'id': userHandle}
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
 
@@ -861,7 +861,7 @@ class CTAP2HIDevice(UserDevice):
         data = nonce + assignedCID
         # protocol == 2; major version == 5; minor version = 1; build version = 2; flags === CAPABILITY_WINK | CAPABILITY_CBOR | CAPABILITY_NMSG
         for i in [2, 5, 1, 2, 0x01 | 0x04 | 0x08]:
-            data += int.to_bytes(i)
+            data += i.to_bytes(1, 'big')
         dump_bytes(data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         initCmd = CBORCommand(cid, None, skip_init=True)
