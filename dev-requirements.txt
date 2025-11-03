@@ -4,7 +4,7 @@ asn1>=2.2.0
 PyJwt>=0.6.1
 wheel
 twine
-fido2
+fido2>=2.0.0
 pytest
 setuptools
 build
