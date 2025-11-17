@@ -191,7 +191,7 @@ class CertUtils(object):
 
     @classmethod
     def __cert_builder(cls, subject=None, issuer=None, lifetime=265, serial=None, keyPair=None):
-        if not subject or not issuer or not serial or not keyPair:
+        if not issuer or not serial or not keyPair: #TPM subject is none
             raise ValueError("Missing required parameters")
         return x509.CertificateBuilder() \
                     .subject_name(subject) \
