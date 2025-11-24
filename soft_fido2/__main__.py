@@ -39,10 +39,9 @@ udev.start()
 
 try:
     app = SysTrayApp() # runs until quit
-finally:
-    # Ensure clean shutdown
+finally: # Ensure clean shutdown
     logging.info("Waiting for UHID device thread to terminate...")
-    udev.join(timeout=5)  # Wait up to 5 seconds
+    udev.join(timeout=5)
     if udev.is_alive():
         logging.warning("UHID device thread did not terminate gracefully")
     else:
