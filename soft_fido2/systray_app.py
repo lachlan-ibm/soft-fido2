@@ -607,7 +607,10 @@ class SysTrayApp(QDialog):
         
         # Set as active dialog
         self._active_dialog = dialog
-        dialog.show()
+        # Use exec() instead of show() to make it modal and ensure it appears
+        dialog.exec()
+        # Clean up after dialog closes
+        self.__handle_dialog_closed(dialog)
         
     def __handle_dialog_closed(self, dialog):
         """

@@ -9,6 +9,8 @@ ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=/opt/soft_fido2/passkey.env
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
 WantedBy=graphical-session.target
