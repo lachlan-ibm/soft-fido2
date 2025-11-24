@@ -1,0 +1,14 @@
+[Unit]
+Description=Software FIDO2 Passkey (User Service with GUI)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=/opt/soft_fido2/passkey.env
+
+[Install]
+WantedBy=graphical-session.target

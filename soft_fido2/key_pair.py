@@ -94,8 +94,14 @@ class KeyUtils(object):
                                 encryption_algorithm=serialization.NoEncryption())
 
     @classmethod
-    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, eckx=False):
+    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, eckx=False, pss=False):
         if isinstance(publicKey, rsa.RSAPublicKey):
+            if pss:
+                return {
+                    hashes.SHA256: -37,
+                    hashes.SHA384: -38,
+                    hashes.SHA512: -39,                    
+                }.get(alg, 0)
             return {
                 hashes.SHA1: -65535,
                 hashes.SHA256: -257,

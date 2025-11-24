@@ -41,7 +41,8 @@ class Fido2Authenticator(object):
             transports: Optional[List[str]] = None,
             fKey: Optional[Fernet] = None,
             sKey: Optional[SymmetricKey] = None,
-            disableCounter: bool = False
+            disableCounter: bool = False,
+            saltLength: Optional[int] = None,
     ) -> None:
         """Initialize a FIDO2 Authenticator with the specified parameters.
         
@@ -66,6 +67,9 @@ class Fido2Authenticator(object):
                     Can be used to reconstruct private EC key for assertions. Default = None
             disableCounter (bool): Whether to disable the attestation/assertion counter.
                     Default = False
+            saltLength (int, optional): Length of salt to use for "packed" attestation (RSAPSS).
+                    This is expected to be the same length as the digest from the hashing 
+                    algorithm used.
         """
         if aaguid and len(aaguid) != 16:
             raise ValueError("AAGUID must be 16 bytes long")
@@ -77,6 +81,7 @@ class Fido2Authenticator(object):
         self.hashAlg = hashingAlg
         self.disable_counter = disableCounter
         self.aaguid = aaguid
+        self.salt_len = saltLength
         
         # Credential and key management
         self.kp = keyPair
@@ -466,7 +471,7 @@ class Fido2Authenticator(object):
                     https://www.w3.org/TR/webauthn/#packed-attestation
         """
         result = {} # Key order is important
-        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
+        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg, pss=True if self.salt_len else False)
         toSign = bytes([*authData, *clientDataHash])
         sig = ""
 
@@ -995,7 +1000,10 @@ class Fido2Authenticator(object):
         toSignStr = bytes(toSign)
         sig = b''
         if isinstance(keyPair.get_public(), rsa.RSAPublicKey) == True:
-            sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), self.hashAlg)
+            if self.salt_len:
+                sig = keyPair.get_private().sign(toSignStr, padding.PSS(mgf=padding.MGF1(self.hashAlg), salt_length=self.salt_len), self.hashAlg)
+            else:
+                sig = keyPair.get_private().sign(toSignStr, padding.PKCS1v15(), self.hashAlg)
         elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey) == True:
             hasher = hashes.Hash(self.hashAlg)
             hasher.update(toSignStr)

@@ -294,39 +294,50 @@ mkdir -p ~/.fido2
 openssl ecparam -name prime256v1 -genkey -noout -out ~/.fido2/platform.key
 ```
 
-3. **Install as systemd service:**
+3. **Install as systemd user service (with GUI support):**
 
 ```bash
 # Create virtual environment
-export FIDO_HOME=/opt/soft_fido2
-sudo mkdir -p $FIDO_HOME
-sudo virtualenv $FIDO_HOME
-sudo $FIDO_HOME/bin/python -m pip install --upgrade pip soft_fido2
+sudo mkdir -p /opt/soft_fido2
+sudo chown $USER:$USER /opt/soft_fido2
+virtualenv $FIDO_HOME
+$FIDO_HOME/bin/python -m pip install --upgrade pip soft_fido2
 
 # Create environment file
 echo "FIDO_HOME=${HOME}/.fido2" | sudo tee /opt/soft_fido2/passkey.env
 
-# Create systemd service
-sudo tee /usr/lib/systemd/system/passkey.service > /dev/null <<EOF
+# Create user service directory and passkey directory
+mkdir -p ~/.config/systemd/user
+mkdir -p ~/.fido2
+
+# Create systemd user service
+tee ~/.config/systemd/user/passkey.service > /dev/null <<EOF
 [Unit]
-Description=Software FIDO2 Passkey
-After=basic.target
+Description=Software FIDO2 Passkey (User Service with GUI)
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
-ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
 Type=simple
-Restart=no
+ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
+Restart=on-failure
+RestartSec=5
 EnvironmentFile=/opt/soft_fido2/passkey.env
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical-session.target
 EOF
 
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable passkey
-sudo systemctl start passkey
+# Enable and start user service
+systemctl --user daemon-reload
+systemctl --user enable passkey
+systemctl --user start passkey
 ```
+
+**Important Notes for User Services:**
+- To check status: `systemctl --user status passkey`
+- To view logs: `journalctl --user -u passkey -f`
+- User services require `/dev/uhid` access (ensure you're in the `udev` group)
 
 4. **Verify the authenticator:**
 
