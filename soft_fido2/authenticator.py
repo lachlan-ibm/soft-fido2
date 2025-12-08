@@ -42,6 +42,7 @@ class Fido2Authenticator(object):
             fKey: Optional[Fernet] = None,
             sKey: Optional[SymmetricKey] = None,
             disableCounter: bool = False,
+            ctsProfileMatch: bool = True,
             saltLength: Optional[int] = None,
     ) -> None:
         """Initialize a FIDO2 Authenticator with the specified parameters.
@@ -67,6 +68,8 @@ class Fido2Authenticator(object):
                     Can be used to reconstruct private EC key for assertions. Default = None
             disableCounter (bool): Whether to disable the attestation/assertion counter.
                     Default = False
+            ctsProfileMatch (bool): Whether to disable the CTS Profile match for Android Safetynet
+                                    attestation statements.
             saltLength (int, optional): Length of salt to use for "packed" attestation (RSAPSS).
                     This is expected to be the same length as the digest from the hashing 
                     algorithm used.
@@ -745,7 +748,7 @@ class Fido2Authenticator(object):
             u'nonce': base64.b64encode(nonceHash).decode(),
             u'apkPackageName': u"com.package.name.of.requesting.app",
             u"apkCertificateDigestSha256": [u"b64 encoded sha256 of cert"],
-            u"ctsProfileMatch": True,
+            u"ctsProfileMatch": self.ctsProfileMatch,
             u"basicIntegrity": True
         }
         jwtResponse = jwt.encode(

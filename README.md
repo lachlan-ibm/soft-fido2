@@ -296,12 +296,12 @@ For system-wide passkey support, integrate the authenticator as a virtual USB de
 # Load UHID module at boot
 echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
 
-# Create udev group
-sudo groupadd udev
-sudo usermod -aG udev $USER
+# Create uhid group
+sudo groupadd uhid
+sudo usermod -aG uhid $USER
 
 # Set permissions
-echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | sudo tee /etc/udev/rules.d/90-uhid.rules
+echo 'KERNEL=="uhid", GROUP="uhid", MODE="0660"' | sudo tee /etc/udev/rules.d/10-uhid.rules
 
 # Apply changes
 sudo udevadm control --reload-rules && sudo udevadm trigger
@@ -310,11 +310,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 2. **Create encryption key:**
 
 ```bash
-mkdir -p ~/.fido2
-openssl ecparam -name prime256v1 -genkey -noout -out ~/.fido2/platform.key
+mkdir -p $HOME/.fido2
+openssl ecparam -name prime256v1 -genkey -noout -out $HOME/.fido2/platform.key
 ```
 
-3. **Install as systemd user service (with GUI support):**
+3. **Install as systemd user service:**
 
 ```bash
 # Create virtual environment in /opt
@@ -324,7 +324,7 @@ virtualenv /opt/soft_fido2
 /opt/soft_fido2/bin/python -m pip install --upgrade pip soft_fido2
 
 # Create passkey storage directory
-mkdir -p ~/.fido2
+mkdir -p $HOME/.fido2
 
 # Create environment file
 echo "FIDO_HOME=${HOME}/.fido2" > /opt/soft_fido2/passkey.env
@@ -335,7 +335,7 @@ mkdir -p ~/.config/systemd/user
 # Create systemd user service
 tee ~/.config/systemd/user/passkey.service > /dev/null <<'EOF'
 [Unit]
-Description=Software FIDO2 Passkey (User Service with GUI)
+Description=Software FIDO2 Passkey Authenticator
 PartOf=graphical-session.target
 After=graphical-session.target
 
@@ -363,7 +363,7 @@ systemctl --user status passkey
 
 **Important Notes for User Services:**
 - **User services run in your graphical session** - they start when you log in and stop when you log out
-- **Requires `/dev/uhid` access** - ensure you're in the `udev` group (log out/in after adding)
+- **Requires `/dev/uhid` access** - ensure you're in the `uhid` group (log out/in after adding)
 - **Service management commands:**
   - Check status: `systemctl --user status passkey`
   - View logs: `journalctl --user -u passkey -f`
@@ -374,7 +374,7 @@ systemctl --user status passkey
 **Troubleshooting User Service Issues:**
 - **GUI dialogs don't appear**: Ensure `graphical-session.target` is active: `systemctl --user list-units --type=target | grep graphical`
 - **Service times out on stop**: The service includes `TimeoutStopSec=10` for graceful shutdown
-- **Permission denied on /dev/uhid**: Run `groups` to verify you're in the `udev` group, then log out and back in
+- **Permission denied on /dev/uhid**: Run `groups` to verify you're in the `uhid` group, then log out and back in
 
 4. **Verify the authenticator:**
 
