@@ -94,14 +94,21 @@ class KeyUtils(object):
                                 encryption_algorithm=serialization.NoEncryption())
 
     @classmethod
-    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, eckx=False):
+    def get_alg_id_from_pubkey_and_hash(cls, publicKey, alg, eckx=False, pss=False):
         if isinstance(publicKey, rsa.RSAPublicKey):
+            algName = alg.name if alg and hasattr(alg, 'name') else 'unknown'
+            if pss:
+                return {
+                    'sha256': -37,
+                    'sha384': -38,
+                    'sha512': -39,
+                }.get(alg, 0)
             return {
-                hashes.SHA1: -65535,
-                hashes.SHA256: -257,
-                hashes.SHA384: -258,
-                hashes.SHA512: -259,
-            }.get(alg, 0)
+                'sha1': -65535,
+                'sha256': -257,
+                'sha384': -258,
+                'sha512': -259,
+            }.get(algName, 0)
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             if isinstance(alg, hashes.SHA256):
                 return -7 if eckx == False else -25

@@ -22,7 +22,6 @@ Automatically installed with pip:
 - `cryptography >= 38.0.1`
 - `cbor2 >= 4.1.2`
 - `PyJWT >= 0.6.1`
-- `PyQt6 >= 6.9.1`
 
 ### Installation
 
@@ -62,30 +61,6 @@ attestation_options = {
     {
       "alg": -7,
       "type": "public-key"
-    },
-    {
-      "alg": -35,
-      "type": "public-key"
-    },
-    {
-      "alg": -36,
-      "type": "public-key"
-    },
-    {
-      "alg": -257,
-      "type": "public-key"
-    },
-    {
-      "alg": -258,
-      "type": "public-key"
-    },
-    {
-      "alg": -259,
-      "type": "public-key"
-    },
-    {
-      "alg": -65535,
-      "type": "public-key"
     }
   ],
 }
@@ -107,6 +82,71 @@ assertion_options = {
 # Get assertion (authentication)
 auth_response = authenticator.credential_request(assertion_options)
 print(json.dumps(assertion_response, indent=4))
+```
+
+### Testing with python-fido2 server library
+
+For a simple testing environment, you can use the `python-fido2` library which provides a complete FIDO2 server implementation:
+
+```python
+from soft_fido2 import Fido2Authenticator
+from fido2.server import Fido2Server
+from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity
+
+# Initialize FIDO2 server
+rp = PublicKeyCredentialRpEntity(id="example.com", name="Example RP")
+server = Fido2Server(rp)
+
+# Create user
+user = PublicKeyCredentialUserEntity(
+    id=b"user_id_123",
+    name="testuser@example.com",
+    display_name="Test User"
+)
+
+# Registration (Attestation)
+attestation_options, state = server.register_begin(user)
+attestation_options = dict(attestation_options)['publicKey']
+
+# Create authenticator and generate credential
+authenticator = Fido2Authenticator()
+attestation_response = authenticator.credential_create(attestation_options)
+
+# Verify registration with server
+response = {
+    'id': attestation_response['id'],
+    'rawId': attestation_response['rawId'],
+    'response': {
+        'clientDataJSON': attestation_response['response']['clientDataJSON'],
+        'attestationObject': attestation_response['response']['attestationObject']
+    },
+    'type': 'public-key'
+}
+
+auth_data = server.register_complete(state, response)
+print(f"Registration successful! Credential ID: {auth_data.credential_data.credential_id.hex()}")
+
+# Authentication (Assertion)
+assertion_options, state = server.authenticate_begin()
+assertion_options = dict(assertion_options)['publicKey']
+
+# Generate authentication response
+assertion_response = authenticator.credential_request(assertion_options)
+
+# Verify authentication with server
+response = {
+    'id': assertion_response['id'],
+    'rawId': assertion_response['rawId'],
+    'response': {
+        'clientDataJSON': assertion_response['response']['clientDataJSON'],
+        'authenticatorData': assertion_response['response']['authenticatorData'],
+        'signature': assertion_response['response']['signature']
+    },
+    'type': 'public-key'
+}
+
+server.authenticate_complete(state, [auth_data.credential_data], response)
+print("Authentication successful!")
 ```
 
 ### Using from Command Line
@@ -149,30 +189,6 @@ python3 -m soft_fido2.authenticator attestation packed-self '{
   "pubKeyCredParams": [
     {
       "alg": -7,
-      "type": "public-key"
-    },
-    {
-      "alg": -35,
-      "type": "public-key"
-    },
-    {
-      "alg": -36,
-      "type": "public-key"
-    },
-    {
-      "alg": -257,
-      "type": "public-key"
-    },
-    {
-      "alg": -258,
-      "type": "public-key"
-    },
-    {
-      "alg": -259,
-      "type": "public-key"
-    },
-    {
-      "alg": -65535,
       "type": "public-key"
     }
   ]
@@ -267,6 +283,10 @@ For system-wide passkey support, integrate the authenticator as a virtual USB de
 
 - UHID kernel module
 - Root or appropriate permissions for `/dev/uhid`
+- install soft dependencies
+  - Qt6
+  - PyQt6
+  - notify-send
 
 #### Setup
 
@@ -276,12 +296,12 @@ For system-wide passkey support, integrate the authenticator as a virtual USB de
 # Load UHID module at boot
 echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
 
-# Create udev group
-sudo groupadd udev
-sudo usermod -aG udev $USER
+# Create uhid group
+sudo groupadd uhid
+sudo usermod -aG uhid $USER
 
 # Set permissions
-echo 'KERNEL=="uhid", GROUP="udev", MODE="0660"' | sudo tee /etc/udev/rules.d/90-uhid.rules
+echo 'KERNEL=="uhid", GROUP="uhid", MODE="0660"' | sudo tee /etc/udev/rules.d/10-uhid.rules
 
 # Apply changes
 sudo udevadm control --reload-rules && sudo udevadm trigger
@@ -290,43 +310,71 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 2. **Create encryption key:**
 
 ```bash
-mkdir -p ~/.fido2
-openssl ecparam -name prime256v1 -genkey -noout -out ~/.fido2/platform.key
+mkdir -p $HOME/.fido2
+openssl ecparam -name prime256v1 -genkey -noout -out $HOME/.fido2/platform.key
 ```
 
-3. **Install as systemd service:**
+3. **Install as systemd user service:**
 
 ```bash
-# Create virtual environment
-export FIDO_HOME=/opt/soft_fido2
-sudo mkdir -p $FIDO_HOME
-sudo virtualenv $FIDO_HOME
-sudo $FIDO_HOME/bin/python -m pip install --upgrade pip soft_fido2
+# Create virtual environment in /opt
+sudo mkdir -p /opt/soft_fido2
+sudo chown $USER:$USER /opt/soft_fido2
+virtualenv /opt/soft_fido2
+/opt/soft_fido2/bin/python -m pip install --upgrade pip soft_fido2
+
+# Create passkey storage directory
+mkdir -p $HOME/.fido2
 
 # Create environment file
-echo "FIDO_HOME=${HOME}/.fido2" | sudo tee /opt/soft_fido2/passkey.env
+echo "FIDO_HOME=${HOME}/.fido2" > /opt/soft_fido2/passkey.env
 
-# Create systemd service
-sudo tee /usr/lib/systemd/system/passkey.service > /dev/null <<EOF
+# Create user service directory
+mkdir -p ~/.config/systemd/user
+
+# Create systemd user service
+tee ~/.config/systemd/user/passkey.service > /dev/null <<'EOF'
 [Unit]
-Description=Software FIDO2 Passkey
-After=basic.target
+Description=Software FIDO2 Passkey Authenticator
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
-ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
 Type=simple
-Restart=no
+ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
+Restart=on-failure
+RestartSec=5
 EnvironmentFile=/opt/soft_fido2/passkey.env
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical-session.target
 EOF
 
-# Enable and start service
-sudo systemctl daemon-reload
-sudo systemctl enable passkey
-sudo systemctl start passkey
+# Enable and start user service
+systemctl --user daemon-reload
+systemctl --user enable passkey
+systemctl --user start passkey
+
+# Check service status
+systemctl --user status passkey
 ```
+
+**Important Notes for User Services:**
+- **User services run in your graphical session** - they start when you log in and stop when you log out
+- **Requires `/dev/uhid` access** - ensure you're in the `uhid` group (log out/in after adding)
+- **Service management commands:**
+  - Check status: `systemctl --user status passkey`
+  - View logs: `journalctl --user -u passkey -f`
+  - Stop service: `systemctl --user stop passkey`
+  - Restart service: `systemctl --user restart passkey`
+  - Disable autostart: `systemctl --user disable passkey`
+
+**Troubleshooting User Service Issues:**
+- **GUI dialogs don't appear**: Ensure `graphical-session.target` is active: `systemctl --user list-units --type=target | grep graphical`
+- **Service times out on stop**: The service includes `TimeoutStopSec=10` for graceful shutdown
+- **Permission denied on /dev/uhid**: Run `groups` to verify you're in the `uhid` group, then log out and back in
 
 4. **Verify the authenticator:**
 

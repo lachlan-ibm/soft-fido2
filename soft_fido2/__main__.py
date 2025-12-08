@@ -36,5 +36,13 @@ print("Starting the EyeBeeKey Passkey UHID Service")
 
 udev = CTAP2HIDevice('/dev/uhid')
 udev.start()
-app = SysTrayApp() # runs until quit
-udev.join()
+
+try:
+    app = SysTrayApp() # runs until quit
+finally: # Ensure clean shutdown
+    logging.info("Waiting for UHID device thread to terminate...")
+    udev.join(timeout=5)
+    if udev.is_alive():
+        logging.warning("UHID device thread did not terminate gracefully")
+    else:
+        logging.info("UHID device thread terminated successfully")
