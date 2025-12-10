@@ -158,13 +158,13 @@ class ManageCredentialsDialog(QDialog):
             
             # Add credentials to the list widget showing only rp.id and user.id
             for cred in self.credentials:
-                # Convert rp.id and user.id to UTF-8 if they are bytestrings
+                # Convert rp.id and user.id to something printable
                 rp_id_value = cred.get('rp.id', 'cred.parsing.error')
                 user_id_value = cred.get('user.id', 'cred.parsing.error')
                 
-                # Check if values are bytestrings before decoding
+                # RpId should be utf-8 compatible; user-id is probably not...
                 rp_id = rp_id_value.decode('utf-8') if isinstance(rp_id_value, bytes) else str(rp_id_value)
-                user_id = user_id_value.decode('utf-8') if isinstance(user_id_value, bytes) else str(user_id_value)
+                user_id = user_id_value.hex() if isinstance(user_id_value, bytes) else str(user_id_value)
                 # Add to list widget
                 item_text = f"uri: {rp_id} | user id: {user_id}"
                 self.creds_list.addItem(item_text)

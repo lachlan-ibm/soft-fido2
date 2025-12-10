@@ -85,19 +85,20 @@ class Fido2Authenticator(object):
         self.disable_counter = disableCounter
         self.aaguid = aaguid
         self.salt_len = saltLength
-        
+        self.ctsProfileMatch = ctsProfileMatch
+
         # Credential and key management
         self.kp = keyPair
         self.fKey = fKey
         self.sKey = sKey
         self.cib = None  # Credential ID bytes
-        
+
         # Certificate and trust chain
         self.caCertificate = caCert
         self.caKeyPair = caKeyPair
         # Transports
         self.transports = transports
-        
+
         # Initialize key pair based on credential ID
         self._init_key_pair(credId)
 
