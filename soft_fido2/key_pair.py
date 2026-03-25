@@ -1,7 +1,6 @@
 # Copyrite IBM 2022, 2025
 # IBM Confidential
 
-import logging
 import struct
 import os
 import cbor2 as cbor
@@ -9,11 +8,12 @@ import secrets
 import base64
 
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, utils
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 from soft_fido2.cert_utils import CertUtils
 
@@ -24,28 +24,29 @@ class KeyUtils(object):
     @classmethod
     def get_passkey_seed(cls, entropy, key):
         """
-        Generate a 32 byte seed from a domain and a private key.
-
+        Generate a 32 byte seed using HKDF from entropy and a private key.
+        
         Entropy is typically the bytes of the rp.id. Key is an Elliptic Curve key.
-
-        Entropy is hashed using SHA256 before signing.
-
+        
+        Uses HKDF with:
+        - Salt: entropy (rp.id bytes) for domain separation
+        - IKM: private key bytes
+        - Info: application context string
+        
         Returned bytestring is b64_url encoded.
         """
         if not isinstance(entropy, bytes):
             raise ValueError(f"Entropy must be bytes: {entropy}")
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             raise ValueError(f"Key must be an EllipticCurvePrivateKey: {key}")
-        theHash = hashes.SHA256()
-        digester = hashes.Hash(theHash)
-        digester.update(entropy)
-        sig = key.sign(digester.finalize(),
-                        ec.ECDSA(utils.Prehashed(theHash), deterministic_signing=True))
-        digester = hashes.Hash(theHash)
-        digester.update(sig)
-        result = base64.urlsafe_b64encode(digester.finalize()[:32])
-        #logging.debug(f"start: {entropy}; sig: {sig}; return {result}")
-        return result
+        
+        # Extract private key bytes as Input Key Material
+        key_material = key.private_bytes(encoding=serialization.Encoding.DER, 
+                    format=serialization.PrivateFormat.PKCS8, encryption_algorithm=serialization.NoEncryption())
+        hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=entropy,
+                        info=b"FIDO2-PASSKEY-SEED", backend=default_backend())
+        seed_bytes = hkdf.derive(key_material)
+        return base64.urlsafe_b64encode(seed_bytes)
 
 
     @classmethod
@@ -258,16 +259,9 @@ class KeyUtils(object):
         return header, body
 
     @classmethod
-    def __get_upper_hash(cls, ciphertext, secret):
-        # Get platform key to decrypt the header
-        platform_key_path = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')) + '/platform.key'
-        with open(platform_key_path, 'rb') as key_file:
-            platform_key_pem = key_file.read()
-            platform_key = serialization.load_pem_private_key(
-                platform_key_pem,
-                password=secret,
-                backend=default_backend()
-            ) 
+    def __get_upper_hash(cls, ciphertext, secret=None):
+        # Get platform key via message queue to decrypt the header
+        platform_key = cls.__request_platform_kp().get_private()
         # Decrypt the upper hash using the platform key
         return cls.ec_decrypt(ciphertext, platform_key)
 
@@ -290,7 +284,7 @@ class KeyUtils(object):
         pin_hash = pinHash
         if len(pinHash) == 16:
             # Reconstruct the full pin hash
-            pin_hash = pinHash + cls.__get_upper_hash(header, secret) 
+            pin_hash = pinHash + cls.__get_upper_hash(header, secret)
 
         # Read PKCS12
         pkcs12_len = int.from_bytes(body[:4], 'little')
@@ -329,13 +323,16 @@ class KeyUtils(object):
             resCreds: list of resident credentials ({rp.id:<>,user.id:<>,cred.id:<>})
             pinHash: SHA256 hash of the user's PIN
             passkeyFilename: Path to the passkey file
+            secret: Secret for platform key (optional)
         """
         # Cache upper hash for loading during pin auth protocol
         if len(pinHash) != 32:
             raise ValueError("pinHash must be 32 bytes long")
         #TODO else if upper hash does not match current file, sync error
         upper_hash = pinHash[16:]
-        platform_key = cls.__get_platform_kp(secret).get_private()
+        
+        platform_key = cls.__request_platform_kp().get_private()
+
         header = cls.ec_encrypt(upper_hash, platform_key)
         pkcs12_bytes = cls.create_pcks12_bytes(
             key,
@@ -362,7 +359,39 @@ class KeyUtils(object):
             f.close()
 
     @classmethod
-    def __get_platform_kp(cls, secret=None, filename='platform.key'):
+    def __request_platform_kp(cls, timeout: float = 0.5):
+        """Request platform key from systray_app via message queue"""
+        import uuid
+        import time
+        try:
+            from soft_fido2.message_queues import (
+                MessageQueue, PlatformKeyRequest, PlatformKeyResponse
+            )
+        except:
+            from message_queues import (
+                MessageQueue, PlatformKeyRequest, PlatformKeyResponse
+            )
+        
+        request_id = str(uuid.uuid4())
+        request = PlatformKeyRequest(request_id)
+        
+        MessageQueue.platform_key_requests.put(request)
+        
+        # Wait for response
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if MessageQueue.platform_key_responses.qsize() > 0:
+                response = MessageQueue.platform_key_responses.get()
+                if response.request_id == request_id:
+                    if response.error:
+                        raise Exception(f"Platform key error: {response.error}")
+                    return response.key_pair
+            time.sleep(0.01)
+        
+        raise TimeoutError("Platform key request timed out")
+
+    @classmethod
+    def _get_platform_kp(cls, secret=None, filename='platform.key'):
         # Get platform key to manage cached pin hashes
         platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename)
         with open(platform_key_path, 'rb') as key_file:
@@ -429,7 +458,7 @@ class KeyUtils(object):
     @classmethod
     def ec_encrypt(cls, plaintext, key):
         if not isinstance(key, ec.EllipticCurvePrivateKey):
-            raise ValueError("Key must be an EllipticCurvePrivateKey")
+            raise ValueError(f"{key} must be an EllipticCurvePrivateKey")
         iv = secrets.token_bytes(16)
         anon_kp = KeyPair.generate_ecdsa()
         shared_raw = anon_kp.get_private().exchange(ec.ECDH(), key.public_key())
@@ -449,7 +478,7 @@ class KeyUtils(object):
     @classmethod
     def ec_decrypt(cls, encrypted, key):
         if not isinstance(key, ec.EllipticCurvePrivateKey):
-            raise ValueError("Key must be an EllipticCurvePrivateKey")
+            raise ValueError(f"{key} must be an EllipticCurvePrivateKey")
         pub_bytes_len = int.from_bytes(encrypted[:4], 'big')
         pub_bytes = encrypted[4:pub_bytes_len + 4]
         pubkey = serialization.load_pem_public_key(pub_bytes)

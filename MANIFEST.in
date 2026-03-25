@@ -1,0 +1,4 @@
+include README.md
+include LICENSE
+include icons/main_icon_unlocked.svg
+include icons/main_icon_locked.svg

@@ -321,7 +321,7 @@ class Fido2Authenticator(object):
         else:
             options = json.loads(jsonOptions)
         cco = self.attestation_options_response_to_credential_create_options(options)
-        return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv, up)
+        return self.process_credential_create_options(cco, atteStmtFmt, keyPair, uv, up, be, bs)
 
     def credential_request(self, jsonOptions, keyPair=None, uv=True, up=True, be=False, bs=False):
         '''Responds to navigator.credential.get(). jsonOptions should be either a dictionary
@@ -981,7 +981,7 @@ class Fido2Authenticator(object):
         if(cco.get('extensions') != None 
                 and isinstance(cco['extensions'], dict) 
                 and "devicePubKey" in cco['extensions'].keys()):
-            raise RuntimeError("TODO")
+            raise RuntimeError("devicePubKey not implemented")
         return spkc
 
     def assertion_signature(self, authData, clientDataHash, keyPair):

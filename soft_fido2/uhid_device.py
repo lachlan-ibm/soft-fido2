@@ -149,7 +149,7 @@ class BaseStructure(object):
                 pack_format += field[1][1:]
             else:
                 pack_format += field[1]
-        logging.debug(pack_format)
+        #logging.debug(pack_format)
         return pack_format.encode('utf-8')
 
     def pack(self):
@@ -168,7 +168,7 @@ class BaseStructure(object):
                     values.append(getattr(self, field[0], 0))
         #Python 2 -> 3, str != bytestring so conditionally remap any strings we find.
         values = [bytes(v, 'utf-8') if isinstance(v, str) else v for v in values]
-        logging.debug(values)
+        #logging.debug(values)
         packed = struct.pack(self.format(), *values)
         #logging.debug("packed [{}]".format(packed))
         return packed

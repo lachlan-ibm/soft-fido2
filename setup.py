@@ -37,6 +37,10 @@ setup(
     author_email='lgleeson@au1.ibm.com',
     license='MIT',
     packages=["soft_fido2"],
+    package_data={
+        'soft_fido2': ['../icons/main_icon_locked.svg', '../icons/main_icon_unlocked.svg']
+    },
+    include_package_data=True,
     install_requires=[
         'cbor2>=4.1.2',
         'cryptography>=38.0.1',

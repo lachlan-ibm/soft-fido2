@@ -10,3 +10,4 @@ setuptools
 build
 oqs
 PyQt6
+tpm2_pytss

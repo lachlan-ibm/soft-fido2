@@ -29,7 +29,7 @@ advised of the possibility of such damage.
 Update 2022 by Lachlan Gleeson for python 3
 '''
 
-import socketserver, datetime, struct, traceback, re, signal
+import socketserver, datetime, struct, traceback, re, signal, threading, sys
 
 
 # Hey StackOverflow !
@@ -524,6 +524,9 @@ class USBContainer:
     attached_devices = {}
     devices_count = 0
 
+    def __init__(self):
+        self.shutdown_event = threading.Event()
+
     def add_usb_device(self, usb_device):
         self.devices_count += 1
         busID = '1-1.' + str(self.devices_count)
@@ -596,7 +599,26 @@ class USBContainer:
         socketserver.TCPServer.allow_reuse_address = True
         self.server = socketserver.ThreadingTCPServer((ip, port), USBIPConnection)
         self.server.usbcontainer = self
-        self.server.serve_forever()
+        
+        # Set up signal handlers for graceful shutdown (must be in main thread)
+        def signal_handler(signum, frame):
+            colour_print(colour=bcolors.WARNING, component='USBIP', msg='Received signal {}, shutting down...'.format(signum))
+            # Force immediate exit without cleanup to avoid hanging
+            import os
+            os._exit(0)
+        
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        try:
+            self.server.serve_forever()
+        except KeyboardInterrupt:
+            # Fallback in case signal handler doesn't work
+            colour_print(colour=bcolors.WARNING, component='USBIP', msg='KeyboardInterrupt received, shutting down...')
+            import os
+            os._exit(0)
+        finally:
+            colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Server cleanup complete')
 
 
 class USBIPConnection(socketserver.BaseRequestHandler):
@@ -605,24 +627,22 @@ class USBIPConnection(socketserver.BaseRequestHandler):
 
     def __init__(self, request=None, client_address=None, server=None):
         super().__init__(request=request, client_address=client_address, server=server)
-        signal.signal(signal.SIGINT, self.interrupt)
-        signal.signal(signal.SIGTERM, self.interrupt)
-
-    def interrupt():
-        if self.request:
-            self.request.close()
-        if self.server:
-            self.server.server_close()
 
     def handle(self):
         endpoint_requests = {}
         colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='New connection from {}'.format(self.client_address))
         req = USBIPHeader()
-        while 1:
+        # Set socket timeout to allow checking shutdown event
+        self.request.settimeout(1.0)
+        while not self.server.usbcontainer.shutdown_event.is_set():
             if not self.attached:
-                data = self.request.recv(8)
-                if not data:
-                    break
+                try:
+                    data = self.request.recv(8)
+                    if not data:
+                        break
+                except:
+                    # Timeout or other error, check shutdown event and continue
+                    continue
                 req.unpack(data)
                 colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Header packet is valid')
                 colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Command is {}'.format(hex(req.command)))
@@ -646,10 +666,16 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                     self.request.close()
                     break
                 else:
-                    colour_print(component='USB/IP', msg='waiting for command')
-                    command = self.request.recv(4)
-                    dump_bytes(command, msg='USB/IP command bytes recieved:')
-                    cmdVal = struct.unpack('>I', command)[0]
+                    try:
+                        command = self.request.recv(4)
+                        if not command:
+                            break
+                        colour_print(component='USB/IP', msg='Command received')
+                        dump_bytes(command, msg='USB/IP command bytes recieved:')
+                        cmdVal = struct.unpack('>I', command)[0]
+                    except:
+                        # Timeout or other error, check shutdown event and continue
+                        continue
                     '''
                     if (cmdVal == 0x00000003):
                         cmd = USBIPCMDUnlink()
@@ -719,4 +745,3 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                     else:
                         raise Exception("Unknown USB/IP command recieved")
         self.request.close()
-        self.server.server_close()

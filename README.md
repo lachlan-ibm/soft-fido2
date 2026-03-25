@@ -16,6 +16,9 @@ This software implements the [W3C WebAuthn specification](https://www.w3.org/TR/
 
 ### Dependencies
 - **Python**: 3.9 or higher
+- **OQS**: Open Quantum Safe library (for post-quantum cryptography support)
+- **tpm2-tss-devel**: TPM2 development headers (for TPM2 support)
+- **tpm2-pytss**: TPM2 Python bindings (system package recommended - see note below)
 
 Automatically installed with pip:
 - `asn1 >= 2.2.0`
@@ -473,6 +476,36 @@ $FIDO_HOME/bin/python -m soft_fido2
 # Run scenario tests
 ./tests/scenario_test.sh
 ```
+
+### TPM2 Library Installation Note
+
+The `tpm2_pytss` package may fail to build in virtual environments. If you encounter build errors:
+
+**Recommended Solution:**
+1. Install `tpm2_pytss` via your system package manager first:
+   ```bash
+   # Fedora/RHEL
+   sudo dnf install python3-tpm2-pytss
+   
+   # Ubuntu/Debian
+   sudo apt install python3-tpm2-pytss
+   ```
+
+2. Then create your virtual environment with system site packages access:
+   ```bash
+   virtualenv --system-site-packages $FIDO_HOME
+   ```
+
+**Alternative Solution (Manual Copy):**
+If you need an isolated virtual environment without system site packages, you can manually copy the TPM libraries:
+```bash
+# After installing system package, copy to venv
+cp -r /usr/lib64/python3.*/site-packages/tpm2_pytss $FIDO_HOME/lib/python3.*/site-packages/
+cp -r /usr/lib64/python3.*/site-packages/tpm2_pytss*.dist-info $FIDO_HOME/lib/python3.*/site-packages/
+```
+
+**Maybe Why This Happens:**
+The `tpm2_pytss` package uses CFFI to build native extensions. GCC 15 introduced `nullptr_t` in `stddef.h`, which older versions of `pycparser` cannot parse. The system packages are pre-built and avoid this compilation issue.
 
 ## Troubleshooting
 
