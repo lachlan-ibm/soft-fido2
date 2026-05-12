@@ -38,13 +38,13 @@
      inkscape:window-maximized="1"
      inkscape:current-layer="svg12" />
   <!-- IBM Blue Background (darker shade) -->
-  <rect
+  <!-- rect
      width="512"
      height="512"
      x="0"
      y="0"
      style="fill:#0353E9;fill-opacity:1"
-     id="background" />
+     id="background" / -->
   <!-- ============================================================
        KEY HEAD ARC
        Ellipse arc from bottom-left over top to bottom-right
@@ -52,7 +52,7 @@
   <path
      d="M 205.94485,229.09828        A 113.42416,110.036 0 1 1 294.86353,228.1164"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="path1"
@@ -64,7 +64,7 @@
   <path
      d="m 295.11869,452.84249        a 45.577528,46.528298 0 0 1 -45.57745,46.44528        45.577528,46.528298 0 0 1 -45.57726,-46.36431"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="path2" />
@@ -76,7 +76,7 @@
      y1="232.00734"
      x2="203.87991"
      y2="454.02011"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="13.9798"
      stroke-linecap="round"
      id="line2" />
@@ -85,7 +85,7 @@
      y1="229.16548"
      x2="295.20694"
      y2="453.10306"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="13.9939"
      stroke-linecap="round"
      id="line3" />
@@ -98,7 +98,7 @@
      y1="396.87"
      x2="360.27"
      y2="397.36"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line4"
@@ -108,7 +108,7 @@
      y1="288.57"
      x2="360.27"
      y2="397.36"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line5"
@@ -118,7 +118,7 @@
      y1="351.08"
      x2="405.18"
      y2="351.79"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line6"
@@ -128,7 +128,7 @@
      cy="351.87"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle6"
      style="stroke-width:10;stroke-dasharray:none" />
@@ -140,7 +140,7 @@
      cy="252.57"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle7"
      style="stroke-width:10;stroke-dasharray:none" />
@@ -163,7 +163,7 @@
      y1="271.18"
      x2="160.29"
      y2="271.05"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line7"
@@ -173,7 +173,7 @@
      cy="271.09"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle8"
      style="stroke-width:10;stroke-dasharray:none" />
@@ -196,7 +196,7 @@
      y1="451.82"
      x2="340.30"
      y2="451.95"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line8"
@@ -206,7 +206,7 @@
      cy="451.91"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle9"
      style="stroke-width:10;stroke-dasharray:none" />
@@ -230,7 +230,7 @@
      y1="334.36395"
      x2="139.99603"
      y2="333.84604"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="13.9721"
      stroke-linecap="round"
      id="line9"
@@ -240,7 +240,7 @@
      y1="333.83023"
      x2="139.62025"
      y2="427.25143"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="13.9405"
      stroke-linecap="round"
      id="line10"
@@ -250,7 +250,7 @@
      y1="380.14"
      x2="95.05"
      y2="379.43"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      stroke-linecap="round"
      id="line11"
@@ -260,7 +260,7 @@
      cy="379.35"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle11"
      style="stroke-width:10;stroke-dasharray:none" />
@@ -272,45 +272,10 @@
      cy="463.64999"
      r="36"
      fill="none"
-     stroke="#ffffff"
+     stroke="#FF9800"
      stroke-width="14"
      id="circle12"
      style="stroke-width:10;stroke-dasharray:none" />
   
-  <!-- ============================================================
-       WARNING OVERLAY - LOCKED/UNHEALTHY STATE
-       Yellow warning triangle in bottom-right section (tic-tac-toe grid)
-       ============================================================ -->
-  <g id="warning-overlay">
-    <!-- Yellow equilateral triangle background - same scale as success circle -->
-    <path
-       d="M 427,342 L 512,512 L 342,512 Z"
-       fill="#FFED4E"
-       stroke="none"
-       id="warning-triangle-bg" />
-    <!-- Dark triangle for contrast -->
-    <path
-       d="M 427,370 L 490,490 L 364,490 Z"
-       fill="#1a1a1a"
-       stroke="none"
-       id="warning-triangle" />
-    <!-- Exclamation mark line -->
-    <line
-       x1="427"
-       y1="400"
-       x2="427"
-       y2="460"
-       stroke="#FFED4E"
-       stroke-width="14"
-       stroke-linecap="round"
-       id="warning-line" />
-    <!-- Exclamation mark dot -->
-    <circle
-       cx="427"
-       cy="475"
-       r="8"
-       fill="#FFED4E"
-       id="warning-dot" />
-  </g>
 </svg>
 <!-- Made with Bob -->

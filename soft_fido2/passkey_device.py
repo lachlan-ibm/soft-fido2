@@ -10,7 +10,6 @@ from enum import Enum, IntEnum
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
-from cryptography.fernet import Fernet
 
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
@@ -55,6 +54,10 @@ class AuthenticatorAPI(object):
     _pin_retry = 5
 
     _quit = False
+    
+    # Biometric + TPM mode state
+    _biometric_tpm_mode_enabled = False
+    _biometric_tpm_mode_lock = threading.Lock()
 
     def __new__(cls):
         cls._watchdog = threading.Thread(target=cls._token_expiry_check)
@@ -92,6 +95,82 @@ class AuthenticatorAPI(object):
         with cls._lock:
             if cid in cls._open_keys:
                 cls._open_keys[cid]["up"] = up
+
+    @classmethod
+    def initialize_biometric_tpm_mode(cls):
+        """Initialize and validate biometric + TPM mode.
+        
+        This mode enables seamless authentication when both:
+        - Biometric device (fingerprint) is available
+        - TPM device is available with platform key
+        
+        Returns:
+            True if mode successfully enabled, False otherwise
+        """
+        with cls._biometric_tpm_mode_lock:
+            # Check biometric device
+            try:
+                from soft_fido2.fprint_device import get_fprint_device
+                if not get_fprint_device().is_available():
+                    colour_print(colour=bcolors.WARNING,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='Biometric device not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+                colour_print(colour=bcolors.OKGREEN,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='Biometric device available')
+            except ImportError:
+                colour_print(colour=bcolors.WARNING,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='D-Bus Python bindings not installed')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            # Check TPM device
+            try:
+                from soft_fido2.tpm_device import TPMDevice
+                if not TPMDevice.is_available():
+                    colour_print(colour=bcolors.WARNING,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='TPM device not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+            except ImportError:
+                colour_print(colour=bcolors.WARNING,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='TPM module not available')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            # Verify TPM key exists
+            try:
+                from soft_fido2.key_pair import KeyUtils
+                tpm_key = KeyUtils._get_platform_kp()
+                if tpm_key is None:
+                    colour_print(colour=bcolors.FAIL,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='TPM key not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+            except Exception as e:
+                colour_print(colour=bcolors.FAIL,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg=f'TPM key check failed: {e}')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            cls._biometric_tpm_mode_enabled = True
+            colour_print(colour=bcolors.OKGREEN,
+                       component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                       msg='Biometric + TPM mode enabled')
+            return True
+    
+    @classmethod
+    def is_biometric_tpm_mode_enabled(cls) -> bool:
+        """Check if biometric + TPM mode is enabled."""
+        with cls._biometric_tpm_mode_lock:
+            return cls._biometric_tpm_mode_enabled
 
     @classmethod
     def _get_or_create_pin_token_kp(cls, cid: bytes) -> KeyPair:
@@ -389,27 +468,75 @@ class AuthenticatorAPI(object):
         return False
 
     @classmethod
-    def _create_authenticator(cls, rp_id: str, passkey: dict) -> tuple[Fido2Authenticator, KeyPair, bytes]:
+    def _select_algorithm(cls, pubKeyCredParams: list) -> int:
+        """Select the best supported COSE algorithm from pubKeyCredParams.
+        
+        Prefers ML-DSA-44 (-48) over ES256 (-7).
+        
+        Args:
+            pubKeyCredParams: List of public key credential parameters from the RP
+            
+        Returns:
+            int: Selected COSE algorithm identifier
         """
-        Create authenticator with credential ID.
-        Returns: (authenticator, keypair, credential_id)
+        supported_algs = [
+            param.get("alg")
+            for param in pubKeyCredParams
+            if param.get("type") == "public-key"
+        ]
+
+        # Prefer ML-DSA-44 if available
+        if -48 in supported_algs:
+            return -48
+        # Fallback to ES256
+        if -7 in supported_algs:
+            return -7
+        # Default to ES256 if nothing matches
+        return -7
+
+    @classmethod
+    def _create_authenticator(cls, rp_id: str, passkey: dict, pubKeyCredParams: list) -> tuple[Fido2Authenticator, KeyPair, bytes]:
+        """
+        Create authenticator with deterministic credential key derivation.
+        
+        Args:
+            rp_id: Relying party identifier
+            passkey: Passkey data containing master key
+            pubKeyCredParams: Public key credential parameters from RP
+            
+        Returns:
+            tuple: (authenticator, keypair, credential_id)
         """
         ca_kp = passkey.get('kp')
         if ca_kp is None or not isinstance(ca_kp, KeyPair):
             raise RuntimeError("Corrupted Passkey Data")
         
         seed = KeyUtils.get_passkey_seed(rp_id.encode(), ca_kp.get_private())
-        fkey = Fernet(seed)
-        kp = KeyPair.generate_ecdsa()
+        skey = SymmetricKey(seed.decode())
+        
+        # Select algorithm and generate credential nonce
+        cose_alg = cls._select_algorithm(pubKeyCredParams)
+        credential_nonce = secrets.token_bytes(32)
+        
+        # Derive credential key deterministically
+        master_secret = ca_kp.get_private_bytes()
+        kp = KeyUtils.derive_keypair_from_context(
+            master_secret=master_secret,
+            rp_id=rp_id.encode(),
+            credential_nonce=credential_nonce,
+            cose_alg=cose_alg,
+        )
         
         authenticator = Fido2Authenticator(
             keyPair=kp,
             caKeyPair=ca_kp,
             caCert=passkey.get('x5c'),
-            fKey=fkey
+            sKey=skey
         )
         
         cred_id = authenticator._get_credential_id_bytes(kp)
+        # Add prefix for app identification
+        cred_id = Fido2Authenticator.CRED_PREFIX + cred_id
         return authenticator, kp, cred_id
 
     @classmethod
@@ -432,7 +559,7 @@ class AuthenticatorAPI(object):
             return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
 
         # Create authenticator and generate attestation
-        authenticator, kp, cred_id = cls._create_authenticator(rp['id'], passkey)
+        authenticator, kp, cred_id = cls._create_authenticator(rp['id'], passkey, pkCredsParams)
         authData = authenticator.build_authenticator_data({'rp': rp}, 
                                 attestation, kp, True, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out',
@@ -451,24 +578,42 @@ class AuthenticatorAPI(object):
 
 
     @classmethod
-    def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred): 
+    def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred):
         seed = KeyUtils.get_passkey_seed(rpId.encode(), ca_kp.get_private())
-        #logging.debug(f"seed : {seed}")
-        fkey = Fernet(seed)
-        #skey = SymmetricKey(seed.decode())
-        #Create the authenticator from the raw id, creating the key pair will fail if we don't own the credId
-        b64CredId = base64.urlsafe_b64encode(cred.get('id'))
-        decryptedKp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
+        skey = SymmetricKey(seed.decode())
+        
+        # Remove prefix before decryption
+        raw_cred_id = cred.get('id')
+        if not raw_cred_id.startswith(Fido2Authenticator.CRED_PREFIX):
+            raise ValueError("Credential ID does not have the required prefix")
+
+        raw_cred_id = raw_cred_id[len(Fido2Authenticator.CRED_PREFIX):]
+        b64CredId = base64.urlsafe_b64encode(raw_cred_id)
+        
+        # Decrypt credential metadata and reconstruct key
+        cose_alg, credential_nonce = Fido2Authenticator._decrypt_credential_context(
+            b64CredId,
+            skey,
+        )
+        
+        master_secret = ca_kp.get_private_bytes()
+        decryptedKp = KeyUtils.derive_keypair_from_context(
+            master_secret=master_secret,
+            rp_id=rpId.encode(),
+            credential_nonce=credential_nonce,
+            cose_alg=cose_alg,
+        )
+        
         colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                         msg='We have a usable key, sign the challenge')
-        _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16, 
-                                            caKeyPair=ca_kp, caCert=ca_x5c, fKey=fkey)
+        _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16,
+                                            caKeyPair=ca_kp, caCert=ca_x5c, sKey=skey)
         credential = {
-                "id": _authenticator._get_credential_id_bytes(_authenticator.kp), #Should be set by __init__()
+                "id": raw_cred_id,
                 "type" : "public-key"
             }
         #Generate the assertion response data
-        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', 
+        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed',
                                     _authenticator.kp, True, up=True, be=False, bs=False)
         #Sign it, authenticator method b64 encodeds the ba so we decode it right away
         sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
@@ -480,24 +625,44 @@ class AuthenticatorAPI(object):
     def _maybe_platform_assertion(cls, rpId, clientDataHash, allowedList):
         plat_key = KeyUtils._get_platform_kp()
         seed = KeyUtils.get_passkey_seed(rpId.encode(), plat_key.get_private())
-        fkey = Fernet(seed)
+        skey = SymmetricKey(seed.decode())
+        
         for cred in allowedList:
-            b64CredId = base64.urlsafe_b64encode(cred.get('id'))
-            decryptedKp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
+            raw_cred_id = cred.get('id')
+            if not raw_cred_id.startswith(Fido2Authenticator.CRED_PREFIX):
+                continue
+            raw_cred_id = raw_cred_id[len(Fido2Authenticator.CRED_PREFIX):]
+            b64CredId = base64.urlsafe_b64encode(raw_cred_id)
+            
+            # Decrypt credential metadata and reconstruct key deterministically
+            #TODO refactor this duplciated code to KeyUtils
+            cose_alg, credential_nonce = Fido2Authenticator._decrypt_credential_context(
+                b64CredId,
+                skey,
+            )
+            
+            master_secret = plat_key.get_private_bytes()
+            decryptedKp = KeyUtils.derive_keypair_from_context(
+                master_secret=master_secret,
+                rp_id=rpId.encode(),
+                credential_nonce=credential_nonce,
+                cose_alg=cose_alg,
+            )
+            
             colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                             msg='We have a usable key, sign the challenge')
-            _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16, 
-                                                caKeyPair=plat_key, caCert=None, fKey=fkey)
+            _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16,
+                                                caKeyPair=plat_key, caCert=None, sKey=skey)
             credential = {
-                    "id": _authenticator._get_credential_id_bytes(_authenticator.kp), #Should be set by __init__()
+                    "id": raw_cred_id,
                     "type" : "public-key"
                 }
             #Generate the assertion response data
-            authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', 
+            authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed',
                                 _authenticator.kp, True, up=True, be=False, bs=False)
             #Sign it, authenticator method b64 encodeds the ba so we decode it right away
             sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
-            return None, credential, authData, sig, None   
+            return None, credential, authData, sig, None
         return CBORCommand.CBORStatusCode.CTAP2_ERR_NO_CREDENTIALS, None, None, None, None
 
     @classmethod
@@ -669,14 +834,74 @@ class CBORCommand(object):
     def set_pending(cls, pending):
         cls._pending = pending
 
+    def prompt_for_fprint(self):
+        from soft_fido2.fprint_device import get_fprint_device, BiometricResult
+        fprint_device = get_fprint_device()
+        if fprint_device.is_available():
+            colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                        msg='Starting fingerprint verification...')
+            
+            # Callback for when VerifyFingerSelected signal is received
+            def on_finger_needed(finger_name):
+                colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                            msg=f'Place {finger_name} finger on scanner')
+                MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)
+            
+            result, message = fprint_device.verify_with_retries(
+                username=None,
+                on_finger_needed=on_finger_needed,
+                timeout=15.0,
+                max_retries=3
+            )
+            
+            # Cancel any pending notifications
+            MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
+            
+            if result == BiometricResult.SUCCESS:
+                colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                            msg='Fingerprint verified')
+                AuthenticatorAPI.cache_up(self.cid, True)
+                return True
+            else:
+                colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence',
+                            msg=f'Fingerprint verification failed: {message}')
+                return None
+        return None
+
+
     def gather_user_presence(self):
+        """
+        Gather user presence with fingerprint verification.
+        
+        Authentication adapts to credential type and UV requirements:
+        - Passkey + UV Required/Preferred: PIN (already validated) + Fingerprint
+        - UV Discouraged: Fingerprint only
+        - 2nd Factor: Fingerprint only
+        
+        Fallback: If fprintd unavailable, fall back to GUI prompt via DBusNotifier
+        """
+        # Check skip flag
         if os.environ.get('SOFT_FIDO2_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
-            colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence', 
+            colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence',
                     msg='Skipping user presence check')
             return True
-        elif AuthenticatorAPI.has_cached_up(self.cid):
+        
+        # Check cached presence
+        if AuthenticatorAPI.has_cached_up(self.cid):
             return True
-
+        
+        # Try fingerprint if D-Bus and fprint device available
+        try:
+            if self.prompt_for_fprint():
+                return True
+            # Else, fall through to GUI
+        except ImportError:
+            # D-Bus Python bindings not installed, fall through to GUI
+            pass
+        
+        # Fallback to GUI prompt (existing code)
+        colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                    msg='Using GUI prompt for user presence')
         start_time = time.time()
         MessageQueue.notify_auth.queue.clear()
         MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)

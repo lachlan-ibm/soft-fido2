@@ -41,13 +41,13 @@
      inkscape:window-maximized="1"
      inkscape:current-layer="svg12" />
   <!-- IBM Blue Background (darker shade) -->
-  <rect
+  <!-- rect
      width="512"
      height="512"
      x="0"
      y="0"
      style="fill:#0353E9;fill-opacity:1"
-     id="background" />
+     id="background" / -->
   <!-- ============================================================
        KEY HEAD ARC
        Ellipse arc from bottom-left over top to bottom-right

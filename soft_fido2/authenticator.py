@@ -5,7 +5,7 @@ import hashlib, json, struct, re, base64, binascii, sys, array, os, time, loggin
 import cbor2 as cbor
 from typing import Optional, List
 
-from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, padding, utils
+from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, mldsa,  padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.backends import default_backend
 from cryptography import x509
@@ -29,6 +29,8 @@ except:
 
 
 class Fido2Authenticator(object):
+
+    CRED_PREFIX = b"1337C0D3"
 
     def __init__(self,
             keyPair: Optional[KeyPair] = None,
@@ -64,6 +66,7 @@ class Fido2Authenticator(object):
             transports (List[str], optional): List of supported transports. Default = None
             fKey (Fernet, optional): Symmetric key to generate credential ID.
                     Can be used to reconstruct private EC key for assertions. Default = None
+                    *Depreciated*: Use SymmetricKey instead.
             sKey (SymmetricKey, optional): Alternative symmetric key to generate credential ID.
                     Can be used to reconstruct private EC key for assertions. Default = None
             disableCounter (bool): Whether to disable the attestation/assertion counter.
@@ -181,63 +184,164 @@ class Fido2Authenticator(object):
 
         return result
 
-    def _get_credential_id_bytes(self, keyPair):
-        """Get the bytes of a credential ID for a given authenticator.
-        If a self.caKeyPair is not None, credId is the encoded bytes of self.kp.get_private
-
-        else credId is the sha256 of the public key
-
+    @classmethod
+    def _build_credential_id_plaintext(cls, cose_alg: int, key_material: bytes) -> bytes:
+        """Build plaintext for F1D0 credential ID.
+        
+        Format: [2 bytes COSE alg][32 bytes key material] = 34 bytes
+        
         Args:
-            keyPair (KeyPair): key pair to generate Id for
-            caKyePair (KeyPair): ca key pair used for encrypting private key, may be None
-
-        Return:
-            bytes: credential Id for given key pair and ca key pair
+            cose_alg: COSE algorithm identifier (e.g., -7 for ES256, -48 for ML-DSA-44)
+            key_material: 32-byte private key material
+            
+        Returns:
+            bytes: 34-byte plaintext to be encrypted
+            
+        Raises:
+            ValueError: If key_material is not 32 bytes
         """
-        if self.cib != None:
+        cose_alg_bytes = cose_alg.to_bytes(2, byteorder="big", signed=True)
+        if len(key_material) != 32:
+            raise ValueError("key_material must be 32 bytes")
+        return cose_alg_bytes + key_material
+
+    @classmethod
+    def _parse_credential_id_plaintext(cls, plaintext: bytes):
+        """Parse plaintext from F1D0 credential ID.
+        
+        Format: [2 bytes COSE alg][32 bytes key material] = 34 bytes
+        
+        Args:
+            plaintext: 34-byte decrypted plaintext
+            
+        Returns:
+            tuple: (cose_alg, key_material)
+            
+        Raises:
+            ValueError: If plaintext length is invalid
+        """
+        if len(plaintext) != 34:
+            raise ValueError(f"Invalid credential ID plaintext length: {len(plaintext)} (expected 34)")
+        cose_alg = int.from_bytes(plaintext[0:2], byteorder="big", signed=True)
+        key_material = plaintext[2:34]
+        return cose_alg, key_material
+
+    def _get_credential_id_bytes(self, keyPair, alg_id=None):
+        """Generate F1D0 format credential ID.
+        
+        Format: PREFIX || E(alg_id || key_material)
+        
+        Args:
+            keyPair (KeyPair): Key pair to generate ID for
+            alg_id (int, optional): COSE algorithm ID (inferred if None)
+            
+        Returns:
+            bytes: F1D0 format credential ID
+        """
+        if self.cib is not None:
             return self.cib
-        key = (self.sKey or self.fKey) #skey preferred
-        if key and isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            #logging.debug(f"Encryping cred id with {key}")
-            self.cib = key.encrypt(keyPair.get_private_bytes())
-            #logging.debug(f"self.cib {self.cib}")
-            return self.cib
-        else:
-            #logging.debug("using hash of public key as cib")
+        
+        key = self.sKey or self.fKey
+        if not key:
+            # Fallback to hash if no encryption key
             return hashlib.sha256(keyPair.get_public_bytes()).digest()
+        
+        private_key = keyPair.get_private()
+        
+        # Determine algorithm ID and extract key material
+        if alg_id is None:
+            config = KeyUtils._get_key_config(private_key)
+            alg_id = config['alg_id']
+            key_material = config['extract_key'](private_key)
+        else:
+            key_material = KeyUtils._extract_key_material(private_key)
+        
+        # Build plaintext and encrypt
+        plaintext = self._build_credential_id_plaintext(alg_id, key_material)
+        encrypted = key.encrypt(plaintext)
+        
+        # Add prefix
+        self.cib = self.CRED_PREFIX + encrypted
+        return self.cib
 
     def get_credential_id(self, keyPair=None):
-        """credential ID defaults to the SHA256 of the public key
+        """Get the credential ID for this authenticator.
+        
+        Returns the cached credential ID if available, otherwise falls back to SHA256 of public key.
 
         Args:
-            keyPair (:obj:`KeyPair`, optional): key pair to get credential id for; default = self.kp
+            keyPair (:obj:`KeyPair`, optional): Key pair to get credential id for; default = self.kp
 
         Returns:
-            str: b64 encoded byte string of credentail id
+            str: b64 encoded byte string of credential id
         """
-        if keyPair == None:
-            keyPair = self.kp
-        credIdBytes = self._get_credential_id_bytes(keyPair)
-        return self._urlb64_encode(credIdBytes)
+        if self.cib is None:
+            kp = keyPair or self.kp
+            self._get_credential_id_bytes(kp)
+        return self._urlb64_encode(self.cib)
 
 
     @classmethod
-    def _get_key_pair_from_credential_id(cls, credId, decryptor):
-        """Given a credId and caKeyPair attempt to reconstruct the private/public
-        key pair
-
+    def _decrypt_credential_context(cls, credId, decryptor):
+        """Decrypt and parse credential ID metadata with prefix support.
+        
         Args:
-            credId (str): url safe base64 encoded private key encrypted using keyPair
-            decryptor (Union[Fernet,SymmetricKey]): key previously used to encrypt private key
-
-        Return:
-            KeyPair: original key pair stored in credId
+            credId: URL-safe base64 encoded credential ID (with or without prefix)
+            decryptor: Symmetric key used to decrypt the credential ID
+            
+        Returns:
+            tuple: (cose_alg, key_material)
         """
         encBytes = cls._urlb64_decode(credId)
-        #decrypt the bytes using the given key
-        keyBytes = decryptor.decrypt(encBytes)
-        #Finally reconstruct the key
-        return KeyPair.load_key_pair(keyBytes)
+        
+        # Check for and skip CRED_PREFIX if present
+        if len(encBytes) >= len(cls.CRED_PREFIX) and encBytes[:len(cls.CRED_PREFIX)] == cls.CRED_PREFIX:
+            encBytes = encBytes[len(cls.CRED_PREFIX):]
+        
+        plaintext = decryptor.decrypt(encBytes)
+        return cls._parse_credential_id_plaintext(plaintext)
+
+    @classmethod
+    def _get_key_pair_from_credential_id(cls, credId, decryptor):
+        """Reconstruct KeyPair from credential ID with prefix.
+        
+        Args:
+            credId (str): URL-safe base64 encoded credential ID
+            decryptor (Union[Fernet,SymmetricKey]): Symmetric key for decryption
+            
+        Returns:
+            KeyPair: Reconstructed key pair
+            
+        Raises:
+            ValueError: If credential ID format is invalid or algorithm is unsupported
+        """
+        encBytes = cls._urlb64_decode(credId)
+        
+        # Check for CRED_PREFIX
+        if len(encBytes) < len(cls.CRED_PREFIX) or encBytes[:len(cls.CRED_PREFIX)] != cls.CRED_PREFIX:
+            raise ValueError(f"Invalid credential ID: missing {cls.CRED_PREFIX} prefix")
+        
+        # Decrypt payload (skip prefix)
+        plaintext = decryptor.decrypt(encBytes[len(cls.CRED_PREFIX):])
+        
+        # Parse plaintext
+        alg_id, key_material = cls._parse_credential_id_plaintext(plaintext)
+        
+        # Reconstruct private key based on algorithm
+        if alg_id == -7:  # ES256
+            private_value = int.from_bytes(key_material, byteorder='big')
+            curve = ec.SECP256R1()
+            private_key = ec.derive_private_key(private_value, curve, default_backend())
+        elif alg_id == -48:  # ML-DSA-44
+            private_key = mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material)
+        elif alg_id == -49:  # ML-DSA-65
+            private_key = mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material)
+        elif alg_id == -50:  # ML-DSA-87
+            private_key = mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material)
+        else:
+            raise ValueError(f"Unsupported algorithm: {alg_id}")
+        
+        return KeyPair(private_key, private_key.public_key())
 
     def get_aaguid(self, hexString=True):
         """If hexString returns in the format:
@@ -452,8 +556,9 @@ class Fido2Authenticator(object):
             self.counter += 1
 
         if not assertion:
-            credIdBytes = self._get_credential_id_bytes(keyPair)
-            authDataBytes += self.process_attested_credential_data(keyPair.get_public(), credIdBytes)
+            if self.cib is None:
+                self.cib = self._get_credential_id_bytes(keyPair)
+            authDataBytes += self.process_attested_credential_data(keyPair.get_public(), self.cib)
         authData = bytes(authDataBytes)
         return authData
 
@@ -475,7 +580,8 @@ class Fido2Authenticator(object):
                     https://www.w3.org/TR/webauthn/#packed-attestation
         """
         result = {} # Key order is important
-        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg, pss=True if self.salt_len else False)
+        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(
+                    keyPair.get_public(), self.hashAlg, pss=True if self.salt_len else False)
         toSign = bytes([*authData, *clientDataHash])
         sig = ""
 
@@ -488,19 +594,13 @@ class Fido2Authenticator(object):
             digest = hashes.Hash(self.hashAlg)
             digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
             #sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
-            sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(self.hashAlg)))
-        elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
-            sig = keyPair.get_private().sign(toSign)
+            sig = keyPair.get_private().sign(digest.finalize(), 
+                                                ec.ECDSA(utils.Prehashed(self.hashAlg)))
+        elif isinstance(keyPair.get_public(), 
+                    (mldsa.MLDSA44PublicKey, mldsa.MLDSA65PublicKey, mldsa.MLDSA87PublicKey, ed25519.Ed25519PublicKey)):
+            sig = keyPair.get_private().sign(toSign) # Generic sign method
         else:
-            # TODO promote PQC to 1st class
-            try:
-                from oqs.oqs import Signature
-                if isinstance(keyPair.get_private(), Signature):
-                    sig = keyPair.get_private().sign(toSign)
-                else:
-                    raise RuntimeError("Unsupported key type")
-            except ImportError:
-                raise Exception("Unsupported key type")
+            raise RuntimeError("Unsupported key type")
 
         result[u"sig"] = sig
 
@@ -957,10 +1057,11 @@ class Fido2Authenticator(object):
         clientDataHash = hashlib.sha256(clientDataJSON.encode('utf-8')).digest()
         clientDataEncoded = base64.urlsafe_b64encode(clientDataJSON.encode('ascii'))
 
-        credIdBytes = self._get_credential_id_bytes(keyPair)
+        if self.cib is None:
+            self._get_credential_id_bytes(keyPair)
 
         authData = self.build_authenticator_data(pk, atteStmtFmt, keyPair, uv, up, be, bs)
-        attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
+        attStmt = self.process_attestation_statement(atteStmtFmt, clientDataHash, authData, self.cib, keyPair)
         attStmtFmt = str(re.sub('-self', '', atteStmtFmt))
         if atteStmtFmt.startswith('compound'):
             attStmtFmt = atteStmtFmt.split(':')[0]

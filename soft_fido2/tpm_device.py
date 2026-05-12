@@ -3,7 +3,7 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION
+from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION, TPM2_CAP
 from tpm2_pytss.types import TPMT_PUBLIC, TPMS_ECC_PARMS, TPMT_SYM_DEF_OBJECT, TPMT_ECC_SCHEME, TPM2_HANDLE
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
@@ -53,6 +53,26 @@ class TPMDevice(object):
     # Object Attributes for FIDO2 key
     FIDO2_KEY_ATTRIBUTES = 0x00040072  # fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | sign | restricted
 
+    @classmethod
+    def is_available(cls) -> bool:
+        """Check if TPM device is available and accessible.
+        
+        Returns:
+            bool: True if TPM device is available, False otherwise
+        """
+        try:
+            with redirect_tcti_to_logging():
+                esapi = ESAPI()
+                esapi.get_capability(
+                    capability=TPM2_CAP.ALGS,
+                    prop=0,
+                    property_count=1
+                )
+            logging.info("TPM device available")
+            return True
+        except Exception as e:
+            logging.warning(f"TPM device not available: {e}")
+            return False
 
     def is_handle_available(self, candidate):
         """Check if a persistent handle is available (not in use)

@@ -1,7 +1,10 @@
-from turtle import pu
-from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric.mldsa import (
+    MLDSA44PublicKey,
+    MLDSA65PublicKey,
+    MLDSA87PublicKey
+)
 from soft_fido2 import Fido2Authenticator, KeyPair
-from oqs.oqs import Signature
 import os, json, base64, uuid, struct, cbor2
 
 
@@ -66,11 +69,17 @@ def _do_the_thing(kp, cid):
     return aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig
 
 
-def _verify_sig(msg, sig, alg, pubkey):
-        # Verify the signature
-        verifier = Signature(alg)
+def _verify_sig(msg, sig, public_key):
+        """
+        Verify ML-DSA signature using cryptography library v47+.
+        
+        Args:
+            msg: Message that was signed
+            sig: Signature bytes
+            public_key: Public key
+        """
         try:
-            verifier.verify(msg, sig, pubkey)
+            public_key.verify(sig, msg)
             return True
         except Exception as e:
             print(f"Exception :: {e}")
@@ -82,42 +91,46 @@ def test_ML_DSA_44_sign():
     #authenticator = Fido2Authenticator(cred_id=cid)
     kp = KeyPair.generate_mldsa("ML-DSA-44")
     pubkey = kp.get_public()
-    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
+    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid)
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
     assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
                                                                         flags, int.to_bytes(0x01 | 0x40 | 0x04))
-    assert cose[3] == -48, "ML-DSA-44 alg id"   
+    assert cose[3] == -48, "ML-DSA-44 alg id"
     rhoTone = cose[-1]
-    assert rhoTone == pubkey, "Public bytes not correct {} {}".format(cose, pubkey)
+    # Compare serialized public key bytes
+    pubkey_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+    assert rhoTone == pubkey_bytes, "Public bytes not correct"
     hasher = hashes.Hash(hashes.SHA256())
     hasher.update(b"example.com")
     test_rp_hash = hasher.finalize()
     assert test_rp_hash == rp_id_hash, "returned hash does not match {} != {}".format(test_rp_hash, rp_id_hash)
-    _verify_sig(to_sign, sig, "ML-DSA-44", pubkey)
+    _verify_sig(to_sign, sig, pubkey)
 
 def test_ML_DSA_67_sign():
     kp = KeyPair.generate_mldsa("ML-DSA-65")
     pubkey = kp.get_public()
     cid = base64.urlsafe_b64encode(os.urandom(64))
     #authenticator = Fido2Authenticator(cred_id=cid)
-    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
+    aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid)
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
     assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
                                                                         flags, int.to_bytes(0x01 | 0x40 | 0x04))
-    assert cose[3] == -49, "ML-DSA-65 alg id"   
+    assert cose[3] == -49, "ML-DSA-65 alg id"
     rhoTone = cose[-1]
-    assert rhoTone == pubkey, "Public bytes not correct {} {}".format(cose, pubkey)
+    # Compare serialized public key bytes
+    pubkey_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+    assert rhoTone == pubkey_bytes, "Public bytes not correct"
     hasher = hashes.Hash(hashes.SHA256())
     hasher.update(b"example.com")
     test_rp_hash = hasher.finalize()
     assert test_rp_hash == rp_id_hash, "returned hash does not match {} != {}".format(test_rp_hash, rp_id_hash)
-    _verify_sig(to_sign, sig, "ML-DSA-65", pubkey)
+    _verify_sig(to_sign, sig, pubkey)
 
 def test_ML_DSA_87_sign():
     kp = KeyPair.generate_mldsa("ML-DSA-87")
@@ -131,13 +144,14 @@ def test_ML_DSA_87_sign():
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
                                                                         flags, int.to_bytes(0x01 | 0x40 | 0x04))
-    assert cose[3] == -50, "ML-DSA-87 alg id"   
+    assert cose[3] == -50, "ML-DSA-87 alg id"
     rhoTone = cose[-1]
-    assert rhoTone == pubkey, "Public bytes not correct {} {}".format(cose, pubkey)
+    pubkey_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
+    assert rhoTone == pubkey_bytes, "Public bytes not correct"
     assert -3 not in cose, "Invalid key not present"
     hasher = hashes.Hash(hashes.SHA256())
     hasher.update(b"example.com")
     test_rp_hash = hasher.finalize()
     assert test_rp_hash == rp_id_hash, "returned hash does not match {} != {}".format(test_rp_hash, rp_id_hash)
-    _verify_sig(to_sign, sig, "ML-DSA-87", pubkey)
+    _verify_sig(to_sign, sig, pubkey)
     #assert False, "Capture output for isfs2 cross contamination"

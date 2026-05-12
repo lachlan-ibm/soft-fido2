@@ -1,7 +1,7 @@
 # Copyrite IBM 2022, 2025
 # IBM Confidential
 
-import os, time, sys, subprocess, traceback, shutil, threading, logging, signal
+import os, time, sys, traceback, threading, logging, signal
 from enum import Enum
 from typing import Optional
 from PyQt6.QtGui import QIcon, QAction
@@ -16,6 +16,13 @@ try:
 except:
     from message_queues import QueueMessageType, MessageQueue, PlatformKeyRequest, PlatformKeyResponse
     from key_pair import KeyUtils, KeyPair
+try:
+    from soft_fido2.dbus_notify import DBusNotifier, DBusNotificationListener
+except ImportError:
+    # D-Bus not available, will use Qt fallback
+    DBusNotifier = None
+    DBusNotificationListener = None
+
 
 class WorkerSignals(QObject):
     # Define signals as class attributes here
@@ -532,8 +539,8 @@ class SettingsDialog(QDialog):
 
 class SysTrayApp(QDialog):
     class NotificationFramework:
-        NOTIFY_SEND = 0
-        QT = 1
+        DBUS = 0           # Direct D-Bus (primary)
+        QT = 1             # Qt system tray (fallback only)
     
     class AppState(Enum):
         LOCKED = "locked"
@@ -714,26 +721,52 @@ class SysTrayApp(QDialog):
             self._exit()
 
     def _setup_notifications(self):
-        if shutil.which('notify-send'):
-            return self.NotificationFramework.NOTIFY_SEND
+        """Determine which notification framework to use - D-Bus first, Qt fallback"""
+        # Initialize instance variables for D-Bus notification tracking
+        self._current_notification_id = None
+        self._dbus_notifier = None
+        self._dbus_listener = None
+        
+        # Try D-Bus notification service (primary method with full interactivity)
+        if DBusNotifier is not None and DBusNotificationListener is not None:
+            self._dbus_notifier = DBusNotifier()
+            if self._dbus_notifier.is_available():
+                # Initialize D-Bus listener for interactive notifications
+                self._dbus_listener = DBusNotificationListener(
+                    on_action_callback=self._handle_notification_action,
+                    on_closed_callback=self._handle_notification_closed
+                )
+                if self._dbus_listener.is_available():
+                    logging.info("Using D-Bus notifications with interactive support")
+                    return self.NotificationFramework.DBUS
+                else:
+                    logging.warning("D-Bus listener unavailable, falling back to Qt")
+            else:
+                logging.warning("D-Bus notifier unavailable, falling back to Qt")
         else:
-            self._tray_icon.messageClicked.connect(self.on_message_clicked)
-            return self.NotificationFramework.QT
+            logging.info("D-Bus module not available, using Qt fallback")
+        
+        # Fallback to Qt system tray notifications (limited functionality)
+        self._tray_icon.messageClicked.connect(self.on_message_clicked)
+        logging.info("Using Qt system tray notifications (no interactive buttons)")
+        return self.NotificationFramework.QT
 
     def launch_notification(self):
         return {
-            self.NotificationFramework.NOTIFY_SEND: NotifySend.launch_notification,
+            self.NotificationFramework.DBUS: self._launch_notification_dbus,
             self.NotificationFramework.QT: self._launch_notification_fallback
             }.get(self.notification_fw, self._launch_notification_fallback)()
 
     def prompt_notification(self):
         return {
-            self.NotificationFramework.NOTIFY_SEND: NotifySend.prompt_notification,
+            self.NotificationFramework.DBUS: self._prompt_notification_dbus,
             self.NotificationFramework.QT: self._prompt_notification_fallback
             }.get(self.notification_fw, self._prompt_notification_fallback)()
 
     def cancel_notification(self):
-        NotifySend.cancel_notification()
+        if self.notification_fw == self.NotificationFramework.DBUS:
+            self._cancel_notification_dbus()
+        # Qt notifications don't need explicit cancellation
 
     def _launch_notification_fallback(self):
         self._tray_icon.showMessage("EyeBeeKey",
@@ -744,6 +777,137 @@ class SysTrayApp(QDialog):
         self._tray_icon.showMessage("EyeBeeKey",
                          "Pirate key recieved a webauthn ceremony, should I respond?",
                          QSystemTrayIcon.MessageIcon.Critical, 15000)
+    def _launch_notification_dbus(self):
+        """
+        Smart startup notification:
+        - If locked AND requires password: Show unlock prompt
+        - If TPM/passwordless: No notification
+        - If unlocked: Show startup confirmation
+        """
+        if self._current_state == self.AppState.LOCKED:
+            if self._platform_key_requires_password():
+                self._prompt_unlock_notification_dbus()
+            # else: No notification for TPM or passwordless keys
+        else:
+            # Show simple startup notification
+            if self._dbus_notifier:
+                self._current_notification_id = self._dbus_notifier.send_notification(
+                    title="EyeBeeKey",
+                    message="Pirate Passkey UHID Service started",
+                    urgency=self._dbus_notifier.URGENCY_LOW,
+                    timeout=3000,
+                    icon='dialog-password'
+                )
+
+    def _platform_key_requires_password(self):
+        """Check if platform key needs password (file-based with password)"""
+        # TPM-based keys don't require password notification
+        if self._platform_key and hasattr(self._platform_key, '__class__'):
+            if 'TPM' in self._platform_key.__class__.__name__:
+                return False
+        # File-based without password don't require notification
+        # Default: assume password required if locked
+        return True
+
+    def _prompt_unlock_notification_dbus(self):
+        """Interactive unlock prompt when platform key locked"""
+        if not self._dbus_notifier:
+            return
+        
+        actions = [
+            ('unlock', 'Unlock'),
+            ('later', 'Later')
+        ]
+        
+        self._current_notification_id = self._dbus_notifier.send_notification(
+            title="Platform Key Locked",
+            message="Platform key is locked. Unlock now?",
+            urgency=self._dbus_notifier.URGENCY_NORMAL,
+            timeout=15000,
+            actions=actions,
+            hints={'category': 'device'},
+            icon='dialog-password'
+        )
+
+    def _prompt_notification_dbus(self):
+        """Interactive notification with Accept/Decline actions"""
+        if not self._dbus_notifier:
+            return
+        
+        actions = [
+            ('accept', 'Accept'),
+            ('decline', 'Decline')
+        ]
+        
+        # Set ceremony icon before showing notification
+        self._set_ceremony_icon()
+        
+        # Get absolute path to main_icon.svg
+        icon_path = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '..', 'icons', 'main_icon.svg'
+        ))
+        
+        self._current_notification_id = self._dbus_notifier.send_notification(
+            title="Authentication Request",
+            message="WebAuthn ceremony received. Accept?",
+            urgency=self._dbus_notifier.URGENCY_CRITICAL,
+            timeout=15000,
+            actions=actions,
+            hints={'category': 'device'},
+            icon=icon_path
+        )
+
+    def _cancel_notification_dbus(self):
+        """Cancel active notification"""
+        if self._dbus_notifier and self._current_notification_id is not None:
+            self._dbus_notifier.close_notification(self._current_notification_id)
+            self._current_notification_id = None
+
+    def _handle_notification_action(self, notification_id, action_key):
+        """Handle D-Bus notification action callback"""
+        logging.info(f"Notification action: {action_key}")
+        
+        if action_key == 'accept':
+            # User clicked Accept button (authentication)
+            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
+            # Restore status icon after user response
+            self._restore_status_icon()
+        elif action_key == 'decline':
+            # User clicked Decline button (authentication)
+            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_REJECT)
+            # Restore status icon after user response
+            self._restore_status_icon()
+        elif action_key == 'unlock':
+            # User clicked Unlock button (platform key)
+            self.__open_settings()
+        elif action_key == 'later':
+            # User clicked Later button (platform key)
+            logging.info("User chose to unlock platform key later")
+
+    def _handle_notification_closed(self, notification_id, reason):
+        """Handle notification closed event"""
+        reason_map = {1: 'expired', 2: 'dismissed', 3: 'closed by app', 4: 'undefined'}
+        reason_str = reason_map.get(reason, f'unknown({reason})')
+        logging.info(f"Notification closed: {reason_str}")
+        
+        # Restore status icon when notification expires or is dismissed
+        if reason in (1, 2):  # 1=expired, 2=dismissed by user
+            self._restore_status_icon()
+            if reason == 1:  # Expired - treat as rejection
+                MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_REJECT)
+
+    def _set_ceremony_icon(self):
+        """Set tray icon to main_icon.svg during authentication ceremony"""
+        icon_path = os.path.join(os.path.dirname(__file__), '..', 'icons', 'main_icon.svg')
+        if os.path.exists(icon_path):
+            self._tray_icon.setIcon(QIcon(icon_path))
+            logging.info("Set ceremony icon: main_icon.svg")
+
+    def _restore_status_icon(self):
+        """Restore tray icon to locked/unlocked status after ceremony"""
+        self._update_icon_for_state()
+        logging.info("Restored status icon")
+
 
     def on_message_clicked(self):
         MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
@@ -869,8 +1033,8 @@ class SysTrayApp(QDialog):
     def _exit(self):
         logging.info("Sysapp Exiting")
         MessageQueue.notify_udev.put(QueueMessageType.QUIT)
-        if self.notification_fw == self.NotificationFramework.NOTIFY_SEND:
-            NotifySend.cancel_notification()
+        if self.notification_fw == self.NotificationFramework.DBUS:
+            self._cancel_notification_dbus()
         self.quit = True
         self.app.quit()
 
@@ -902,48 +1066,5 @@ class SysTrayApp(QDialog):
         self.launch_notification()
         self.app.exec()
 
-
-class NotifySend:
-    ACCEPT = 0
-    DECLINE = 1
-    EXPIRE = 2
-
-    proc = None
-
-    @classmethod
-    def prompt_notification(cls):
-        timeout = 15000  # Expire notification in a minute
-        cmd = ['notify-send',
-            '--action=accept=Accept',
-            '--action=decline=Decline',
-            '--action=default=default',
-            '--expire-time={}'.format(timeout),
-            '--icon=info',
-            '--app-name=EyeBeeKey',
-            'I challenge thee',
-            'Pirate key recieved a webauthn ceremony, should I respond?']
-        cls.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        while cls.proc.poll() is None:
-            time.sleep(0.002)
-        outMsg, errMsg = cls.proc.communicate()
-        outMsg, errMsg = outMsg.decode('utf-8'), errMsg.decode('utf-8')
-
-        if outMsg == 'accept\n' or outMsg == 'default\n':
-            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
-        else:
-            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_REJECT)
-
-    @classmethod
-    def cancel_notification(cls):
-        if cls.proc:
-            cls.proc.terminate()
-
-    @classmethod
-    def launch_notification(cls):
-        cmd = ['notify-send',
-            '--app-name=EyeBeeKey',
-            '--icon=info', 'EyeBeeKey',
-            'Starting the Pirate Passkey UHID Service']
-        subprocess.Popen(cmd).communicate()
 
 # Made with Bob
