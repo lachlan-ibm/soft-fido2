@@ -23,7 +23,7 @@ class DBusNotifier:
     URGENCY_CRITICAL = 2
     
     # Configuration constants
-    APP_NAME = 'EyeBeeKey'
+    APP_NAME = 'AyeBeKey'
     DEFAULT_ICON = 'dialog-password'
     NEW_NOTIFICATION_ID = 0
     
@@ -32,6 +32,9 @@ class DBusNotifier:
         self._available = False
             
         try:
+            # Initialize D-Bus main loop integration BEFORE creating connection
+            DBusGMainLoop(set_as_default=True)
+            
             self.bus = dbus.SessionBus()
             self.notify_service = self.bus.get_object(
                 'org.freedesktop.Notifications',
@@ -178,9 +181,6 @@ class DBusNotificationListener:
         self._available = False
         
         try:
-            # Initialize D-Bus main loop integration
-            DBusGMainLoop(set_as_default=True)
-            
             self.bus = dbus.SessionBus()
             
             # Connect to ActionInvoked signal

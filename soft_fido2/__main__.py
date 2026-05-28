@@ -3,6 +3,14 @@
 # IBM Confidential
 
 import logging, sys, os, argparse
+
+# Set process title for proper notification display
+try:
+    from setproctitle import setproctitle
+    setproctitle('AyeBeKey')
+except ImportError:
+    # setproctitle not available, notifications may show __main__.py
+    pass
 try:
     from .passkey_device import CTAP2HIDevice
     from .systray_app import SysTrayApp
@@ -74,8 +82,8 @@ Examples:
     
     # Start appropriate transport
     if args.transport == 'uhid':
-        logging.info("Starting the EyeBeeKey Passkey UHID Service")
-        print("Starting the EyeBeeKey Passkey UHID Service")
+        logging.info("Starting the AyeBeKey Passkey UHID Service")
+        print("Starting the AyeBeKey Passkey UHID Service")
         
         udev = CTAP2HIDevice('/dev/uhid')
         udev.start()
@@ -97,8 +105,8 @@ Examples:
                 logging.info("UHID device thread terminated successfully")
     
     elif args.transport == 'usbip':
-        logging.info("Starting the EyeBeeKey Passkey USB/IP Service")
-        print(f"Starting the EyeBeeKey Passkey USB/IP Service on port {args.port}")
+        logging.info("Starting the AyeBeKey Passkey USB/IP Service")
+        print(f"Starting the AyeBeKey Passkey USB/IP Service on port {args.port}")
         print("Vendor ID: 0x3713, Product ID: 0x3713")
         print(f"Waiting for USB/IP client connection on port {args.port}...")
         print("\nOn CLIENT machine, run:")

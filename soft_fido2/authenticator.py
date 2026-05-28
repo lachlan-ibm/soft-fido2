@@ -107,16 +107,23 @@ class Fido2Authenticator(object):
 
     def _init_key_pair(self, credId):
         if credId is not None:
-            self.cib = self._urlb64_decode(credId)
+            # Store the credential ID as-is (it's already in the format: prefix + base64_encoded_data)
+            self.cib = credId
             key = self.fKey or self.sKey
             if self.kp is None and key is not None:
                 try:
                     self.kp = self._get_key_pair_from_credential_id(credId, key)
-                except Exception:
+                except Exception as e:
+                    logging.error(f"Failed to reconstruct keypair from credential ID: {e}", exc_info=True)
                     pass
         # Generate a new key pair if we still don't have one
         if self.kp is None:
             self.kp = KeyPair.generate_ecdsa()
+            # If we generated a new random keypair, we need to regenerate the credential ID
+            # to match this new keypair, otherwise signatures won't verify
+            if self.cib is not None:
+                logging.warning("Generated random keypair but credId was provided - regenerating credId to match")
+                self.cib = None  # Force regeneration
 
     @classmethod
     def _urlb64_decode(cls, b64String):
@@ -306,7 +313,7 @@ class Fido2Authenticator(object):
         """Reconstruct KeyPair from credential ID with prefix.
         
         Args:
-            credId (str): URL-safe base64 encoded credential ID
+            credId (bytes): Credential ID in format: CRED_PREFIX + base64_encoded_encrypted_data
             decryptor (Union[Fernet,SymmetricKey]): Symmetric key for decryption
             
         Returns:
@@ -315,14 +322,15 @@ class Fido2Authenticator(object):
         Raises:
             ValueError: If credential ID format is invalid or algorithm is unsupported
         """
-        encBytes = cls._urlb64_decode(credId)
-        
-        # Check for CRED_PREFIX
-        if len(encBytes) < len(cls.CRED_PREFIX) or encBytes[:len(cls.CRED_PREFIX)] != cls.CRED_PREFIX:
+        # Check for CRED_PREFIX (it's ASCII bytes, not encrypted)
+        if len(credId) < len(cls.CRED_PREFIX) or credId[:len(cls.CRED_PREFIX)] != cls.CRED_PREFIX:
             raise ValueError(f"Invalid credential ID: missing {cls.CRED_PREFIX} prefix")
         
-        # Decrypt payload (skip prefix)
-        plaintext = decryptor.decrypt(encBytes[len(cls.CRED_PREFIX):])
+        # Extract the base64-encoded encrypted part (after the prefix)
+        base64_encrypted = credId[len(cls.CRED_PREFIX):]
+        
+        # Decrypt payload (the decrypt method expects base64-encoded input)
+        plaintext = decryptor.decrypt(base64_encrypted)
         
         # Parse plaintext
         alg_id, key_material = cls._parse_credential_id_plaintext(plaintext)
@@ -1115,6 +1123,9 @@ class Fido2Authenticator(object):
             sig = keyPair.get_private().sign(hasher.finalize(),
                                                   ec.ECDSA(utils.Prehashed(self.hashAlg)))
         elif isinstance(keyPair.get_public(), ed25519.Ed25519PublicKey):
+            sig = keyPair.get_private().sign(toSignStr)
+        elif isinstance(keyPair.get_public(),
+                    (mldsa.MLDSA44PublicKey, mldsa.MLDSA65PublicKey, mldsa.MLDSA87PublicKey)):
             sig = keyPair.get_private().sign(toSignStr)
         else:
             raise Exception("Unsupported key algorithm")

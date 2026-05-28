@@ -1,13 +1,17 @@
 [Unit]
-Description=Software FIDO2 Passkey
-After=basic.target
+Description=Software FIDO2 Passkey (User Service with GUI)
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
-ExecStart=/opt/soft_fido2/bin/python -m soft_fido2
 Type=simple
-Restart=no
-EnvironmentFile=/opt/soft_fido2/passkey.env
+ExecStart=/usr/bin/python3 -m soft_fido2
+Restart=on-failure
+RestartSec=5
+EnvironmentFile=%h/.fido2/passkey.env
+Environment="PYTHONPATH=%h/.local/lib/python3.14/site-packages"
+TimeoutStopSec=10
+KillMode=mixed
 
 [Install]
-WantedBy=multi-user.target
-EOF
+WantedBy=graphical-session.target

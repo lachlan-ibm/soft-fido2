@@ -6,7 +6,6 @@ import os
 import cbor2 as cbor
 import secrets
 import base64
-import json
 import logging
 
 from cryptography import x509
@@ -15,7 +14,7 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
 
 from soft_fido2.cert_utils import CertUtils
 
@@ -54,26 +53,102 @@ class KeyUtils(object):
         """
         Generate a 32 byte seed using HKDF from entropy and a private key.
         
-        Entropy is typically the bytes of the rp.id. Key is an Elliptic Curve key.
+        Supports both file EC keys and TPM-backed keys.
         
-        Uses HKDF with:
-        - Salt: entropy (rp.id bytes) for domain separation
-        - IKM: private key bytes
-        - Info: application context string
-        
-        Returned bytestring is b64_url encoded.
+        Args:
+            entropy: Bytes (typically RP ID bytes) for domain separation
+            key: Either an EllipticCurvePrivateKey or TPM KeyPair wrapper
+            
+        Returns:
+            Base64-url encoded 32-byte seed
+            
+        Raises:
+            ValueError: If entropy is not bytes or key type is unsupported
         """
         if not isinstance(entropy, bytes):
             raise ValueError(f"Entropy must be bytes: {entropy}")
+        
+        # Check if this is a TPM-backed key
+        if hasattr(key, 'is_tpm') and key.is_tpm:
+            return cls._tpm_derive_seed(entropy, key)
+        else:
+            return cls._file_derive_seed(entropy, key)
+    
+    @classmethod
+    def _file_derive_seed(cls, entropy, key):
+        """
+        Derive seed using file-backed HKDF with exportable EC private key.
+        
+        Args:
+            entropy: Salt bytes (typically RP ID bytes)
+            key: EllipticCurvePrivateKey object
+            
+        Returns:
+            Base64-url encoded 32-byte seed
+            
+        Raises:
+            ValueError: If key is not an EllipticCurvePrivateKey
+        """
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             raise ValueError(f"Key must be an EllipticCurvePrivateKey: {key}")
         
         # Extract private key bytes as Input Key Material
-        key_material = key.private_bytes(encoding=serialization.Encoding.DER, 
-                    format=serialization.PrivateFormat.PKCS8, encryption_algorithm=serialization.NoEncryption())
-        hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=entropy,
-                        info=b"FIDO2-PASSKEY-SEED", backend=default_backend())
+        key_material = key.private_bytes(
+            encoding=serialization.Encoding.DER,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+        
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=entropy,
+            info=b"FIDO2-PASSKEY-SEED",
+            backend=default_backend()
+        )
         seed_bytes = hkdf.derive(key_material)
+        return base64.urlsafe_b64encode(seed_bytes)
+    
+    @classmethod
+    def _tpm_derive_seed(cls, entropy, tpm_key):
+        """
+        Derive seed using TPM HMAC operations to implement HKDF.
+        
+        This implements HKDF using TPM for the extract phase:
+        1. Extract: PRK = HMAC-SHA256(salt=entropy, key=TPM_key)
+        2. Expand: OKM = HKDF-Expand(PRK, info, length)
+        
+        The TPM key is used implicitly via HMAC operation - the private
+        key material never leaves the TPM.
+        
+        Args:
+            entropy: Salt bytes (typically RP ID bytes)
+            tpm_key: TPM KeyPair wrapper with is_tpm=True
+            
+        Returns:
+            Base64-url encoded 32-byte seed
+            
+        Raises:
+            AttributeError: If tpm_key doesn't have required TPM attributes
+        """
+        # HKDF Extract phase using TPM HMAC
+        # PRK = HMAC-SHA256(salt=entropy, IKM=TPM_key)
+        # The TPM key acts as IKM implicitly through the HMAC operation
+        prk = tpm_key.tpm_device.hmac(
+            data=entropy,
+            persistent_handle=tpm_key.handle
+        )
+        
+        # HKDF Expand phase using software implementation
+        # This is safe because PRK is already derived and doesn't expose the key
+        hkdf_expand = HKDFExpand(
+            algorithm=hashes.SHA256(),
+            length=32,
+            info=b"FIDO2-PASSKEY-SEED",
+            backend=default_backend()
+        )
+        seed_bytes = hkdf_expand.derive(prk)
+        
         return base64.urlsafe_b64encode(seed_bytes)
 
     @classmethod
@@ -349,25 +424,64 @@ class KeyUtils(object):
 
     @classmethod
     def __read_passkey(cls, passkeyFilename):
+        """
+        Read passkey wallet and stash files.
+
+        """
         if not passkeyFilename.endswith('.passkey'):
             passkeyFilename += '.passkey'
-        passkey_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), passkeyFilename)
+        
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        passkey_path = os.path.join(fido_home, passkeyFilename)
+        stash_path = cls.__get_stash_path(passkeyFilename)
+        
+        # Verify both files exist
+        if not os.path.exists(passkey_path):
+            raise FileNotFoundError(f"Passkey file not found: {passkey_path}")
+        
+        if not os.path.exists(stash_path):
+            raise FileNotFoundError(
+                f"Stash file not found: {stash_path}\n"
+                f"This passkey uses the old format. Please regenerate your passkey files."
+            )
+        
+        # Read .passkey file (body only)
         with open(passkey_path, 'rb') as f:
-            # Read the entire file
-            file_content = f.read()
-            
-            # Split header from body
-            # Header is the encrypted upper hash (32 bytes)
-            header = file_content[:230]
-            body = file_content[230:]
+            body = f.read()
+        
+        # Read .stash file (header only)
+        with open(stash_path, 'rb') as f:
+            header = f.read()
+        
+        # Verify stash file is correct size
+        if len(header) != 230:
+            raise ValueError(
+                f"Invalid stash file size: {len(header)} bytes (expected 230)\n"
+                f"File may be corrupted: {stash_path}"
+            )
+        
         return header, body
+    @classmethod
+    def __get_stash_path(cls, passkeyFilename):
+        """Get the path to the .stash file for a given passkey filename"""
+        if passkeyFilename.endswith('.passkey'):
+            base_name = passkeyFilename[:-8]  # Remove .passkey extension
+        else:
+            base_name = passkeyFilename
+        
+        stash_filename = base_name + '.stash'
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        return os.path.join(fido_home, stash_filename)
+
 
     @classmethod
     def __get_upper_hash(cls, ciphertext, secret=None):
         # Get platform key via message queue to decrypt the header
-        platform_key = cls.__request_platform_kp().get_private()
+        platform_key = cls.__request_platform_kp()
         # Decrypt the upper hash using the platform key
-        return cls.ec_decrypt(ciphertext, platform_key)
+        # For TPM keys, pass the full KeyPair wrapper; for file keys, pass the private key
+        key_for_decrypt = platform_key if hasattr(platform_key, 'tpm_decrypt') else platform_key.get_private()
+        return cls.ec_decrypt(ciphertext, key_for_decrypt)
 
     @classmethod
     def _load_passkey(cls, pinHash, passkeyFilename, secret=None):
@@ -435,9 +549,20 @@ class KeyUtils(object):
         #TODO else if upper hash does not match current file, sync error
         upper_hash = pinHash[16:]
         
-        platform_key = cls.__request_platform_kp().get_private()
+        platform_key_pair = cls.__request_platform_kp()
+        platform_key = platform_key_pair.get_private()
 
-        header = cls.ec_encrypt(upper_hash, platform_key)
+        if isinstance(platform_key, ec.EllipticCurvePrivateKey):
+            header = cls.ec_encrypt(upper_hash, platform_key)
+        elif hasattr(platform_key_pair, 'tpm_encrypt'):
+            platform_public = platform_key_pair.get_public()
+            if hasattr(platform_public, 'to_pem'):
+                platform_public = serialization.load_pem_public_key(
+                    platform_public.to_pem()
+                )
+            header = platform_key_pair.tpm_encrypt(upper_hash, platform_public)
+        else:
+            raise ValueError(f"{platform_key} must be an EllipticCurvePrivateKey")
         pkcs12_bytes = cls.create_pcks12_bytes(
             key,
             x5c,
@@ -452,15 +577,62 @@ class KeyUtils(object):
         cbor_res_creds = cbor.dumps(resCreds)
         enc_res_creds = cls.ec_encrypt(cbor_res_creds, key)
 
-        # Write file
+        # Write .passkey file
         body = pkcs12_len_bytes + pkcs12_bytes + enc_res_creds
 
         if not passkeyFilename.endswith('.passkey'):
             passkeyFilename += '.passkey'
-        passkey_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), passkeyFilename)
+            
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        passkey_path = os.path.join(fido_home, passkeyFilename)
+
         with open(passkey_path, 'wb') as f:
-            f.write(header + body)
-            f.close()
+            f.write(body)
+
+        # Write .stash file
+        stash_path = cls.__get_stash_path(passkeyFilename)
+        with open(stash_path, 'wb') as f:
+            f.write(header)
+
+    @classmethod
+    def delete_passkey(cls, passkeyFilename):
+        """
+        Delete both .passkey and .stash files for a given passkey.
+        Ensures both files are removed together.
+        
+        Args:
+            passkeyFilename: Name of the passkey file (with or without .passkey extension)
+            
+        Raises:
+            Exception: If deletion of either file fails
+        """
+        if not passkeyFilename.endswith('.passkey'):
+            passkeyFilename += '.passkey'
+        
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        passkey_path = os.path.join(fido_home, passkeyFilename)
+        stash_path = cls.__get_stash_path(passkeyFilename)
+        
+        errors = []
+        
+        # Delete .passkey file
+        try:
+            if os.path.exists(passkey_path):
+                os.remove(passkey_path)
+        except Exception as e:
+            errors.append(f"Failed to delete {passkey_path}: {e}")
+        
+        # Delete .stash file
+        try:
+            if os.path.exists(stash_path):
+                os.remove(stash_path)
+        except Exception as e:
+            errors.append(f"Failed to delete {stash_path}: {e}")
+        
+        if errors:
+            raise Exception("; ".join(errors))
+        
+        logging.info(f"Deleted passkey and stash files for {passkeyFilename}")
 
     @classmethod
     def __request_platform_kp(cls, timeout: float = 0.5):
@@ -496,8 +668,16 @@ class KeyUtils(object):
 
     @classmethod
     def _get_platform_kp(cls, secret=None, filename='platform.key'):
-        # Get platform key to manage cached pin hashes
-        platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename)
+        # Prefer the active platform-key provider if one is registered (TPM-aware path)
+        try:
+            return cls.__request_platform_kp()
+        except Exception:
+            pass
+
+        # Fallback to legacy filesystem key loading
+        platform_key_path = os.path.join(
+            os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename
+        )
         with open(platform_key_path, 'rb') as key_file:
             platform_key_pem = key_file.read()
             return KeyPair.load_key_pair(platform_key_pem, secret)
@@ -505,9 +685,12 @@ class KeyUtils(object):
     @classmethod
     def create_platform_key(cls, secret=None, filename='platform.key'):
         plat_key = KeyPair.generate_ecdsa()
+        if isinstance(secret, str):
+            secret = secret.encode('utf-8')
+        private_bytes = plat_key.get_private_bytes(secret=secret)
         platform_key_path = os.path.join(os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido')), filename)
         with open(platform_key_path, 'wb') as key_file:
-            key_file.write(plat_key.get_private_bytes(secret=secret))
+            key_file.write(private_bytes)
         return KeyPair(plat_key, plat_key.get_public())
 
     @classmethod
@@ -581,6 +764,8 @@ class KeyUtils(object):
     
     @classmethod
     def ec_decrypt(cls, encrypted, key):
+        if hasattr(key, 'tpm_decrypt'):
+            return key.tpm_decrypt(encrypted)
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             raise ValueError(f"{key} must be an EllipticCurvePrivateKey")
         pub_bytes_len = int.from_bytes(encrypted[:4], 'big')
@@ -654,8 +839,8 @@ class KeyUtils(object):
             # Get platform key
             platform_key = cls._get_platform_kp()
             
-            # Decrypt using existing ec_decrypt method
-            cbor_bytes = cls.ec_decrypt(encrypted_blob, platform_key.get_private())
+            # Decrypt using TPM-aware ec_decrypt path
+            cbor_bytes = cls.ec_decrypt(encrypted_blob, platform_key)
             
             # CBOR decode
             config_map = cbor.loads(cbor_bytes)
@@ -715,8 +900,20 @@ class KeyUtils(object):
         # Get platform key
         platform_key = cls._get_platform_kp()
         
-        # Encrypt using existing ec_encrypt method
-        encrypted_blob = cls.ec_encrypt(cbor_bytes, platform_key.get_private())
+        # Encrypt using TPM-aware path when available
+        platform_private = platform_key.get_private()
+        if isinstance(platform_private, ec.EllipticCurvePrivateKey):
+            encrypted_blob = cls.ec_encrypt(cbor_bytes, platform_private)
+        else:
+            tpm_encrypt = getattr(platform_key, 'tpm_encrypt', None)
+            if tpm_encrypt is None:
+                raise ValueError(f"{platform_private} must be an EllipticCurvePrivateKey")
+            platform_public = platform_key.get_public()
+            if hasattr(platform_public, 'to_pem'):
+                platform_public = serialization.load_pem_public_key(
+                    platform_public.to_pem()
+                )
+            encrypted_blob = tpm_encrypt(cbor_bytes, platform_public)
         
         # Base64 encode
         b64_encrypted = base64.b64encode(encrypted_blob).decode('ascii')
@@ -942,6 +1139,8 @@ class KeyPair(object):
 
     @classmethod
     def load_key_pair(cls, pk, password=None):
+        if isinstance(password, str):
+            password = password.encode('utf-8')
         privateKey = serialization.load_pem_private_key(pk, password=password, backend=default_backend())
         publicKey = privateKey.public_key()
         return cls(privateKey, publicKey)
@@ -961,7 +1160,9 @@ class KeyPair(object):
                                         format=serialization.PublicFormat.SubjectPublicKeyInfo)
 
     def get_private_bytes(self, secret=None):
+        if isinstance(secret, str):
+            secret = secret.encode('utf-8')
         return self.private.private_bytes(encoding=serialization.Encoding.PEM,
                                           format=serialization.PrivateFormat.PKCS8,
-                                          encryption_algorithm=serialization.BestAvailableEncryption(secret) if secret 
+                                          encryption_algorithm=serialization.BestAvailableEncryption(secret) if secret
                                                                 else serialization.NoEncryption())

@@ -30,6 +30,7 @@ class QueueMessageType:
     PLATFORM_KEY_REQUEST = 10
     PLATFORM_KEY_RESPONSE = 11
     PLATFORM_KEY_ERROR = 12
+    USER_REQUEST_FPRINT = 13
 
 
 class MessageQueue:

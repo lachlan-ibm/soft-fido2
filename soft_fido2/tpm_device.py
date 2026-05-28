@@ -3,10 +3,12 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION, TPM2_CAP
-from tpm2_pytss.types import TPMT_PUBLIC, TPMS_ECC_PARMS, TPMT_SYM_DEF_OBJECT, TPMT_ECC_SCHEME, TPM2_HANDLE
+from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION, TPM2_CAP, TPM2B_MAX_BUFFER
+from tpm2_pytss.types import TPM2_HANDLE, TPM2B_ECC_POINT, TPM2_ALG
 from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
 
 @contextmanager
@@ -51,7 +53,9 @@ class TPMDevice(object):
     TPM_ECC_NIST_P256 = 0x0003
     
     # Object Attributes for FIDO2 key
-    FIDO2_KEY_ATTRIBUTES = 0x00040072  # fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | sign | restricted
+    FIDO2_KEY_ATTRIBUTES = 0x00020072  # fixedTPM | fixedParent | sensitiveDataOrigin | userWithAuth | decrypt
+
+    _has_tpm = None
 
     @classmethod
     def is_available(cls) -> bool:
@@ -60,6 +64,8 @@ class TPMDevice(object):
         Returns:
             bool: True if TPM device is available, False otherwise
         """
+        if cls._has_tpm is not None:
+            return cls._has_tpm
         try:
             with redirect_tcti_to_logging():
                 esapi = ESAPI()
@@ -69,9 +75,11 @@ class TPMDevice(object):
                     property_count=1
                 )
             logging.info("TPM device available")
+            cls._has_tpm = True
             return True
         except Exception as e:
             logging.warning(f"TPM device not available: {e}")
+            cls._has_tpm = True
             return False
 
     def is_handle_available(self, candidate):
@@ -129,8 +137,7 @@ class TPMDevice(object):
         in_public.publicArea.objectAttributes = self.FIDO2_KEY_ATTRIBUTES
         
         in_public.publicArea.parameters.eccDetail.symmetric.algorithm = self.TPM_ALG_NULL
-        in_public.publicArea.parameters.eccDetail.scheme.scheme = self.TPM_ALG_ECDSA
-        in_public.publicArea.parameters.eccDetail.scheme.details.ecdsa.hashAlg = self.TPM_ALG_SHA256
+        in_public.publicArea.parameters.eccDetail.scheme.scheme = self.TPM_ALG_NULL
         in_public.publicArea.parameters.eccDetail.curveID = self.TPM_ECC_NIST_P256
         in_public.publicArea.parameters.eccDetail.kdf.scheme = self.TPM_ALG_NULL
         
@@ -189,9 +196,9 @@ class TPMDevice(object):
         """Retrieve the existing FIDO2 platform key from FIDO2_KEY_BASE handle
         
         Returns:
-            tuple: (handle, public_key) where handle is ESYS_TR and
-                   public_key is TPM2B_PUBLIC
-                   
+            tuple: (persistent_handle, public_key) where persistent_handle is a TPM2_HANDLE
+                   and public_key is TPM2B_PUBLIC
+                    
         Raises:
             Exception: If key does not exist at FIDO2_KEY_BASE handle
         """
@@ -199,10 +206,11 @@ class TPMDevice(object):
             esapi = ESAPI()
         
         try:
-            handle = esapi.tr_from_tpmpublic(TPM2_HANDLE(self.FIDO2_KEY_BASE))
+            persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
+            handle = esapi.tr_from_tpmpublic(persistent_handle)
             public_key, _, _ = esapi.read_public(handle)
             
-            return (handle, public_key)
+            return (persistent_handle, public_key)
             
         except Exception as e:
             raise Exception(f"Key does not exist at handle {hex(self.FIDO2_KEY_BASE)}: {e}")
@@ -228,3 +236,111 @@ class TPMDevice(object):
             
         except Exception as e:
             raise Exception(f"Failed to delete key at handle {hex(self.FIDO2_KEY_BASE)}: {e}")
+
+    def _public_key_to_tpm_ecc_point(self, public_key):
+        """Convert a cryptography EC public key into TPM2B_ECC_POINT."""
+        numbers = public_key.public_numbers()
+        point = TPM2B_ECC_POINT()
+        point.point.x.buffer = numbers.x.to_bytes(32, 'big')
+        point.point.y.buffer = numbers.y.to_bytes(32, 'big')
+        return point
+
+    def ecdh_encrypt(self, plaintext: bytes, public_key, persistent_handle=None):
+        """Encrypt plaintext for this TPM key using ECDH and AES-GCM.
+        
+        Returns the same blob format as [`KeyUtils.ec_encrypt()`](soft_fido2/key_pair.py:566):
+        4-byte PEM length || ephemeral public PEM || iv || tag || ciphertext
+        """
+        with redirect_tcti_to_logging():
+            esapi = ESAPI()
+            if persistent_handle is None:
+                persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
+            handle = esapi.tr_from_tpmpublic(persistent_handle)
+            esapi.tr_set_auth(handle, b"")
+
+        in_point = self._public_key_to_tpm_ecc_point(public_key)
+        z_point = esapi.ecdh_zgen(handle, in_point)
+
+        shared_raw = bytes(z_point.point.x)
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_raw)
+        shared = digest.finalize()
+
+        iv = os.urandom(16)
+        encryptor = Cipher(algorithms.AES256(shared), modes.GCM(iv)).encryptor()
+        ciphertext = encryptor.update(plaintext) + encryptor.finalize()
+
+        anon_pub = public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        anon_pub_bytes = len(anon_pub).to_bytes(4, 'big') + anon_pub
+        return anon_pub_bytes + iv + encryptor.tag + ciphertext
+
+    def ecdh_decrypt(self, encrypted: bytes, persistent_handle=None):
+        """Decrypt blob encrypted to the TPM platform key using ECDH and AES-GCM."""
+        pub_bytes_len = int.from_bytes(encrypted[:4], 'big')
+        pub_bytes = encrypted[4:pub_bytes_len + 4]
+        pubkey = load_pem_public_key(pub_bytes)
+        if not isinstance(pubkey, ec.EllipticCurvePublicKey):
+            raise ValueError("Public key must be an EllipticCurvePublicKey")
+
+        with redirect_tcti_to_logging():
+            esapi = ESAPI()
+            if persistent_handle is None:
+                persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
+            handle = esapi.tr_from_tpmpublic(persistent_handle)
+            esapi.tr_set_auth(handle, b"")
+
+        in_point = self._public_key_to_tpm_ecc_point(pubkey)
+        z_point = esapi.ecdh_zgen(handle, in_point)
+
+        shared_raw = bytes(z_point.point.x)
+        digest = hashes.Hash(hashes.SHA256())
+        digest.update(shared_raw)
+        shared = digest.finalize()
+
+        ciphertext = encrypted[pub_bytes_len + 4:]
+        iv = ciphertext[:16]
+        tag = ciphertext[16:32]
+        decryptor = Cipher(algorithms.AES256(shared), modes.GCM(iv, tag=tag)).decryptor()
+        return decryptor.update(ciphertext[32:]) + decryptor.finalize()
+
+
+    def hmac(self, data: bytes, persistent_handle=None):
+        """
+        Perform HMAC-SHA256 operation using TPM key.
+        
+        This method uses the TPM's HMAC capability to compute an HMAC
+        over the provided data using the key stored at the persistent handle.
+        The private key material never leaves the TPM.
+        
+        Args:
+            data: Data to HMAC (bytes)
+            persistent_handle: TPM handle (defaults to FIDO2_KEY_BASE)
+            
+        Returns:
+            bytes: HMAC output (32 bytes for SHA256)
+            
+        Raises:
+            Exception: If HMAC operation fails
+        """
+        with redirect_tcti_to_logging():
+            esapi = ESAPI()
+            if persistent_handle is None:
+                persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
+            handle = esapi.tr_from_tpmpublic(persistent_handle)
+            esapi.tr_set_auth(handle, b"")
+        
+        # Prepare input buffer
+        buffer = TPM2B_MAX_BUFFER()
+        buffer.buffer = data
+        
+        # Perform HMAC operation
+        result = esapi.hmac(
+            handle=handle,
+            buffer=buffer,
+            hash_alg=TPM2_ALG.SHA256
+        )
+        
+        return bytes(result.buffer)

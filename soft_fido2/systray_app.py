@@ -3,7 +3,7 @@
 
 import os, time, sys, traceback, threading, logging, signal
 from enum import Enum
-from typing import Optional
+from typing import Optional, TYPE_CHECKING, cast
 from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
                 QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSystemTrayIcon,
@@ -48,27 +48,52 @@ class Worker(QRunnable):
 
 class SettingsDialog(QDialog):
     # UI Text Constants
-    TITLE = "Settings"
+    TITLE = "AyeBeKey Settings"
     CACHE_GROUP_TITLE = "Platform Key Configuration:"
-    PASSKEY_GROUP_TITLE = "Passkey Generation:"
+    PASSKEY_GROUP_TITLE = "Passkey Wallet Generation:"
     CRED_GROUP_TITLE = "Resident Credential Management:"
     TPM_RADIO_TEXT = "TPM-based Platform Key"
     FILE_RADIO_TEXT = "File-based Platform Key"
     CREATE_CACHE_BTN_TEXT = "Create/Update Platform Key"
-    GENERATE_PASSKEY_BTN_TEXT = "Generate Passkey"
-    LOAD_CREDS_BTN_TEXT = "(re)Load Credentials (& cache pin)"
+    GENERATE_PASSKEY_BTN_TEXT = "Generate Passkey Wallet"
+    LOAD_CREDS_BTN_TEXT = "(re)Load Credentials"
     DELETE_CRED_BTN_TEXT = "Delete Credential"
     CLOSE_BTN_TEXT = "Close"
     PIN_LABEL = "PIN:"
-    PASSKEY_NAME_LABEL = "Passkey name:"
-    PASSKEY_LABEL = "Passkey:"
+    PASSKEY_NAME_LABEL = "Passkey wallet name:"
+    PASSKEY_LABEL = "Passkey wallet:"
     PIN_PLACEHOLDER = "Default: 00000000"
     PASSKEY_NAME_PLACEHOLDER = "Default: default"
     CREDS_LIST_HEADER = "User ID                           |  Relying Party ID"
     
+    # Tooltip Help Text
+    CACHE_GROUP_TOOLTIP = (
+        "Platform Key Configuration\n\n"
+        "What: The platform key is used to encrypt part of the passkey wallet secret.\n\n"
+        "Why: During the pin auth ceremony the client (browser) will only send half of the secret entered by the user. This key allows EyeBeKey to securely store and decrypt the other half of the secret to unlock a passkey wallet.\n\n"
+        "How: Choose TPM (hardware-based, more secure) or File-based storage, then click 'Create/Update Platform Key'."
+    )
+    PASSKEY_GROUP_TOOLTIP = (
+        "Passkey Wallet Generation\n\n"
+        "What: A passkey wallet is an encrypted container that stores your FIDO2 credentials.\n\n"
+        "Why: Required to hold your authentication credentials for websites and services.\n\n"
+        "How: Enter a PIN (default: 00000000), optionally name your wallet (default: 'default'), then click 'Generate Passkey Wallet'."
+    )
+    CRED_GROUP_TOOLTIP = (
+        "Resident Credential Management\n\n"
+        "What: View and manage FIDO2 resident credentials stored in your passkey wallet.\n\n"
+        "Why: Allows you to see which resident credentials are stored and delete ones you no longer need. This action also updates the encrypted half of the secret that is stored in the wallet for the pin auth ceremony.\n\n"
+        "How: Enter your PIN, select a passkey wallet, click 'Load Credentials' to view, then select and delete unwanted credentials."
+    )
+    
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle(self.TITLE)
+        
+        # Set window icon to vanilla icon from parent if available
+        if parent and hasattr(parent, 'vanilla_icon'):
+            self.setWindowIcon(parent.vanilla_icon)
+        
         self.fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
         
         # Initialize state
@@ -84,6 +109,9 @@ class SettingsDialog(QDialog):
         main_layout.addWidget(self._create_close_button())
 
         self.setLayout(main_layout)
+        
+        # Set initial focus based on current state after dialog is fully shown
+        QTimer.singleShot(0, self._set_initial_focus)
     
     def _create_labeled_input(self, label_text, placeholder="", password=False):
         """Create a horizontal layout with label and input field."""
@@ -101,11 +129,14 @@ class SettingsDialog(QDialog):
         """Create a button with connected handler."""
         button = QPushButton(text)
         button.clicked.connect(handler)
+        # Prevent button from being triggered by Enter key when it doesn't have focus
+        button.setAutoDefault(False)
         return button
     
     def _create_cache_group(self):
         """Create platform key configuration section."""
         group = QGroupBox(self.CACHE_GROUP_TITLE)
+        group.setToolTip(self.CACHE_GROUP_TOOLTIP)
         layout = QVBoxLayout()
         
         # Radio buttons
@@ -116,11 +147,12 @@ class SettingsDialog(QDialog):
         self._update_cache_status()
         layout.addWidget(self.status_label)
         
-        # Create button
-        layout.addWidget(self._create_button(
+        # Create button - store reference for focus management
+        self.create_cache_key_button = self._create_button(
             self.CREATE_CACHE_BTN_TEXT,
             self._handle_create_cache_key
-        ))
+        )
+        layout.addWidget(self.create_cache_key_button)
         
         group.setLayout(layout)
         return group
@@ -137,8 +169,9 @@ class SettingsDialog(QDialog):
         self.cache_type_group.addButton(self.file_radio, 1)
         
         self.tpm_radio.setEnabled(self.tpm_available)
-        self.tpm_radio.setChecked(self.tpm_available)
-        self.file_radio.setChecked(not self.tpm_available)
+        
+        # Set initial selection based on which key is actually loaded
+        self._set_radiobtn_from_loaded_key()
         
         self.cache_type_group.buttonClicked.connect(self._update_cache_status)
         
@@ -146,13 +179,34 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.file_radio)
         return layout
     
+    def _set_radiobtn_from_loaded_key(self):
+        """Set radio button selection based ONLY on user's saved preference in platform.cfg."""
+        # Check if parent has a saved preference from platform.cfg
+        parent = self.parent()
+        if parent and hasattr(parent, '_preferred_key_type'):
+            preferred_type = getattr(parent, '_preferred_key_type', None)
+            if preferred_type is not None:
+                if preferred_type == 'tpm':
+                    self.tpm_radio.setChecked(True)
+                    self.file_radio.setChecked(False)
+                    return
+                elif preferred_type == 'file':
+                    self.tpm_radio.setChecked(False)
+                    self.file_radio.setChecked(True)
+                    return
+        
+        # No preference saved - default based on TPM availability
+        self.tpm_radio.setChecked(self.tpm_available)
+        self.file_radio.setChecked(not self.tpm_available)
+    
     def _create_passkey_group(self):
         """Create passkey generation section."""
         group = QGroupBox(self.PASSKEY_GROUP_TITLE)
+        group.setToolTip(self.PASSKEY_GROUP_TOOLTIP)
         layout = QVBoxLayout()
         
-        # PIN input
-        pin_layout, self.pin_input = self._create_labeled_input(
+        # PIN input - store reference for focus management
+        pin_layout, self.passkey_pin_input = self._create_labeled_input(
             self.PIN_LABEL,
             placeholder=self.PIN_PLACEHOLDER,
             password=True
@@ -166,11 +220,15 @@ class SettingsDialog(QDialog):
         )
         layout.addLayout(name_layout)
         
-        # Generate button
-        layout.addWidget(self._create_button(
+        # Generate button - store reference for focus management
+        self.generate_passkey_button = self._create_button(
             self.GENERATE_PASSKEY_BTN_TEXT,
             self._handle_generate_passkey
-        ))
+        )
+        layout.addWidget(self.generate_passkey_button)
+        
+        # Connect Enter key to trigger generate passkey
+        self.passkey_pin_input.returnPressed.connect(self._handle_generate_passkey)
         
         group.setLayout(layout)
         return group
@@ -178,9 +236,10 @@ class SettingsDialog(QDialog):
     def _create_credentials_group(self):
         """Create resident credential management section."""
         group = QGroupBox(self.CRED_GROUP_TITLE)
+        group.setToolTip(self.CRED_GROUP_TOOLTIP)
         layout = QVBoxLayout()
         
-        # PIN input
+        # PIN input - store reference for focus management
         cred_pin_layout, self.cred_pin_input = self._create_labeled_input(
             self.PIN_LABEL,
             password=True
@@ -198,6 +257,9 @@ class SettingsDialog(QDialog):
         # Action buttons
         layout.addLayout(self._create_credential_buttons())
         
+        # Connect Enter key to trigger reload credentials
+        self.cred_pin_input.returnPressed.connect(self._handle_reload_credentials)
+        
         group.setLayout(layout)
         return group
     
@@ -213,10 +275,14 @@ class SettingsDialog(QDialog):
     def _create_credential_buttons(self):
         """Create credential action buttons."""
         layout = QHBoxLayout()
-        layout.addWidget(self._create_button(
+        
+        # Store reference for focus management
+        self.reload_creds_button = self._create_button(
             self.LOAD_CREDS_BTN_TEXT,
             self._load_credentials
-        ))
+        )
+        layout.addWidget(self.reload_creds_button)
+        
         layout.addWidget(self._create_button(
             self.DELETE_CRED_BTN_TEXT,
             self._delete_credential
@@ -230,9 +296,7 @@ class SettingsDialog(QDialog):
     def _check_tpm_available(self):
         try:
             from soft_fido2.tpm_device import TPMDevice
-            tpm = TPMDevice()
-            tpm.get_key()
-            return True
+            return TPMDevice.is_available()
         except:
             return False
     
@@ -262,6 +326,46 @@ class SettingsDialog(QDialog):
             self.status_label.setText(f"⚠ No valid {key_type} platform key found")
             self.status_label.setStyleSheet("color: orange; font-weight: bold;")
     
+    def _determine_initial_focus_state(self):
+        """
+        Determine which UI element should receive initial focus based on app state.
+        
+        Returns:
+            str: One of 'platform_key', 'passkey_generation', 'credential_management'
+        """
+        # Check if platform key exists (check both TPM and file-based)
+        has_tpm_key = self._check_cache_key_status(use_tpm=True)
+        has_file_key = self._check_cache_key_status(use_tpm=False)
+        has_platform_key = has_tpm_key or has_file_key
+        
+        if not has_platform_key:
+            return 'platform_key'
+        
+        # Check if any passkeys exist
+        passkey_files = self._get_passkey_files()
+        has_passkeys = len(passkey_files) > 0
+        
+        if not has_passkeys:
+            return 'passkey_generation'
+        
+        return 'credential_management'
+    
+    def _set_initial_focus(self):
+        """Set initial focus based on application state."""
+        focus_state = self._determine_initial_focus_state()
+        
+        if focus_state == 'platform_key':
+            self.create_cache_key_button.setFocus()
+        elif focus_state == 'passkey_generation':
+            self.passkey_pin_input.setFocus()
+        elif focus_state == 'credential_management':
+            self.cred_pin_input.setFocus()
+    
+    def _handle_reload_credentials(self):
+        """Handle Enter key press in credential management PIN field."""
+        # Trigger the reload credentials button action
+        self._load_credentials()
+    
     def _handle_create_cache_key(self):
         use_tpm = self.tpm_radio.isChecked()
         
@@ -276,12 +380,19 @@ class SettingsDialog(QDialog):
             tpm = TPMDevice()
             tpm.create_key()
             
+            # Save preference to parent app
+            parent = self.parent()
+            if parent and hasattr(parent, '_save_preferred_key_type'):
+                cast('SysTrayApp', parent)._save_preferred_key_type('tpm')
+            
             QMessageBox.information(
                 self,
                 "Success",
                 "TPM Platform key created successfully"
             )
             self._update_cache_status()
+            # Update focus after platform key creation
+            self._set_initial_focus()
             
         except Exception as e:
             logging.exception(f"Failed to create TPM Platform key: {e}")
@@ -292,7 +403,7 @@ class SettingsDialog(QDialog):
             )
     
     def _save_platform_key(self, passphrase, filename):
-        try:            
+        try:
             if not filename.endswith('.key'):
                 filename += '.key'
 
@@ -310,8 +421,13 @@ class SettingsDialog(QDialog):
                 if confirm != QMessageBox.StandardButton.Yes:
                     return
             
-            nonce = passphrase if passphrase and len(passphrase) > 0 else None
+            nonce = passphrase.encode('utf-8') if passphrase and len(passphrase) > 0 else None
             KeyUtils.create_platform_key(secret=nonce, filename=filename)
+            
+            # Save preference to parent app
+            parent = self.parent()
+            if parent and hasattr(parent, '_save_preferred_key_type'):
+                cast('SysTrayApp', parent)._save_preferred_key_type('file')
             
             QMessageBox.information(
                 self,
@@ -319,6 +435,8 @@ class SettingsDialog(QDialog):
                 f"File-based platform key created successfully as {filename}"
             )
             self._update_cache_status()
+            # Update focus after platform key creation
+            self._set_initial_focus()
             
         except Exception as e:
             logging.exception(f"Failed to create file-based platform key: {e}")
@@ -365,6 +483,7 @@ class SettingsDialog(QDialog):
     def _get_passkey_files(self):
         """
         Returns a list of .passkey files in the specified directory.
+        Checks for corresponding .stash files and logs warnings if missing.
         
         Returns:
             A list of full paths to .passkey files
@@ -373,7 +492,17 @@ class SettingsDialog(QDialog):
         if os.path.exists(self.fido_home):
             for filename in os.listdir(self.fido_home):
                 if filename.endswith('.passkey'):
-                    passkey_files.append(os.path.join(self.fido_home, filename))
+                    passkey_path = os.path.join(self.fido_home, filename)
+                    
+                    # Check for corresponding .stash file
+                    base_name = filename[:-8]  # Remove .passkey
+                    stash_path = os.path.join(self.fido_home, base_name + '.stash')
+                    
+                    if os.path.exists(stash_path):
+                        passkey_files.append(passkey_path)
+                    else:
+                        # Log warning but don't include file
+                        logging.warning(f"Found {filename} without corresponding .stash file.")
         return passkey_files
     
     def _load_passkey_files(self):
@@ -489,6 +618,10 @@ class SettingsDialog(QDialog):
                 "Success",
                 "Selected credentials have been deleted successfully."
             )
+            
+            # Update focus after credential deletion (check if passkeys still exist)
+            self._set_initial_focus()
+            
         except Exception as e:
             logging.exception(f"Failed to save updated passkey: {e}")
             QMessageBox.critical(
@@ -498,7 +631,7 @@ class SettingsDialog(QDialog):
             )
     
     def _handle_generate_passkey(self):
-        pin = self.pin_input.text() or "00000000"
+        pin = self.passkey_pin_input.text() or "00000000"
         passkey_name = self.passkey_name_input.text() or "default"
         
         try:
@@ -522,12 +655,15 @@ class SettingsDialog(QDialog):
                 f"Passkey {passkey_name}.passkey created in {self.fido_home}"
             )
             
-            self.pin_input.clear()
+            self.passkey_pin_input.clear()
             self.passkey_name_input.clear()
             
             # Refresh the passkey dropdown in the credential management section
             self.cred_passkey_input.clear()
             self._load_passkey_files()
+            
+            # Update focus after passkey generation
+            self._set_initial_focus()
             
         except Exception as e:
             logging.exception(f"Failed to generate passkey: {e}")
@@ -557,18 +693,20 @@ class SysTrayApp(QDialog):
         # Initialize state to LOCKED
         self._current_state = self.AppState.LOCKED
         self._platform_key = None  # Can be KeyPair or TPMKeyPair
+        self._preferred_key_type = self._load_preferred_key_type()  # Load preference early
         
-        # Load both icon variants
-        self.locked_icon = self._generate_icon('icons/main_icon_locked.svg', QIcon.ThemeIcon.DialogPassword)
-        self.unlocked_icon = self._generate_icon('icons/main_icon_unlocked.svg', QIcon.ThemeIcon.DialogPassword)
+        # Load all icon variants
+        self.vanilla_icon = self._generate_icon('main_icon.svg', QIcon.ThemeIcon.DialogPassword)
+        self.locked_icon = self._generate_icon('main_icon_locked.svg', QIcon.ThemeIcon.DialogPassword)
+        self.unlocked_icon = self._generate_icon('main_icon_unlocked.svg', QIcon.ThemeIcon.DialogPassword)
         self.main_icon = self.locked_icon  # Start locked
-        self.auth_icon = self._generate_icon('icons/auth_request.png',
+        self.auth_icon = self._generate_icon('auth_request.png',
                                             QIcon.ThemeIcon.DialogWarning)
         
         # Create the tray icon as a member variable
         self._tray_icon = QSystemTrayIcon(self.main_icon, self)
         self._tray_icon.setToolTip('AyeBeeKey')
-        
+
         self.menu = self._menu_setup()
         self.notification_fw = self._setup_notifications()
         self.threadPool = self._threadpool_setup()
@@ -594,6 +732,49 @@ class SysTrayApp(QDialog):
         
         self._finalise()
     
+    def _get_config_path(self):
+        """Get path to platform configuration file"""
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        return os.path.join(fido_home, 'platform.cfg')
+    
+    def _load_preferred_key_type(self):
+        """Load user's preferred platform key type from config file.
+        
+        Returns:
+            str: 'tpm' or 'file', or None if no preference saved
+        """
+        config_path = self._get_config_path()
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    key_type = f.read().strip()
+                    if key_type in ('tpm', 'file'):
+                        logging.info(f"Loaded preferred key type: {key_type}")
+                        return key_type
+            except Exception as e:
+                logging.warning(f"Failed to load key type preference: {e}")
+        return None
+    
+    def _save_preferred_key_type(self, key_type):
+        """Save user's preferred platform key type to config file.
+        
+        Args:
+            key_type: 'tpm' or 'file'
+        """
+        if key_type not in ('tpm', 'file'):
+            logging.error(f"Invalid key type: {key_type}")
+            return
+        
+        config_path = self._get_config_path()
+        try:
+            with open(config_path, 'w') as f:
+                f.write(key_type)
+            logging.info(f"Saved preferred key type: {key_type}")
+            # Update the in-memory preference so it's immediately available
+            self._preferred_key_type = key_type
+        except Exception as e:
+            logging.error(f"Failed to save key type preference: {e}")
+    
     def _check_platform_key_exists(self):
         """Check if platform.key exists in FIDO_HOME"""
         fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
@@ -613,22 +794,38 @@ class SysTrayApp(QDialog):
         """Update the tray icon based on current state"""
         if self._current_state == self.AppState.LOCKED:
             self._tray_icon.setIcon(self.locked_icon)
-            self._tray_icon.setToolTip('EyeBeeKey - Locked')
+            self._tray_icon.setToolTip('AyeBeKey - Locked')
         else:
             self._tray_icon.setIcon(self.unlocked_icon)
-            self._tray_icon.setToolTip('EyeBeeKey - Unlocked')
+            self._tray_icon.setToolTip('AyeBeKey - Unlocked')
     
     def _auto_load_platform_key(self):
-        """Attempt to load platform key on startup"""
-        # Try TPM first
+        """Attempt to load platform key on startup based on user's preference.
+        
+        Priority order:
+        1. If platform.cfg exists: use configured preference
+        2. If no config: try TPM first (if available), then file without password
+        3. Stay locked and wait for user action
+        """
+        if self._preferred_key_type is not None:
+            # User has a saved preference
+            if self._preferred_key_type == 'tpm':
+                if self._try_load_tpm_key():
+                    return
+                logging.info("TPM key not available, staying locked")
+                return
+            elif self._preferred_key_type == 'file':
+                if self._try_load_filesystem_key(password=None):
+                    return
+                logging.info("File key requires password or doesn't exist, staying locked")
+                return
+        
+        # No preference set - try fallbacks
         if self._try_load_tpm_key():
             return
-        
-        # Try filesystem without password
+        # Fallback to file without password
         if self._try_load_filesystem_key(password=None):
             return
-        
-        # Stay locked, wait for user action
         logging.info("Platform key requires password or doesn't exist")
     
     def _try_load_tpm_key(self) -> bool:
@@ -647,22 +844,31 @@ class SysTrayApp(QDialog):
             return False
     
     def _convert_tpm_to_keypair(self, handle, public_key):
-        """Convert TPM key to KeyPair format"""
-        # For now, store TPM handle and public key in a wrapper
-        # This will need proper implementation based on TPM key usage
+        """Convert TPM key to KeyPair-compatible wrapper"""
+        from soft_fido2.tpm_device import TPMDevice
+
         class TPMKeyPair:
             def __init__(self, handle, public_key):
                 self.handle = handle
                 self.public_key = public_key
                 self.is_tpm = True
+                self.tpm_device = TPMDevice()
             
             def get_private(self):
-                # TPM keys don't expose private key directly
-                # Return handle for TPM operations
                 return self.handle
             
             def get_public(self):
                 return self.public_key
+
+            def tpm_encrypt(self, plaintext, public_key):
+                return self.tpm_device.ecdh_encrypt(
+                    plaintext, public_key, persistent_handle=self.handle
+                )
+
+            def tpm_decrypt(self, encrypted):
+                return self.tpm_device.ecdh_decrypt(
+                    encrypted, persistent_handle=self.handle
+                )
         
         return TPMKeyPair(handle, public_key)
     
@@ -752,108 +958,88 @@ class SysTrayApp(QDialog):
         return self.NotificationFramework.QT
 
     def launch_notification(self):
-        return {
-            self.NotificationFramework.DBUS: self._launch_notification_dbus,
-            self.NotificationFramework.QT: self._launch_notification_fallback
-            }.get(self.notification_fw, self._launch_notification_fallback)()
+        """
+        Smart startup notification - only show if user action needed:
+        - If locked: Show "get started" message (needs platform key setup)
+        - If unlocked: No notification (app in good state)
+        """
+        if self._current_state == self.AppState.LOCKED:
+            self._show_notification(
+                title="AyeBeKey",
+                message="Use the Generate Cache Key option to get started",
+                urgency="normal",
+                timeout=3000
+            )
+        # else: No notification when app is in good state
 
-    def prompt_notification(self):
-        return {
-            self.NotificationFramework.DBUS: self._prompt_notification_dbus,
-            self.NotificationFramework.QT: self._prompt_notification_fallback
-            }.get(self.notification_fw, self._prompt_notification_fallback)()
+    def prompt_notification(self, fprint_pending=False):
+        """Show authentication request notification"""
+        self._show_notification(
+            title="Aye.Be.Key UV",
+            message="User Verification: accept" + ("? or scan fingerprint" if fprint_pending else "?"),
+            urgency="critical",
+            timeout=15000,
+            actions=[('accept', 'Accept'), ('decline', 'Decline')] if self.notification_fw == self.NotificationFramework.DBUS else None
+        )
 
     def cancel_notification(self):
+        """Cancel active notification"""
         if self.notification_fw == self.NotificationFramework.DBUS:
             self._cancel_notification_dbus()
         # Qt notifications don't need explicit cancellation
 
-    def _launch_notification_fallback(self):
-        self._tray_icon.showMessage("EyeBeeKey",
-                         "Use the Generate Cache Key option to get started",
-                         QSystemTrayIcon.MessageIcon.Information, 3000)
-
-    def _prompt_notification_fallback(self):
-        self._tray_icon.showMessage("EyeBeeKey",
-                         "Pirate key recieved a webauthn ceremony, should I respond?",
-                         QSystemTrayIcon.MessageIcon.Critical, 15000)
-    def _launch_notification_dbus(self):
+    def _show_notification(self, title, message, urgency="normal", timeout=3000, actions=None):
         """
-        Smart startup notification:
-        - If locked AND requires password: Show unlock prompt
-        - If TPM/passwordless: No notification
-        - If unlocked: Show startup confirmation
+        Unified notification display - routes to Qt or D-Bus based on framework
+        
+        Args:
+            title: Notification title
+            message: Notification message
+            urgency: "low", "normal", or "critical"
+            timeout: Display duration in milliseconds
+            actions: List of (action_key, button_label) tuples for D-Bus only
         """
-        if self._current_state == self.AppState.LOCKED:
-            if self._platform_key_requires_password():
-                self._prompt_unlock_notification_dbus()
-            # else: No notification for TPM or passwordless keys
+        if self.notification_fw == self.NotificationFramework.DBUS:
+            self._show_notification_dbus(title, message, urgency, timeout, actions)
         else:
-            # Show simple startup notification
-            if self._dbus_notifier:
-                self._current_notification_id = self._dbus_notifier.send_notification(
-                    title="EyeBeeKey",
-                    message="Pirate Passkey UHID Service started",
-                    urgency=self._dbus_notifier.URGENCY_LOW,
-                    timeout=3000,
-                    icon='dialog-password'
-                )
+            self._show_notification_qt(title, message, urgency, timeout)
 
-    def _platform_key_requires_password(self):
-        """Check if platform key needs password (file-based with password)"""
-        # TPM-based keys don't require password notification
-        if self._platform_key and hasattr(self._platform_key, '__class__'):
-            if 'TPM' in self._platform_key.__class__.__name__:
-                return False
-        # File-based without password don't require notification
-        # Default: assume password required if locked
-        return True
+    def _show_notification_qt(self, title, message, urgency, timeout):
+        """Display notification using Qt system tray"""
+        icon_map = {
+            "low": QSystemTrayIcon.MessageIcon.Information,
+            "normal": QSystemTrayIcon.MessageIcon.Information,
+            "critical": QSystemTrayIcon.MessageIcon.Critical
+        }
+        self._tray_icon.showMessage(title, message, icon_map.get(urgency, QSystemTrayIcon.MessageIcon.Information), timeout)
 
-    def _prompt_unlock_notification_dbus(self):
-        """Interactive unlock prompt when platform key locked"""
+    def _show_notification_dbus(self, title, message, urgency, timeout, actions=None):
+        """Display notification using D-Bus"""
         if not self._dbus_notifier:
             return
         
-        actions = [
-            ('unlock', 'Unlock'),
-            ('later', 'Later')
-        ]
+        urgency_map = {
+            "low": self._dbus_notifier.URGENCY_LOW,
+            "normal": self._dbus_notifier.URGENCY_NORMAL,
+            "critical": self._dbus_notifier.URGENCY_CRITICAL
+        }
+        
+        # Set ceremony icon for authentication requests
+        if urgency == "critical" and actions:
+            self._set_ceremony_icon()
+            icon_path = os.path.abspath(os.path.join(
+                os.path.dirname(__file__), 'icons', 'main_icon.svg'
+            ))
+        else:
+            icon_path = 'dialog-password'
         
         self._current_notification_id = self._dbus_notifier.send_notification(
-            title="Platform Key Locked",
-            message="Platform key is locked. Unlock now?",
-            urgency=self._dbus_notifier.URGENCY_NORMAL,
-            timeout=15000,
-            actions=actions,
-            hints={'category': 'device'},
-            icon='dialog-password'
-        )
-
-    def _prompt_notification_dbus(self):
-        """Interactive notification with Accept/Decline actions"""
-        if not self._dbus_notifier:
-            return
-        
-        actions = [
-            ('accept', 'Accept'),
-            ('decline', 'Decline')
-        ]
-        
-        # Set ceremony icon before showing notification
-        self._set_ceremony_icon()
-        
-        # Get absolute path to main_icon.svg
-        icon_path = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), '..', 'icons', 'main_icon.svg'
-        ))
-        
-        self._current_notification_id = self._dbus_notifier.send_notification(
-            title="Authentication Request",
-            message="WebAuthn ceremony received. Accept?",
-            urgency=self._dbus_notifier.URGENCY_CRITICAL,
-            timeout=15000,
-            actions=actions,
-            hints={'category': 'device'},
+            title=title,
+            message=message,
+            urgency=urgency_map.get(urgency, self._dbus_notifier.URGENCY_NORMAL),
+            timeout=timeout,
+            actions=actions or [],
+            hints={'category': 'device'} if actions else {},
             icon=icon_path
         )
 
@@ -898,7 +1084,7 @@ class SysTrayApp(QDialog):
 
     def _set_ceremony_icon(self):
         """Set tray icon to main_icon.svg during authentication ceremony"""
-        icon_path = os.path.join(os.path.dirname(__file__), '..', 'icons', 'main_icon.svg')
+        icon_path = os.path.join(os.path.dirname(__file__), 'icons', 'main_icon.svg')
         if os.path.exists(icon_path):
             self._tray_icon.setIcon(QIcon(icon_path))
             logging.info("Set ceremony icon: main_icon.svg")
@@ -923,10 +1109,13 @@ class SysTrayApp(QDialog):
 
     def _generate_icon(self, path, fallback):
         icon = None
-        icon_path = os.path.join(os.getcwd(), path)
+        # Try to find icon relative to the module directory
+        module_dir = os.path.dirname(os.path.abspath(__file__))
+        icon_path = os.path.join(module_dir, 'icons', path)
         if os.path.exists(icon_path):
             icon = QIcon(icon_path)
         else:
+            # Fallback to theme icon
             icon = QIcon.fromTheme(fallback)
         return icon
 
@@ -966,6 +1155,11 @@ class SysTrayApp(QDialog):
         """
         self._active_dialog = None
         dialog.deleteLater()
+        
+        # Check if platform key was created and update state accordingly
+        if self._check_platform_key_exists() and self._is_locked():
+            # Platform key now exists, try to auto-load it
+            self._auto_load_platform_key()
 
     def _threadpool_setup(self):
         threadpool = QThreadPool()
@@ -988,12 +1182,13 @@ class SysTrayApp(QDialog):
             if MessageQueue.notify_sysapp.qsize() > 0:
                 msg = MessageQueue.notify_sysapp.get()
                 logging.debug(f"Got a message: {msg}")
-                if msg == QueueMessageType.USER_REQUEST:
-                    t = threading.Thread(target=self.prompt_notification)
+                if msg == QueueMessageType.USER_REQUEST or msg == QueueMessageType.USER_REQUEST_FPRINT:
+                    t = threading.Thread(target=self.prompt_notification,
+                            kwargs={'fprint_pending': msg == QueueMessageType.USER_REQUEST_FPRINT})
                     t.start()
                     notif_threads.append(t)
                     self._tray_icon.setIcon(self.auth_icon)
-                    self._tray_icon.setToolTip('Requesting Authentication...')
+                    self._tray_icon.setToolTip('Aye.Be.Key UV')
                     # Use QMetaObject.invokeMethod to safely call a method in the main thread
                     QMetaObject.invokeMethod(self, "start_icon_reset_timer",
                                            Qt.ConnectionType.QueuedConnection)

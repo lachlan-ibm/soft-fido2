@@ -11,3 +11,4 @@ build
 PyQt6
 tpm2_pytss
 dbus-python>=1.2.18
+setproctitle

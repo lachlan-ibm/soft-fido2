@@ -16,7 +16,10 @@ def test_Cred_id_Consturctor():
     u = str(uuid.uuid4()).encode()
     kp = KeyPair.generate_rsa()
     authenticator = Fido2Authenticator(keyPair=kp, credId=u)
-    assert authenticator.get_credential_id() == u.decode(), "Cred Id does not match original"
+    # get_credential_id() returns base64-encoded version of cib
+    # Since we passed raw bytes as credId, cib is those raw bytes
+    # So get_credential_id() returns base64.urlsafe_b64encode(u).decode()
+    assert authenticator.get_credential_id() == base64.urlsafe_b64encode(u).decode(), "Cred Id does not match original"
 
 
 def test_Cred_Id_As_Encrypted_Key():
@@ -43,9 +46,8 @@ def test_Cred_Id_As_Encrypted_Key():
     assert decrypted_cose_alg == cose_alg, "COSE algorithm mismatch"
     assert len(key_material) == 32, "Key material should be 32 bytes"
     
-    # Reconstruct keypair from credential ID
-    credId = authenticator.get_credential_id()  # Returns string
-    rebuilt_kp = Fido2Authenticator._get_key_pair_from_credential_id(credId.encode(), skey)
+    # Reconstruct keypair from credential ID (use raw bytes, not base64-encoded)
+    rebuilt_kp = Fido2Authenticator._get_key_pair_from_credential_id(credIdBytes, skey)
     
     # Verify keys match
     assert kp.get_public_bytes() == rebuilt_kp.get_public_bytes(), "Reconstructed key does not match original"
@@ -105,9 +107,8 @@ def test_CredId_with_prefix():
     # Verify size is within CTAP2 limit
     assert len(cred_id_bytes) < 1024, f"Credential ID ({len(cred_id_bytes)} bytes) exceeds 1024 byte limit"
     
-    # Reconstruct keypair from credential ID
-    cred_id_b64 = base64.urlsafe_b64encode(cred_id_bytes)
-    reconstructed_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_b64, skey)
+    # Reconstruct keypair from credential ID (use raw bytes directly)
+    reconstructed_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, skey)
     
     # Verify the reconstructed key matches the original
     assert kp.get_public_bytes() == reconstructed_kp.get_public_bytes(), "Reconstructed key does not match original"
@@ -134,9 +135,8 @@ def test_F1D0_round_trip_all_algorithms():
         cred_id_bytes = authenticator._get_credential_id_bytes(kp, alg_id=alg_id)
         assert cred_id_bytes[:len(Fido2Authenticator.CRED_PREFIX)] == Fido2Authenticator.CRED_PREFIX
         
-        # Reconstruct
-        cred_id_b64 = base64.urlsafe_b64encode(cred_id_bytes)
-        reconstructed_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_b64, skey)
+        # Reconstruct (use raw bytes directly)
+        reconstructed_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, skey)
         
         # Verify
         assert kp.get_public_bytes() == reconstructed_kp.get_public_bytes()

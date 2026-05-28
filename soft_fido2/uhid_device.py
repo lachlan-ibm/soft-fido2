@@ -1,6 +1,5 @@
 #!/bin/python
 #IBM Confidential
-# Assisted by watsonx Code Assistant
 # Copyright IBM Corp. 2025
 
 import os, struct, fcntl, time, queue, threading, logging, re
@@ -208,7 +207,7 @@ REPORT_DESCRIPTOR = bytes([
     0xC0 # End Collection
 ])
 
-DEVICE_NAME = b"EyeBeeKey"
+DEVICE_NAME = b"AyeBeKey"
 PHYSICAL_ADDRESS = b"ibm-0101:01:01.0-1"
 UNIQUE_ADDRESS = b"virtual-fido-uhid-01"
 

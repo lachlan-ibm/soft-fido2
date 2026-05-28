@@ -323,70 +323,6 @@ export SOFT_FIDO2_FPRINT_TIMEOUT=15
 export SOFT_FIDO2_FPRINT_RETRIES=3
 ```
 
-### Authentication Flow
-
-The authenticator adapts authentication based on credential type and user verification (UV) requirements:
-
-1. **Passkey + UV Required/Preferred**: PIN (if set) + Fingerprint
-2. **UV Discouraged**: Fingerprint only
-3. **2nd Factor**: Fingerprint only
-
-**Fallback Chain**: Fingerprint → GUI prompt (if fprintd unavailable)
-
-### Usage Example
-
-```python
-from soft_fido2 import Fido2Authenticator
-
-# Create authenticator instance
-authenticator = Fido2Authenticator()
-
-# Biometric verification happens automatically during authentication
-# No additional code needed - it's integrated into the CTAP2 flow
-assertion_response = authenticator.credential_request(assertion_options)
-```
-
-### Biometric + TPM Mode
-
-When both biometric and TPM devices are available, the system enables a seamless authentication mode:
-
-- **No file-based credential storage needed**: Credentials stored in TPM
-- **Runtime UV via fingerprint**: User verification without GUI prompts
-- **Stable platform key storage**: Hardware-backed keys via TPM
-- **Automatic mode detection**: Enabled on startup if both devices available
-
-Initialize and check mode programmatically:
-
-```python
-from soft_fido2.passkey_device import AuthenticatorAPI
-
-# Initialize biometric + TPM mode (checks availability of both)
-if AuthenticatorAPI.initialize_biometric_tpm_mode():
-    print("Biometric + TPM mode enabled")
-else:
-    print("Falling back to standard mode")
-
-# Check if mode is enabled
-if AuthenticatorAPI.is_biometric_tpm_mode_enabled():
-    print("Using hardware-backed authentication")
-```
-
-
-**Authentication Decision Tree**:
-```
-gather_user_presence()
-├─ Check SOFT_FIDO2_SKIP_UP (testing only)
-├─ Check cached user presence (30s expiry)
-├─ Try fingerprint verification (if SOFT_FIDO2_FPRINT_ENABLED=true)
-│  ├─ FprintDevice.is_available() → Use D-Bus fprintd
-│  ├─ Success → Cache UP and return True
-│  └─ Failure/Unavailable → Fall through to GUI
-└─ GUI fallback (Qt system tray notification)
-   ├─ Show "Accept/Decline" notification
-   ├─ Wait for user response (60s timeout)
-   └─ Return True/False based on user action
-```
-
 ### Troubleshooting
 
 **Fingerprint not detected:**
@@ -444,8 +380,8 @@ For system-wide passkey support, integrate the authenticator as a virtual USB de
 # Load UHID module at boot
 echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
 
-# Create uhid group
-sudo groupadd uhid
+# Create uhid group (must be a system group for udev rules)
+sudo groupadd -r uhid
 sudo usermod -aG uhid $USER
 
 # Set permissions
@@ -680,21 +616,28 @@ $FIDO_HOME/bin/python -m soft_fido2
 
 ### TPM2 Library Installation Note
 
-The `tpm2_pytss` package may fail to build in virtual environments. If you encounter build errors:
+The `tpm2_pytss` package may fail to build in virtual environments due to compatibility issues. If you encounter build errors:
 
 **Recommended Solution:**
-1. Install `tpm2_pytss` via your system package manager first:
+1. Install TPM2 development packages and `tpm2_pytss` via your system package manager first:
    ```bash
    # Fedora/RHEL
-   sudo dnf install python3-tpm2-pytss
+   sudo dnf install tpm2-tss-devel python3-tpm2-pytss
    
    # Ubuntu/Debian
-   sudo apt install python3-tpm2-pytss
+   sudo apt install libtss2-dev python3-tpm2-pytss
    ```
 
-2. Then create your virtual environment with system site packages access:
+2. Enable system site packages access in your virtual environment:
    ```bash
+   # Create a virtual environment with system site packages access:
+
    virtualenv --system-site-packages $FIDO_HOME
+   ```
+
+3. Verify TPM2 library is accessible:
+   ```bash
+   $FIDO_HOME/bin/python -c "import tpm2_pytss; print('TPM2 library available')"
    ```
 
 **Alternative Solution (Manual Copy):**

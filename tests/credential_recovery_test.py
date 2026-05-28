@@ -192,10 +192,12 @@ def test_credential_recovery_with_fernet_key(test_data):
     assert regen_seed == seed, f"registration seed {seed} != assertion seed {regen_seed}"
 
     # Reconstruct keypair directly from credential ID (new prefix format)
-    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id.encode() if isinstance(cred_id, str) else cred_id, Fernet(regen_seed))
-    
+    # cred_id is a base64-encoded string, decode it to get raw bytes
+    cred_id_bytes = base64.urlsafe_b64decode(cred_id + '==') if isinstance(cred_id, str) else cred_id
+    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, Fernet(regen_seed))
+
     # Create a new authenticator instance for assertion
-    cred_id_bytes = cred_id.encode('utf-8') if isinstance(cred_id, str) else cred_id
+    # Pass the raw bytes (already decoded above), not re-encoded
     new_authenticator = Fido2Authenticator(keyPair=recovered_kp, credId=cred_id_bytes, fKey=Fernet(seed))
     
     # Perform an assertion with the recovered key
@@ -238,10 +240,12 @@ def test_credential_recovery_with_symmetric_key(test_data):
     )
     
     # Reconstruct keypair directly from credential ID (new prefix format)
-    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id.encode() if isinstance(cred_id, str) else cred_id, skey)
-    
+    # cred_id is a base64-encoded string, decode it to get raw bytes
+    cred_id_bytes = base64.urlsafe_b64decode(cred_id + '==') if isinstance(cred_id, str) else cred_id
+    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, skey)
+
     # Create a new authenticator instance for assertion
-    cred_id_bytes = cred_id.encode('utf-8') if isinstance(cred_id, str) else cred_id
+    # Pass the raw bytes (already decoded above), not re-encoded
     new_authenticator = Fido2Authenticator(
         keyPair=recovered_kp,
         credId=cred_id_bytes,
