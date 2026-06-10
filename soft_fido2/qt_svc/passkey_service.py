@@ -5,7 +5,7 @@ including generation, listing, validation, and loading of passkey files.
 It provides a clean interface for passkey management without coupling to
 UI components.
 
-Key Features:
+Features:
     - Generate new passkey wallets with PIN protection
     - List available passkey files with validation
     - Validate passkey file integrity (checks for .stash files)
