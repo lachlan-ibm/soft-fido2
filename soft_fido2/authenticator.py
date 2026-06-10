@@ -52,7 +52,7 @@ class Fido2Authenticator(object):
         Args:
             keyPair (KeyPair, optional): Public/private key pair to sign challenges with.
                     Default = None (EC 256 key will be generated)
-            credId (bytes, optional): Credential ID to use with authenticator.
+            credId (bytes, optional): Credential ID (raw bytes) to use with authenticator.
                     Default = None (will be derived from keyPair)
             aaguid (List[int], optional): AAGUID to associate with authenticator.
                     Default = None (will use null aaguid)

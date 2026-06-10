@@ -561,15 +561,9 @@ class AuthenticatorAPI(object):
         )
         
         cred_id = authenticator._get_credential_id_bytes(authenticator.kp)
-        
-        # TODO: REMOVE - DEBUG: Log credential creation details
-        logging.debug(f"\n=== TODO_REMOVE: REGISTRATION DEBUG ===")
+
         logging.debug(f"RP ID: {rp_id}")
-        logging.debug(f"Generated Credential ID (hex): {cred_id.hex()}")
-        logging.debug(f"Credential ID length: {len(cred_id)}")
-        logging.debug(f"Credential ID starts with prefix: {cred_id.startswith(Fido2Authenticator.CRED_PREFIX)}")
-        logging.debug(f"authenticator.cib (hex): {authenticator.cib.hex() if authenticator.cib else 'None'}")
-        logging.debug(f"=========================\n")
+        logging.debug(f"Credential ID (hex): {cred_id.hex()}")
         
         return authenticator, cred_id
 
@@ -619,22 +613,14 @@ class AuthenticatorAPI(object):
             info=cls._get_hkdf_info()
         )
         skey = SymmetricKey(seed.decode())
-        
-        # TODO: REMOVE - DEBUG: Log assertion details
-        logging.debug(f"\n=== TODO_REMOVE: ASSERTION DEBUG (_maybe_next_assertion) ===")
+
         logging.debug(f"RP ID: {rpId}")
-        logging.debug(f"Credential ID from Chrome (hex): {cred.get('id').hex()}")
-        logging.debug(f"Credential ID length: {len(cred.get('id'))}")
-        logging.debug(f"Credential ID starts with prefix: {cred.get('id').startswith(Fido2Authenticator.CRED_PREFIX)}")
+        logging.debug(f"Credential ID (hex): {cred.get('id').hex()}")
         
         colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                         msg='We have a usable key, sign the challenge')
         _authenticator = Fido2Authenticator(credId=cred.get('id'), aaguid=[0] * 16,
                                             caKeyPair=ca_kp, caCert=ca_x5c, sKey=skey)
-        
-        logging.debug(f"_authenticator.cib (hex): {_authenticator.cib.hex() if _authenticator.cib else 'None'}")
-        logging.debug(f"_authenticator.kp exists: {_authenticator.kp is not None}")
-        logging.debug(f"=======================================\n")
         
         credential = {
                 "id": cred.get('id'),
@@ -663,12 +649,7 @@ class AuthenticatorAPI(object):
             cred_id = cred.get('id')
             if not cred_id.startswith(Fido2Authenticator.CRED_PREFIX):
                 continue
-            # TODO: REMOVE - DEBUG: Log assertion details
-            logging.debug(f"\n=== TODO_REMOVE: ASSERTION DEBUG (_maybe_next_assertion) ===")
-            logging.debug(f"RP ID: {rpId}")
-            logging.debug(f"Credential ID from Chrome (hex): {cred.get('id').hex()}")
-            logging.debug(f"Credential ID length: {len(cred.get('id'))}")
-            logging.debug(f"Credential ID starts with prefix: {cred.get('id').startswith(Fido2Authenticator.CRED_PREFIX)}")   
+            logging.debug(f"Credential ID (hex): {cred.get('id').hex()}")
             colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                             msg='We have a usable key, sign the challenge')
             _authenticator = Fido2Authenticator(credId=cred_id, aaguid=[0] * 16,
@@ -701,7 +682,6 @@ class AuthenticatorAPI(object):
                     for cred in resCreds:
                         if cred.get('rp.id') == rpId:
                             allowedList += [{'id': cred.get('cred.id'), 'user': cred.get('user.id')}]
-                logging.debug(f"TODO REMOVE :: all credentials found and provided: {allowedList}")
                 for cred in allowedList:
                     try:
                         #logging.debug(f"Try {cred}")

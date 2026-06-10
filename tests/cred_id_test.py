@@ -52,6 +52,36 @@ def test_Cred_Id_As_Encrypted_Key():
     # Verify keys match
     assert kp.get_public_bytes() == rebuilt_kp.get_public_bytes(), "Reconstructed key does not match original"
 
+def test_Cred_Id_As_Fernet_Encrypted_Key():
+    """Test Prefix credential ID format with embedded key material"""
+    # Setup
+    fkey = Fernet(Fernet.generate_key())
+    
+    # Generate keypair
+    cose_alg = -7  # ES256
+    kp = KeyPair.generate_ecdsa()
+    
+    # Create authenticator and generate credential ID
+    authenticator = Fido2Authenticator(keyPair=kp, fKey=fkey)
+    credIdBytes = authenticator._get_credential_id_bytes(kp, alg_id=cose_alg)
+    
+    # Verify prefix
+    assert credIdBytes[:len(Fido2Authenticator.CRED_PREFIX)] == Fido2Authenticator.CRED_PREFIX, "Missing CRED_PREFIX"
+    
+    # Decrypt metadata and extract key material
+    b64CredId = base64.urlsafe_b64encode(credIdBytes)
+    decrypted_cose_alg, key_material = Fido2Authenticator._decrypt_credential_context(b64CredId, fkey)
+    
+    # Verify metadata matches
+    assert decrypted_cose_alg == cose_alg, "COSE algorithm mismatch"
+    assert len(key_material) == 32, "Key material should be 32 bytes"
+    
+    # Reconstruct keypair from credential ID (use raw bytes, not base64-encoded)
+    rebuilt_kp = Fido2Authenticator._get_key_pair_from_credential_id(credIdBytes, fkey)
+    
+    # Verify keys match
+    assert kp.get_public_bytes() == rebuilt_kp.get_public_bytes(), "Reconstructed key does not match original"
+
 
 def test_CredId_As_Symmetric_Key():
     """Test Prefix credential ID generation with symmetric key"""
