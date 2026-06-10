@@ -5,7 +5,7 @@ including loading, deleting, and querying credentials stored in passkey wallets.
 It provides a clean interface for credential operations without coupling to
 UI components.
 
-Key Features:
+Features:
     - Load credentials from passkey wallets
     - Delete credentials from passkey wallets
     - Get credential counts
@@ -73,7 +73,6 @@ class CredentialService:
         Each credential dictionary contains:
             - 'rp.id': Relying party identifier (bytes or str)
             - 'user.id': User identifier (bytes or str)
-            - Other FIDO2 credential fields
         
         Example:
             success, creds, msg = service.load_credentials("wallet.passkey", "1234")
