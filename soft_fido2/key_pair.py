@@ -24,32 +24,86 @@ class KeyUtils(object):
 
     # Default KDF info for credential derivation
     DEFAULT_CREDENTIAL_INFO = "CTAP2-CRED-INFO-v1"
+    DEFAULT_PASSKEY_SEED_INFO = "FIDO2-PASSKEY-SEED"
 
     # Key type configuration for credential ID generation
     # Maps private key types to their COSE algorithm IDs and key extraction methods
     _KEY_TYPE_CONFIG = {
-        ec.EllipticCurvePrivateKey: {
+        (ec.EllipticCurvePrivateKey, hashes.SHA256): {
             'alg_id': -7,  # ES256 (ECDSA with SHA-256)
             'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
                 pk.curve.key_size // 8, byteorder='big'
-            )
+            ),
+            'recover_key': lambda key_material: ec.derive_private_key(
+                int.from_bytes(key_material, byteorder='big'),
+                ec.SECP256R1(),
+                default_backend()
+            ),
+            'args': True
+        },
+        (ec.EllipticCurvePrivateKey, hashes.SHA384): {
+            'alg_id': -35,  # ES384 (ECDSA with SHA-384)
+            'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
+                pk.curve.key_size // 8, byteorder='big'
+            ),
+            'recover_key': lambda key_material: ec.derive_private_key(
+                int.from_bytes(key_material, byteorder='big'),
+                ec.SECP384R1(),
+                default_backend()
+            ),
+            'args': True
+        },
+        (ec.EllipticCurvePrivateKey, hashes.SHA512): {
+            'alg_id': -36,  # ES512 (ECDSA with SHA-512)
+            'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
+                pk.curve.key_size // 8, byteorder='big'
+            ),
+            'recover_key': lambda key_material: ec.derive_private_key(
+                int.from_bytes(key_material, byteorder='big'),
+                ec.SECP521R1(),
+                default_backend()
+            ),
+            'args': True
+        },
+        ed25519.Ed25519PrivateKey: {
+            'alg_id': -8,  # ED25519
+            'extract_key': lambda pk: pk.private_bytes_raw(),
+            'recover_key': lambda key_material: ed25519.Ed25519PrivateKey.from_private_bytes(key_material),
+            'args': False
         },
         mldsa.MLDSA44PrivateKey: {
             'alg_id': -48,  # ML-DSA-44
-            'extract_key': lambda pk: pk.private_bytes_raw()
+            'extract_key': lambda pk: pk.private_bytes_raw(),
+            'recover_key': lambda key_material: mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material),
+            'args': False
         },
         mldsa.MLDSA65PrivateKey: {
             'alg_id': -49,  # ML-DSA-65
-            'extract_key': lambda pk: pk.private_bytes_raw()
+            'extract_key': lambda pk: pk.private_bytes_raw(),
+            'recover_key': lambda key_material: mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material),
+            'args': False
         },
         mldsa.MLDSA87PrivateKey: {
             'alg_id': -50,  # ML-DSA-87
-            'extract_key': lambda pk: pk.private_bytes_raw()
+            'extract_key': lambda pk: pk.private_bytes_raw(),
+            'recover_key': lambda key_material: mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material),
+            'args': False
         }
     }
 
     @classmethod
-    def get_passkey_seed(cls, entropy, key):
+    def _normalize_passkey_seed_info(cls, info=None):
+        """Normalize info string to bytes."""
+        if info is None:
+            info = cls.DEFAULT_PASSKEY_SEED_INFO
+        if isinstance(info, str):
+            info = info.encode('utf-8')
+        if not isinstance(info, bytes) or len(info) == 0:
+            raise ValueError("Info must be non-empty bytes or string")
+        return info
+
+    @classmethod
+    def get_passkey_seed(cls, entropy, key, info=None):
         """
         Generate a 32 byte seed using HKDF from entropy and a private key.
         
@@ -58,6 +112,7 @@ class KeyUtils(object):
         Args:
             entropy: Bytes (typically RP ID bytes) for domain separation
             key: Either an EllipticCurvePrivateKey or TPM KeyPair wrapper
+            info: Info string (optional, uses default if not provided)
             
         Returns:
             Base64-url encoded 32-byte seed
@@ -70,18 +125,19 @@ class KeyUtils(object):
         
         # Check if this is a TPM-backed key
         if hasattr(key, 'is_tpm') and key.is_tpm:
-            return cls._tpm_derive_seed(entropy, key)
+            return cls._tpm_derive_seed(entropy, key, info)
         else:
-            return cls._file_derive_seed(entropy, key)
+            return cls._file_derive_seed(entropy, key, info)
     
     @classmethod
-    def _file_derive_seed(cls, entropy, key):
+    def _file_derive_seed(cls, entropy, key, info=None):
         """
-        Derive seed using file-backed HKDF with exportable EC private key.
+        Derive seed using file-backed HKDF with EC private key.
         
         Args:
             entropy: Salt bytes (typically RP ID bytes)
             key: EllipticCurvePrivateKey object
+            info: Info string (optional, uses default if not provided)
             
         Returns:
             Base64-url encoded 32-byte seed
@@ -92,6 +148,8 @@ class KeyUtils(object):
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             raise ValueError(f"Key must be an EllipticCurvePrivateKey: {key}")
         
+        info = cls._normalize_passkey_seed_info(info)
+
         # Extract private key bytes as Input Key Material
         key_material = key.private_bytes(
             encoding=serialization.Encoding.DER,
@@ -103,14 +161,14 @@ class KeyUtils(object):
             algorithm=hashes.SHA256(),
             length=32,
             salt=entropy,
-            info=b"FIDO2-PASSKEY-SEED",
+            info=info,
             backend=default_backend()
         )
         seed_bytes = hkdf.derive(key_material)
         return base64.urlsafe_b64encode(seed_bytes)
     
     @classmethod
-    def _tpm_derive_seed(cls, entropy, tpm_key):
+    def _tpm_derive_seed(cls, entropy, tpm_key, info=None):
         """
         Derive seed using TPM HMAC operations to implement HKDF.
         
@@ -124,6 +182,7 @@ class KeyUtils(object):
         Args:
             entropy: Salt bytes (typically RP ID bytes)
             tpm_key: TPM KeyPair wrapper with is_tpm=True
+            info: Info string (optional, uses default if not provided)
             
         Returns:
             Base64-url encoded 32-byte seed
@@ -131,20 +190,18 @@ class KeyUtils(object):
         Raises:
             AttributeError: If tpm_key doesn't have required TPM attributes
         """
-        # HKDF Extract phase using TPM HMAC
+        info = cls._normalize_passkey_seed_info(info)
+
         # PRK = HMAC-SHA256(salt=entropy, IKM=TPM_key)
         # The TPM key acts as IKM implicitly through the HMAC operation
         prk = tpm_key.tpm_device.hmac(
             data=entropy,
             persistent_handle=tpm_key.handle
         )
-        
-        # HKDF Expand phase using software implementation
-        # This is safe because PRK is already derived and doesn't expose the key
         hkdf_expand = HKDFExpand(
             algorithm=hashes.SHA256(),
             length=32,
-            info=b"FIDO2-PASSKEY-SEED",
+            info=info,
             backend=default_backend()
         )
         seed_bytes = hkdf_expand.derive(prk)
@@ -152,37 +209,94 @@ class KeyUtils(object):
         return base64.urlsafe_b64encode(seed_bytes)
 
     @classmethod
-    def _get_key_config(cls, private_key):
-        """Get configuration for a given private key type.
+    def _get_key_config(cls, private_key, hash_alg=None):
+        """Get configuration for a given private key type and hash algorithm.
         
         Args:
             private_key: Private key object
+            hash_alg: Hash algorithm type (required for EC keys, optional for others)
             
         Returns:
             dict: Configuration with 'alg_id' and 'extract_key' function
             
         Raises:
-            ValueError: If key type is unsupported
+            ValueError: If key type is unsupported or hash_alg is missing for EC keys
         """
         if private_key is None:
             raise ValueError("Private key cannot be None")
         
+        # For EC keys, we need the hash algorithm
+        if isinstance(private_key, ec.EllipticCurvePrivateKey):
+            if hash_alg is None:
+                raise ValueError("Hash algorithm is required for EllipticCurvePrivateKey")
+            
+            # Try to find config with the specific hash algorithm
+            key = (ec.EllipticCurvePrivateKey, type(hash_alg))
+            if key in cls._KEY_TYPE_CONFIG:
+                return cls._KEY_TYPE_CONFIG[key]
+            
+            raise ValueError(
+                f"Unsupported EC key with hash algorithm: {type(hash_alg).__name__}. "
+                f"Supported: SHA256, SHA384, SHA512"
+            )
+        
+        # For non-EC keys, check direct key type match
         for key_type, config in cls._KEY_TYPE_CONFIG.items():
+            # Skip tuple keys (EC keys with hash)
+            if isinstance(key_type, tuple):
+                continue
             if isinstance(private_key, key_type):
                 return config
         
-        supported_types = ', '.join(kt.__name__ for kt in cls._KEY_TYPE_CONFIG.keys())
+        supported_types = []
+        for kt in cls._KEY_TYPE_CONFIG.keys():
+            if isinstance(kt, tuple):
+                supported_types.append(f"{kt[0].__name__} with {kt[1].__name__}")
+            else:
+                supported_types.append(kt.__name__)
+        
         raise ValueError(
             f"Unsupported key type: {type(private_key).__name__}. "
-            f"Supported types: {supported_types}"
+            f"Supported types: {', '.join(supported_types)}"
         )
 
     @classmethod
-    def _extract_key_material(cls, private_key):
+    def reconstruct_key_from_alg_id(cls, alg_id, key_material):
+        """Reconstruct a private key from algorithm ID and key material.
+        
+        Args:
+            alg_id: COSE algorithm identifier
+            key_material: Raw key material bytes
+            
+        Returns:
+            Private key object
+            
+        Raises:
+            ValueError: If algorithm ID is unsupported
+        """
+        # Find the config entry with matching alg_id
+        for config in cls._KEY_TYPE_CONFIG.values():
+            if config['alg_id'] == alg_id:
+                if 'recover_key' not in config:
+                    raise ValueError(
+                        f"Algorithm {alg_id} does not have a recover_key function defined"
+                    )
+                return config['recover_key'](key_material)
+        
+        # If we get here, the algorithm is not supported
+        supported_algs = [config['alg_id'] for config in cls._KEY_TYPE_CONFIG.values()]
+        raise ValueError(
+            f"Unsupported algorithm ID: {alg_id}. "
+            f"Supported: {supported_algs}"
+        )
+
+    @classmethod
+    def _extract_key_material(cls, private_key, hash_alg=None):
         """Extract raw key material from private key.
         
         Args:
             private_key: Private key object
+            hash_alg: Hash algorithm type (required for EC keys, optional for others)
             
         Returns:
             bytes: Raw key material
@@ -190,7 +304,7 @@ class KeyUtils(object):
         Raises:
             ValueError: If key type is unsupported
         """
-        config = cls._get_key_config(private_key)
+        config = cls._get_key_config(private_key, hash_alg)
         return config['extract_key'](private_key)
 
     @classmethod
@@ -636,7 +750,7 @@ class KeyUtils(object):
 
     @classmethod
     def __request_platform_kp(cls, timeout: float = 0.5):
-        """Request platform key from systray_app via message queue"""
+        """Request platform key from qt_app via message queue"""
         import uuid
         import time
         try:
@@ -1102,11 +1216,11 @@ class KeyPair(object):
     @classmethod
     def generate_mldsa(cls, alg="ML-DSA-44", seed=None):
         """
-        Generate ML-DSA keypair using cryptography library v47+.
+        Generate ML-DSA keypair.
         
         Args:
             alg: ML-DSA algorithm name (default: "ML-DSA-44")
-            seed: Optional 32-byte seed for deterministic generation
+            seed: Optional 32-byte seed for rebuilding a key
             
         Returns:
             KeyPair with ML-DSA private key and public key
@@ -1128,10 +1242,8 @@ class KeyPair(object):
             raise ValueError(f"Unsupported ML-DSA algorithm: {alg}")
         
         if seed is not None:
-            # Deterministic generation from seed
             private_key = key_class.from_seed_bytes(seed)
         else:
-            # Random generation
             private_key = key_class.generate()
         
         public_key = private_key.public_key()

@@ -69,12 +69,12 @@ class Fido2Authenticator(object):
                     *Depreciated*: Use SymmetricKey instead.
             sKey (SymmetricKey, optional): Alternative symmetric key to generate credential ID.
                     Can be used to reconstruct private EC key for assertions. Default = None
-            disableCounter (bool): Whether to disable the attestation/assertion counter.
+            disableCounter (bool, optional): Whether to disable the attestation/assertion counter.
                     Default = False
-            ctsProfileMatch (bool): Whether to disable the CTS Profile match for Android Safetynet
-                                    attestation statements.
+            ctsProfileMatch (bool, optional): Whether to disable the CTS Profile match for Android Safetynet
+                                    attestation statements. Default = True
             saltLength (int, optional): Length of salt to use for "packed" attestation (RSAPSS).
-                    This is expected to be the same length as the digest from the hashing 
+                    This is expected to be the same length as the digest of the hashing 
                     algorithm used.
         """
         if aaguid and len(aaguid) != 16:
@@ -119,11 +119,7 @@ class Fido2Authenticator(object):
         # Generate a new key pair if we still don't have one
         if self.kp is None:
             self.kp = KeyPair.generate_ecdsa()
-            # If we generated a new random keypair, we need to regenerate the credential ID
-            # to match this new keypair, otherwise signatures won't verify
-            if self.cib is not None:
-                logging.warning("Generated random keypair but credId was provided - regenerating credId to match")
-                self.cib = None  # Force regeneration
+            self.cib = None  # Force regeneration
 
     @classmethod
     def _urlb64_decode(cls, b64String):
@@ -257,11 +253,11 @@ class Fido2Authenticator(object):
         
         # Determine algorithm ID and extract key material
         if alg_id is None:
-            config = KeyUtils._get_key_config(private_key)
+            config = KeyUtils._get_key_config(private_key, self.hashAlg)
             alg_id = config['alg_id']
             key_material = config['extract_key'](private_key)
         else:
-            key_material = KeyUtils._extract_key_material(private_key)
+            key_material = KeyUtils._extract_key_material(private_key, self.hashAlg)
         
         # Build plaintext and encrypt
         plaintext = self._build_credential_id_plaintext(alg_id, key_material)
@@ -328,27 +324,9 @@ class Fido2Authenticator(object):
         
         # Extract the base64-encoded encrypted part (after the prefix)
         base64_encrypted = credId[len(cls.CRED_PREFIX):]
-        
-        # Decrypt payload (the decrypt method expects base64-encoded input)
         plaintext = decryptor.decrypt(base64_encrypted)
-        
-        # Parse plaintext
         alg_id, key_material = cls._parse_credential_id_plaintext(plaintext)
-        
-        # Reconstruct private key based on algorithm
-        if alg_id == -7:  # ES256
-            private_value = int.from_bytes(key_material, byteorder='big')
-            curve = ec.SECP256R1()
-            private_key = ec.derive_private_key(private_value, curve, default_backend())
-        elif alg_id == -48:  # ML-DSA-44
-            private_key = mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material)
-        elif alg_id == -49:  # ML-DSA-65
-            private_key = mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material)
-        elif alg_id == -50:  # ML-DSA-87
-            private_key = mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material)
-        else:
-            raise ValueError(f"Unsupported algorithm: {alg_id}")
-        
+        private_key = KeyUtils.reconstruct_key_from_alg_id(alg_id, key_material)
         return KeyPair(private_key, private_key.public_key())
 
     def get_aaguid(self, hexString=True):

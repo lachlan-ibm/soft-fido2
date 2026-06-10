@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- Padlock body -->
+  <rect x="7" y="11" width="10" height="9" rx="1" fill="none" stroke="#2196F3" stroke-width="2"/>
+  
+  <!-- Shackle (open) -->
+  <path d="M 8 11 L 8 7 C 8 4.8 9.8 3 12 3 C 14.2 3 16 4.8 16 7 L 16 9" 
+        fill="none" stroke="#2196F3" stroke-width="2" stroke-linecap="round"/>
+  
+  <!-- Keyhole -->
+  <circle cx="12" cy="15" r="1.5" fill="#2196F3"/>
+  <rect x="11.25" y="15" width="1.5" height="3" fill="#2196F3"/>
+</svg>
+
+<!-- Made with Bob -->

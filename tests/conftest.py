@@ -1,5 +1,6 @@
 import pytest
 from fido2.webauthn import PublicKeyCredentialRpEntity
+from soft_fido2.passkey_device import AuthenticatorAPI
 
 
 user = {"id": b"example_user", "name": "Example User"}
@@ -42,3 +43,10 @@ def fido2_authenticator(fido2_server, fido2_user):
     
     fido2_server.register_complete(state, response)
     yield authenticator
+
+@pytest.fixture(scope='function', autouse=True)
+def cleanup_authenticator_api():
+    """Ensure AuthenticatorAPI watchdog thread is properly cleaned up after each test"""
+    yield
+    # Clean up the AuthenticatorAPI watchdog thread to prevent tests from hanging
+    AuthenticatorAPI.quit()

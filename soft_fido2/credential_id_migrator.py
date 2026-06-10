@@ -10,6 +10,8 @@ import logging
 from typing import Optional, Union
 
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.asymmetric import ec
+from soft_fido2.authenticator import Fido2Authenticator
 from soft_fido2.symmetric_key import SymmetricKey
 from soft_fido2.key_pair import KeyPair
 
@@ -102,4 +104,21 @@ class CredentialIdMigrator:
         # Return the base64-encoded credential ID
         return base64.urlsafe_b64encode(new_cred_id_bytes).decode('utf-8')
 
-# Made with Bob
+
+
+    @classmethod
+    def migrate_credential_id_seed(cls, cred_id: str, key):
+        """
+        move from ecrypint the entire asn1 private key serialization to just the 
+        scalar as 32 bytes and the id (2 bytes)
+        ec 256 key only
+        key: fernet key
+        cred_id: str, URL-safe base64 encoded credential ID (asn1)
+
+        return str base64 encoded credential ID (32 byte seed + id (2))
+        """
+        key_bytes_enc = cls._urlb64_decode(cred_id)
+        key_bytes = key.decrypt(key_bytes_enc)
+        kp = KeyPair.load_key_pair(key_bytes)
+        new_id_bytes = Fido2Authenticator(kp, fKey=key)._get_credential_id_bytes(kp)
+        return base64.urlsafe_b64encode(new_id_bytes).decode('utf-8')

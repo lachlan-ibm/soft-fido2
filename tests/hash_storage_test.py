@@ -19,7 +19,7 @@ from soft_fido2.key_pair import KeyUtils
 
 @pytest.fixture
 def mock_platform_key():
-    """Mock platform key retrieval for tests that don't have systray_app running"""
+    """Mock platform key retrieval for tests that don't have qt_app running"""
     private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
     mock_kp = MagicMock()
     mock_kp.get_private.return_value = private_key
@@ -380,7 +380,7 @@ class TestRoundTrip:
 
 
 class TestFileDiscovery:
-    """Tests for file discovery methods in passkey_device.py and systray_app.py"""
+    """Tests for file discovery methods in passkey_device.py and qt_app.py"""
     
     def test_discovery_requires_both_files(self, sample_passkey, temp_fido_home):
         """Test that file discovery only returns passkeys with both files"""

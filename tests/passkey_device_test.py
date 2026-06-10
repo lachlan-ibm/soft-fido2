@@ -360,8 +360,9 @@ class TestCTAP2HIDevice:
         # Pad to 64 bytes
         event.data += bytes([0] * (64 - len(event.data)))
         
-        # Process the event
-        with patch.object(device, 'send_response_segments') as mock_send_response:
+        # Process the event - mock gather_user_presence to avoid 15-second timeout
+        with patch('soft_fido2.passkey_device.CBORCommand.gather_user_presence', return_value=True), \
+             patch.object(device, 'send_response_segments') as mock_send_response:
             device.ctaphid_cbor(event)
             
             # Verify response was sent or command was stored

@@ -1,25 +1,14 @@
 # Copyright IBM 2025
 
 import logging
+import time
 from contextlib import contextmanager
 from enum import Enum
-from typing import Any, Callable, Optional, Tuple, cast
+from typing import Any, Callable, Optional, Tuple
 
-# Module-level imports for optional D-Bus dependencies
-_dbus_module: Any = None
-_dbus_mainloop_class: Any = None
-_glib_module: Any = None
-
-try:
-    import dbus
-    from dbus.mainloop.glib import DBusGMainLoop
-    from gi.repository import GLib  # type: ignore[import-untyped]
-
-    _dbus_module = dbus
-    _dbus_mainloop_class = DBusGMainLoop
-    _glib_module = GLib
-except ImportError:
-    pass
+from jeepney import DBusAddress, HeaderFields, MatchRule, MessageType, new_method_call
+from jeepney.io.blocking import open_dbus_connection
+from jeepney.wrappers import new_method_call as wrappers_new_method_call
 
 
 class BiometricResult(Enum):
@@ -51,61 +40,75 @@ class FprintDevice:
     FPRINTD_DEVICE_IFACE = 'net.reactivated.Fprint.Device'
 
     def __init__(self):
-        self._bus: Any = None
-        self._device_iface: Any = None
+        self._connection = None
+        self._device_path: Optional[str] = None
         self._available = False
-        self._mainloop: Any = None
         self._verify_result: Optional[str] = None
         self._on_finger_needed_callback: Optional[Callable[[str], None]] = None
 
-        if _dbus_module:
-            self._initialize_dbus()
+        self._manager = DBusAddress(
+            self.FPRINTD_MANAGER_PATH,
+            bus_name=self.FPRINTD_BUS_NAME,
+            interface=self.FPRINTD_MANAGER_IFACE
+        )
+
+        self._initialize_dbus()
 
     def _initialize_dbus(self):
         """Initialize D-Bus connection and check fprintd availability."""
         try:
-            if _dbus_mainloop_class is None or _dbus_module is None:
-                self._available = False
-                return
-
-            _dbus_mainloop_class(set_as_default=True)
-            self._bus = _dbus_module.SystemBus()
-
-            manager = self._bus.get_object(self.FPRINTD_BUS_NAME, self.FPRINTD_MANAGER_PATH)
-            manager_iface = _dbus_module.Interface(manager, self.FPRINTD_MANAGER_IFACE)
-
-            device_path = manager_iface.GetDefaultDevice()
-            device = self._bus.get_object(self.FPRINTD_BUS_NAME, device_path)
-            self._device_iface = _dbus_module.Interface(device, self.FPRINTD_DEVICE_IFACE)
-
-            self._available = True
-            logging.info("Biometric authentication available via D-Bus")
-
+            self._connection = open_dbus_connection(bus='SYSTEM')
+            self._device_path = self._get_default_device_path()
+            self._available = self._device_path is not None
+            if self._available:
+                logging.info("Biometric authentication available via D-Bus")
         except Exception as e:
             logging.info(f"fprintd not available: {e}")
             self._available = False
+            self._connection = None
+            self._device_path = None
+
+    def _get_default_device_path(self) -> Optional[str]:
+        """Get the default fprintd device path."""
+        if self._connection is None:
+            return None
+
+        msg = new_method_call(self._manager, 'GetDefaultDevice')
+        reply = self._connection.send_and_get_reply(msg)
+        return str(reply.body[0])
+
+    def _get_device_address(self, device_path: Optional[str] = None) -> DBusAddress:
+        """Build a D-Bus address for the fingerprint device."""
+        return DBusAddress(
+            device_path or self._device_path or '',
+            bus_name=self.FPRINTD_BUS_NAME,
+            interface=self.FPRINTD_DEVICE_IFACE
+        )
 
     def is_available(self) -> bool:
         """Check if biometric authentication is available."""
         return self._available
 
     @contextmanager
-    def _claimed_device(self, username: str):
+    def _claimed_device(self, device: DBusAddress, username: str):
         """Context manager for device claim/release lifecycle.
-        
+
         Guarantees VerifyStop() and Release() are called even on exceptions.
         """
+        if self._connection is None:
+            raise RuntimeError("D-Bus connection unavailable")
+
         try:
-            self._device_iface.Claim(username)
+            self._connection.send_and_get_reply(new_method_call(device, 'Claim', 's', (username,)))
             logging.info(f"Device claimed for user: {username or 'current'}")
             yield
         finally:
             try:
-                self._device_iface.VerifyStop()
+                self._connection.send(new_method_call(device, 'VerifyStop'))
             except Exception:
                 pass
             try:
-                self._device_iface.Release()
+                self._connection.send(new_method_call(device, 'Release'))
             except Exception:
                 pass
 
@@ -113,7 +116,7 @@ class FprintDevice:
         """Process verification result and return appropriate status."""
         if result is None:
             return (BiometricResult.TIMEOUT, "Verification timed out")
-        
+
         result_map = {
             'verify-match': (BiometricResult.SUCCESS, "Fingerprint verified"),
             'verify-no-match': (BiometricResult.NO_MATCH, "Fingerprint does not match"),
@@ -122,72 +125,60 @@ class FprintDevice:
         }
         return result_map.get(result, (BiometricResult.UNKNOWN_ERROR, f"Unknown result: {result}"))
 
-    def _verify_finger_selected_handler(self, finger_name: str) -> None:
-        """Handle VerifyFingerSelected signal from fprintd.
-        
-        This signal indicates which finger should be scanned.
-        Calls the user-provided callback if available.
-        """
-        logging.info(f"Finger selected: {finger_name}")
-        if self._on_finger_needed_callback:
-            self._on_finger_needed_callback(finger_name)
+    def _install_signal_matches(self, device: DBusAddress) -> None:
+        """Subscribe to fingerprint verification signals."""
+        if self._connection is None:
+            raise RuntimeError("D-Bus connection unavailable")
 
-    def _verify_status_handler(self, result_code: str, done: bool) -> None:
-        """Handle VerifyStatus signal from fprintd.
-        
-        This signal provides the verification result and completion status.
-        Quits the mainloop when verification is complete.
-        """
-        self._verify_result = result_code
-        logging.info(f"Verify status: {result_code}, done: {done}")
-        if done and self._mainloop:
-            self._mainloop.quit()
-
-    @contextmanager
-    def _run_mainloop_with_timeout(self, timeout: float):
-        """Context manager for running GLib mainloop with timeout.
-        
-        Guarantees timeout source removal to prevent resource leaks.
-        
-        Args:
-            timeout: Maximum time to run mainloop in seconds
-            
-        Yields:
-            None
-        """
-        if _glib_module is None:
-            raise RuntimeError("GLib main loop unavailable")
-        
-        self._mainloop = _glib_module.MainLoop()
-        timeout_id = None
-        try:
-            timeout_id = _glib_module.timeout_add_seconds(
-                int(timeout),
-                lambda: cast(Any, self._mainloop).quit()
+        device_path = self._device_path or self.FPRINTD_MANAGER_PATH
+        for member in ('VerifyFingerSelected', 'VerifyStatus'):
+            rule = MatchRule(
+                type='signal',
+                sender=self.FPRINTD_BUS_NAME,
+                interface=self.FPRINTD_DEVICE_IFACE,
+                member=member,
+                path=device_path
             )
-            yield
-            self._mainloop.run()
-        finally:
-            # Always remove timeout source to prevent resource leak
-            if timeout_id is not None:
-                _glib_module.source_remove(timeout_id)
-            self._mainloop = None
+            msg = wrappers_new_method_call(
+                DBusAddress(
+                    '/org/freedesktop/DBus',
+                    bus_name='org.freedesktop.DBus',
+                    interface='org.freedesktop.DBus'
+                ),
+                'AddMatch',
+                signature='s',
+                body=(rule.serialise(),)
+            )
+            self._connection.send_and_get_reply(msg)
 
-    def _connect_verify_signals(self) -> None:
-        """Connect D-Bus signal handlers for fingerprint verification.
-        
-        Sets up handlers for:
-        - VerifyFingerSelected: Indicates which finger to scan
-        - VerifyStatus: Provides verification result
-        """
-        self._device_iface.connect_to_signal(
-            'VerifyFingerSelected',
-            self._verify_finger_selected_handler
-        )
-        self._device_iface.connect_to_signal(
-            'VerifyStatus',
-            self._verify_status_handler
-        )
+    def _poll_for_verify_result(self, timeout: float) -> None:
+        """Poll D-Bus for verification signals until completion or timeout."""
+        if self._connection is None:
+            raise RuntimeError("D-Bus connection unavailable")
+
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            remaining = max(0.0, min(0.1, deadline - time.monotonic()))
+            try:
+                msg = self._connection.receive(timeout=remaining)
+            except TimeoutError:
+                continue
+
+            if msg is None or msg.header.message_type != MessageType.signal:
+                continue
+
+            member = msg.header.fields.get(HeaderFields.member)
+            if member == 'VerifyFingerSelected':
+                finger_name = str(msg.body[0])
+                logging.info(f"Finger selected: {finger_name}")
+                if self._on_finger_needed_callback:
+                    self._on_finger_needed_callback(finger_name)
+            elif member == 'VerifyStatus':
+                result_code, done = msg.body
+                self._verify_result = str(result_code)
+                logging.info(f"Verify status: {result_code}, done: {done}")
+                if bool(done):
+                    return
 
     def verify(self, username: Optional[str] = None,
                on_finger_needed: Optional[Callable[[str], None]] = None,
@@ -204,38 +195,33 @@ class FprintDevice:
         Returns:
             (BiometricResult, message)
         """
-        # Early validation checks
-        if not self._available:
+        if not self._available or self._connection is None:
             return (BiometricResult.NOT_AVAILABLE, "Biometric not available")
 
-        if _glib_module is None:
-            return (BiometricResult.UNKNOWN_ERROR, "GLib main loop unavailable")
-
-        # Initialize result tracking
         self._verify_result = None
         self._on_finger_needed_callback = on_finger_needed
 
         try:
-            with self._claimed_device(username or ""):
-                # Set up signal handlers BEFORE starting verification
-                self._connect_verify_signals()
+            device_path = self._get_default_device_path()
+            if not device_path:
+                return (BiometricResult.NOT_AVAILABLE, "Biometric not available")
 
-                # Start verification
-                self._device_iface.VerifyStart('any')
+            self._device_path = device_path
+            device = self._get_device_address(device_path)
+
+            self._install_signal_matches(device)
+
+            with self._claimed_device(device, username or ""):
+                self._connection.send_and_get_reply(new_method_call(device, 'VerifyStart', 's', ('any',)))
                 logging.info("Fingerprint verification started")
+                self._poll_for_verify_result(timeout)
 
-                # Run mainloop with timeout
-                with self._run_mainloop_with_timeout(timeout):
-                    pass  # Mainloop runs until timeout or completion
-
-            # Process result (device cleanup handled by context manager)
             return self._process_verify_result(self._verify_result)
 
         except Exception as e:
             logging.error(f"Verification error: {e}")
             return (BiometricResult.UNKNOWN_ERROR, f"Error: {str(e)}")
         finally:
-            # Clean up callback reference
             self._on_finger_needed_callback = None
 
     def verify_with_retries(self, username: Optional[str] = None,
@@ -265,6 +251,3 @@ def get_fprint_device() -> FprintDevice:
     if _fprint_device_instance is None:
         _fprint_device_instance = FprintDevice()
     return _fprint_device_instance
-
-# Made with Bob
-

@@ -11,7 +11,7 @@ import tempfile, os, shutil, uuid
 
 @pytest.fixture
 def mock_platform_key():
-    """Mock platform key retrieval for tests that don't have systray_app running"""
+    """Mock platform key retrieval for tests that don't have qt_app running"""
     # Create a real EC key pair for testing
     private_key = ec.generate_private_key(ec.SECP256R1(), default_backend())
     

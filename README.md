@@ -297,13 +297,13 @@ The authenticator supports fingerprint verification via Linux's fprintd D-Bus se
 ### Installation
 
 ```bash
-# Install with D-Bus support (notifications + biometric)
-pip install soft-fido2[dbus]
+# Install with fprintd biometric support
+pip install soft-fido2[bio]
 
 # Install with TPM support
 pip install soft-fido2[tpm]
 
-# Install with both D-Bus and TPM
+# Install with both biometric and TPM
 pip install soft-fido2[full]
 
 # Or install fprintd system package

@@ -36,11 +36,11 @@ class QueueMessageType:
 class MessageQueue:
     ''' read by uhid_device.py '''
     notify_udev = queue.Queue(maxsize=10)
-    ''' read by systray_app.py '''
+    ''' read by qt_app.py '''
     notify_sysapp = queue.Queue(maxsize=10)
     ''' read by passkey_device.py.Authenticator '''
     notify_auth = queue.Queue(maxsize=10)
-    ''' read by systray_app.py for platform key requests '''
+    ''' read by qt_app.py for platform key requests '''
     platform_key_requests = queue.Queue(maxsize=10)
     ''' read by passkey_device.py for platform key responses '''
     platform_key_responses = queue.Queue(maxsize=10)

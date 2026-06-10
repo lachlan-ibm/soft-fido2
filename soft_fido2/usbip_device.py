@@ -819,33 +819,28 @@ class CTAP2USBIPDevice(USBDevice):
         }.get(ctapCmd, self.ctaphid_unknown)(usb_req)
     
     def _handle_incoming_sequence(self, cid, usb_req):
-        """Handle CTAPHID continuation packets
-        
-        Args:
-            cid: Channel ID
-            usb_req: USB request with sequence data
-        """
+        """Handle CTAPHID continuation packets"""
         seqNum = int.from_bytes(usb_req.data_frame[4:5])
+        
         context = self.cids.get(cid)
-        if context is not None:
-            transaction = context.get("cborCmd")
-            if transaction is not None and seqNum == transaction.request_segment:
-                transaction.append_segment(usb_req.data_frame[5:])
-                if transaction.response_ready:
-                    self.send_response_segment(cid, transaction)
-                else:
-                    colour_print(colour=bcolors.OKPURPLE, 
-                                component='CTAP2USBIPDevice._handle_incoming_sequence',
-                                msg='Sequence number [{}] not the last expected sequence'.format(seqNum))
-            else:
-                colour_print(colour=bcolors.FAIL, 
-                            component='CTAP2USBIPDevice._handle_incoming_sequence',
-                            msg='Sequence number [{}] not the next expected sequence [{}]'.format(
-                                seqNum, transaction.request_segment if transaction else 'N/A'))
-        else:
-            colour_print(colour=bcolors.FAIL, 
+        if context is None:
+            colour_print(colour=bcolors.FAIL,
                         component='CTAP2USBIPDevice._handle_incoming_sequence',
-                        msg='CID not found in device context, don\'t know what to do')
+                        msg='CID not found')
+            return
+            
+        transaction = context.get("cborCmd")
+        if transaction is None:
+            colour_print(colour=bcolors.FAIL,
+                        component='CTAP2USBIPDevice._handle_incoming_sequence',
+                        msg='No transaction for CID')
+            return
+        
+        # Let CBORCommand handle buffering
+        transaction.append_segment(usb_req.data_frame[5:], seq_num=seqNum)
+        
+        if transaction.response_ready:
+            self.send_response_segment(cid, transaction)
     
     # ========================================================================
     # CTAPHID Protocol Handlers

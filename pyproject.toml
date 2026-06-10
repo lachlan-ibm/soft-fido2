@@ -20,21 +20,19 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dbus = [
-    "dbus-python>=1.2.18",
-    "PyGObject>=3.42.0",
-    "setproctitle"
+bio = [
+    "jeepney>=0.9.0"
 ]
 tpm = [
     "tpm2-pytss>=2.0.0"
 ]
 ux = [
     "PyQt6",
+    "jeepney>=0.9.0",
     "setproctitle"
 ]
 full = [
-    "dbus-python>=1.2.18",
-    "PyGObject>=3.42.0",
+    "jeepney>=0.9.0",
     "tpm2-pytss>=2.0.0",
     "PyQt6",
     "setproctitle"
@@ -47,6 +45,6 @@ Source = "https://github.com/lachlan-ibm/soft-fido2"
 Tracker = "https://github.com/lachlan-ibm/soft-fido2/issues"
 
 [tool.setuptools]
-packages = ["soft_fido2"]
+packages = ["soft_fido2", "soft_fido2.qt_ux", "soft_fido2.qt_svc", "soft_fido2.icons"]
 zip-safe = false
 include-package-data = true
