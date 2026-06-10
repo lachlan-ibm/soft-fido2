@@ -5,7 +5,7 @@ including TPM-based and file-based key management. It provides a clean
 interface for creating, unlocking, and validating platform keys without
 coupling to UI components.
 
-Key Features:
+Features:
     - TPM key creation and validation
     - File-based key creation with optional password protection
     - Password-protected key unlocking
