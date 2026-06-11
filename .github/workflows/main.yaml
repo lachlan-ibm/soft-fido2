@@ -13,6 +13,12 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
+    # Install system dependencies for TPM2
+    - name: Install TPM2 system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtss2-dev libtss2-esys-3.0.2-0 libtss2-fapi-1 libtss2-mu-4.0.1-0 libtss2-rc0 libtss2-sys1 libtss2-tcti-cmd0 libtss2-tcti-device0 libtss2-tcti-mssim0 libtss2-tcti-swtpm0 libtss2-tctildr0
+
     # Install dependencies
     - name: Set up Python 3.10.5
       uses: actions/setup-python@v3
