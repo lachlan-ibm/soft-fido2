@@ -93,7 +93,7 @@ def test_ML_DSA_44_sign():
     pubkey = kp.get_public()
     aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid)
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
-    assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
+    assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
@@ -116,7 +116,7 @@ def test_ML_DSA_67_sign():
     #authenticator = Fido2Authenticator(cred_id=cid)
     aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid)
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
-    assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
+    assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
@@ -139,7 +139,7 @@ def test_ML_DSA_87_sign():
     #authenticator = Fido2Authenticator(cred_id=cid)
     aaguid, rp_id_hash, flags, counter, cred_id, cose, to_sign, sig = _do_the_thing(kp, cid) 
     assert aaguid == b'\x00' * 16, "AAGUID should be null"
-    assert base64.urlsafe_b64encode(cred_id) == cid, "Cred id not correct {} != {}".format(cred_id, cid)
+    assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
     assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(

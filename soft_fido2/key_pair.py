@@ -32,7 +32,7 @@ class KeyUtils(object):
         (ec.EllipticCurvePrivateKey, hashes.SHA256): {
             'alg_id': -7,  # ES256 (ECDSA with SHA-256)
             'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                pk.curve.key_size // 8, byteorder='big'
+                (pk.curve.key_size + 7) // 8, byteorder='big'
             ),
             'recover_key': lambda key_material: ec.derive_private_key(
                 int.from_bytes(key_material, byteorder='big'),
@@ -44,7 +44,7 @@ class KeyUtils(object):
         (ec.EllipticCurvePrivateKey, hashes.SHA384): {
             'alg_id': -35,  # ES384 (ECDSA with SHA-384)
             'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                pk.curve.key_size // 8, byteorder='big'
+                (pk.curve.key_size + 7) // 8, byteorder='big'
             ),
             'recover_key': lambda key_material: ec.derive_private_key(
                 int.from_bytes(key_material, byteorder='big'),
@@ -56,7 +56,7 @@ class KeyUtils(object):
         (ec.EllipticCurvePrivateKey, hashes.SHA512): {
             'alg_id': -36,  # ES512 (ECDSA with SHA-512)
             'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                pk.curve.key_size // 8, byteorder='big'
+                (pk.curve.key_size + 7) // 8, byteorder='big'
             ),
             'recover_key': lambda key_material: ec.derive_private_key(
                 int.from_bytes(key_material, byteorder='big'),
@@ -749,8 +749,13 @@ class KeyUtils(object):
         logging.info(f"Deleted passkey and stash files for {passkeyFilename}")
 
     @classmethod
-    def __request_platform_kp(cls, timeout: float = 0.5):
-        """Request platform key from qt_app via message queue"""
+    def __request_platform_kp(cls, timeout: float = 0.1):
+        """Request platform key from qt_app via message queue
+        
+        Note: Short timeout (50ms) is intentional - if Qt app is running,
+        it responds immediately. If not running (e.g., in tests), we want
+        to fail fast and fall back to file-based key loading.
+        """
         import uuid
         import time
         try:
@@ -878,8 +883,11 @@ class KeyUtils(object):
     
     @classmethod
     def ec_decrypt(cls, encrypted, key):
+        # Handle TPM-backed keys
         if hasattr(key, 'tpm_decrypt'):
             return key.tpm_decrypt(encrypted)
+        
+        # Now verify we have an EllipticCurvePrivateKey
         if not isinstance(key, ec.EllipticCurvePrivateKey):
             raise ValueError(f"{key} must be an EllipticCurvePrivateKey")
         pub_bytes_len = int.from_bytes(encrypted[:4], 'big')
@@ -953,8 +961,13 @@ class KeyUtils(object):
             # Get platform key
             platform_key = cls._get_platform_kp()
             
-            # Decrypt using TPM-aware ec_decrypt path
-            cbor_bytes = cls.ec_decrypt(encrypted_blob, platform_key)
+            # ec_decrypt expects either an EllipticCurvePrivateKey or TPM wrapper with tpm_decrypt
+            if hasattr(platform_key, 'get_private'):
+                decrypt_key = platform_key.get_private()
+            else:
+                decrypt_key = platform_key
+            
+            cbor_bytes = cls.ec_decrypt(encrypted_blob, decrypt_key)
             
             # CBOR decode
             config_map = cbor.loads(cbor_bytes)

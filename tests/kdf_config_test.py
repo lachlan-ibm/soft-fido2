@@ -9,12 +9,31 @@ import sys
 import tempfile
 import shutil
 import unittest
+import threading
+import pytest
 from unittest.mock import patch
 
 # Add the parent directory to the path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from soft_fido2.key_pair import KeyUtils, KeyPair
+
+
+@pytest.fixture(scope="session", autouse=True)
+def session_cleanup_queues():
+    """Replace Queue with SimpleQueue to prevent semaphore leaks in tests."""
+    import queue as queue_module
+    from soft_fido2 import message_queues
+    
+    # Replace all Queue objects with SimpleQueue to avoid semaphore leaks
+    message_queues.MessageQueue.notify_udev = queue_module.SimpleQueue()
+    message_queues.MessageQueue.notify_sysapp = queue_module.SimpleQueue()
+    message_queues.MessageQueue.notify_auth = queue_module.SimpleQueue()
+    message_queues.MessageQueue.platform_key_requests = queue_module.SimpleQueue()
+    message_queues.MessageQueue.platform_key_responses = queue_module.SimpleQueue()
+    
+    yield
+    # Cleanup after tests - SimpleQueue doesn't need special cleanup
 
 
 class TestKDFInfoConfig(unittest.TestCase):
@@ -32,6 +51,24 @@ class TestKDFInfoConfig(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures."""
+        # Clean up any pending queue items from ALL queues
+        try:
+            from soft_fido2.message_queues import MessageQueue
+            import queue as queue_module
+            max_items = 100  # Safety limit per queue
+            
+            # Drain all queues
+            for queue_obj in [MessageQueue.notify_udev, MessageQueue.notify_sysapp,
+                             MessageQueue.notify_auth, MessageQueue.platform_key_requests,
+                             MessageQueue.platform_key_responses]:
+                for _ in range(max_items):
+                    try:
+                        queue_obj.get(block=False)
+                    except queue_module.Empty:
+                        break
+        except Exception:
+            pass
+        
         # Restore original FIDO_HOME
         if self.original_fido_home is not None:
             os.environ['FIDO_HOME'] = self.original_fido_home
@@ -178,6 +215,24 @@ class TestDeterministicKeyDerivation(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test fixtures."""
+        # Clean up any pending queue items from ALL queues
+        try:
+            from soft_fido2.message_queues import MessageQueue
+            import queue as queue_module
+            max_items = 100  # Safety limit per queue
+            
+            # Drain all queues
+            for queue_obj in [MessageQueue.notify_udev, MessageQueue.notify_sysapp,
+                             MessageQueue.notify_auth, MessageQueue.platform_key_requests,
+                             MessageQueue.platform_key_responses]:
+                for _ in range(max_items):
+                    try:
+                        queue_obj.get(block=False)
+                    except queue_module.Empty:
+                        break
+        except Exception:
+            pass
+        
         # Restore original FIDO_HOME
         if self.original_fido_home is not None:
             os.environ['FIDO_HOME'] = self.original_fido_home
@@ -392,8 +447,3 @@ class TestDeterministicKeyDerivation(unittest.TestCase):
             self.assertIsNotNone(kp.get_public())
             self.assertIsNotNone(kp.get_private())
 
-
-if __name__ == '__main__':
-    unittest.main()
-
-# Made with Bob
