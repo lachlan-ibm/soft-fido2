@@ -109,7 +109,7 @@ class CredentialIdMigrator:
     @classmethod
     def migrate_credential_id_seed(cls, cred_id: str, key):
         """
-        move from ecrypint the entire asn1 private key serialization to just the 
+        move from encrypting the entire asn1 private key serialization to just the 
         scalar as 32 bytes and the id (2 bytes)
         ec 256 key only
         key: fernet key
