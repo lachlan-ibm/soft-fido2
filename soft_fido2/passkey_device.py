@@ -2,29 +2,29 @@
 # IBM Confidential
 # Assisted by watsonx Code Assistant
 
-import base64, datetime, multiprocessing, os, sys, random, threading, time, secrets, typing, logging, math
+from soft_fido2.key_pair import KeyPair
+import base64, datetime, multiprocessing, os, sys, random, threading, time, secrets, typing, logging, math, queue
 import cbor2 as cbor
 from enum import Enum, IntEnum
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import hashes, hmac
-from cryptography.fernet import Fernet
 
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
     from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
     from soft_fido2.key_pair import KeyPair, KeyUtils
     from soft_fido2.authenticator import Fido2Authenticator
-    from soft_fido2.cert_utils import CertUtils
     from soft_fido2.symmetric_key import SymmetricKey
+    from soft_fido2.qt_ux.config import PlatformConfig
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from message_queues import QueueMessageType, MessageQueue
     from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
     from key_pair import KeyPair, KeyUtils
     from authenticator import Fido2Authenticator
-    from cert_utils import CertUtils
     from symmetric_key import SymmetricKey
+    from qt_ux.config import PlatformConfig
 
 #max usb data frame size
 MAX_DATA_FRAME = 64
@@ -50,18 +50,17 @@ class AuthenticatorAPI(object):
     _watchdog = None
     _lock = multiprocessing.Lock()
 
-    _pin_token_kp: typing.Optional[KeyPair] = None
     _pin_retry = 5
 
     _quit = False
+    
+    # Biometric + TPM mode state
+    _biometric_tpm_mode_enabled = False
+    _biometric_tpm_mode_lock = threading.Lock()
 
     def __new__(cls):
         cls._watchdog = threading.Thread(target=cls._token_expiry_check)
         cls._watchdog.start()
-        cls._lock.acquire()
-        if cls._pin_token_kp == None:
-            cls._pin_token_kp = KeyPair.generate_ecdsa()#P-256 key, cose key type -25
-        cls._lock.release()
 
     @classmethod
     def _token_expiry_check(cls):
@@ -85,17 +84,126 @@ class AuthenticatorAPI(object):
         cls._lock.acquire()
         try:
             if cid in cls._open_keys:
-                return bool(cls._open_keys[cid].get("up", False))
+                cached_up = bool(cls._open_keys[cid].get("up", False))
+                colour_print(colour=bcolors.OKBLUE, component='AuthenticatorAPI.has_cached_up',
+                            msg=f'CID {cid.hex()} exists in _open_keys, UP={cached_up}')
+                return cached_up
+            colour_print(colour=bcolors.WARNING, component='AuthenticatorAPI.has_cached_up',
+                        msg=f'CID {cid.hex()} NOT in _open_keys')
             return False
         finally:
             cls._lock.release()
 
     @classmethod
     def cache_up(cls, cid, up: bool):
-        if cid in cls._open_keys:
-            cls._lock.acquire()
-            cls._open_keys[cid]["up"] = up
-            cls._lock.release()
+        with cls._lock:
+            if cid in cls._open_keys:
+                cls._open_keys[cid]["up"] = up
+                colour_print(colour=bcolors.OKGREEN, component='AuthenticatorAPI.cache_up',
+                            msg=f'Updated existing CID entry: UP={up} for CID {cid.hex()}')
+            else:
+                # Create minimal entry to cache UP before PIN validation
+                cls._open_keys[cid] = {
+                    "up": up,
+                    "tStart": time.time()
+                }
+                colour_print(colour=bcolors.OKGREEN, component='AuthenticatorAPI.cache_up',
+                            msg=f'Created new CID entry to cache UP={up} for CID {cid.hex()}')
+
+    @classmethod
+    def initialize_biometric_tpm_mode(cls):
+        """Initialize and validate biometric + TPM mode.
+        
+        This mode enables seamless authentication when both:
+        - Biometric device (fingerprint) is available
+        - TPM device is available with platform key
+        
+        Returns:
+            True if mode successfully enabled, False otherwise
+        """
+        with cls._biometric_tpm_mode_lock:
+            # Check biometric device
+            try:
+                from soft_fido2.fprint_device import get_fprint_device
+                if not get_fprint_device().is_available():
+                    colour_print(colour=bcolors.WARNING,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='Biometric device not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+                colour_print(colour=bcolors.OKGREEN,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='Biometric device available')
+            except ImportError:
+                colour_print(colour=bcolors.WARNING,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='D-Bus Python bindings not installed')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            # Check TPM device
+            try:
+                from soft_fido2.tpm_device import TPMDevice
+                if not TPMDevice.is_available():
+                    colour_print(colour=bcolors.WARNING,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='TPM device not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+            except ImportError:
+                colour_print(colour=bcolors.WARNING,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg='TPM module not available')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            # Verify TPM key exists
+            try:
+                from soft_fido2.key_pair import KeyUtils
+                tpm_key = KeyUtils._get_platform_kp()
+                if tpm_key is None:
+                    colour_print(colour=bcolors.FAIL,
+                               component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                               msg='TPM key not available')
+                    cls._biometric_tpm_mode_enabled = False
+                    return False
+            except Exception as e:
+                colour_print(colour=bcolors.FAIL,
+                           component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                           msg=f'TPM key check failed: {e}')
+                cls._biometric_tpm_mode_enabled = False
+                return False
+            
+            cls._biometric_tpm_mode_enabled = True
+            colour_print(colour=bcolors.OKGREEN,
+                       component='AuthenticatorAPI.initialize_biometric_tpm_mode',
+                       msg='Biometric + TPM mode enabled')
+            return True
+    
+    @classmethod
+    def is_biometric_tpm_mode_enabled(cls) -> bool:
+        """Check if biometric + TPM mode is enabled."""
+        with cls._biometric_tpm_mode_lock:
+            return cls._biometric_tpm_mode_enabled
+
+    @classmethod
+    def _get_or_create_pin_token_kp(cls, cid: bytes) -> KeyPair:
+        """
+        Get or create pin token key pair for this CID.
+        This is called during get_pin_cose_key() before PIN validation.
+        """
+        with cls._lock:
+            if cid not in cls._open_keys:
+                # Initialize minimal CID entry with just pin token key
+                cls._open_keys[cid] = {
+                    'pin_token_kp': KeyPair.generate_ecdsa(),
+                    'tStart': time.time()
+                }
+            elif 'pin_token_kp' not in cls._open_keys[cid]:
+                # Add pin token key to existing CID entry
+                cls._open_keys[cid]['pin_token_kp'] = KeyPair.generate_ecdsa()
+            
+            return cls._open_keys[cid]['pin_token_kp']
 
     @classmethod
     def get_pin_auth_token(cls, cid):
@@ -171,7 +279,8 @@ class AuthenticatorAPI(object):
     @classmethod
     def _get_passkey_files(cls, directory: str) -> typing.List[str]:
         """
-        Returns a list of .passkey files in the specified directory.
+        Returns a list of valid .passkey files in the specified directory.
+        Only returns .passkey files that have corresponding .stash files.
         
         Args:
             directory: The directory to search for .passkey files
@@ -182,14 +291,54 @@ class AuthenticatorAPI(object):
         passkey_files = []
         for filename in os.listdir(directory):
             if filename.endswith('.passkey'):
-                passkey_files.append(os.path.join(directory, filename))
-            else:
+                passkey_path = os.path.join(directory, filename)
+                
+                # Check for corresponding .stash file
+                base_name = filename[:-8]  # Remove .passkey
+                stash_path = os.path.join(directory, base_name + '.stash')
+                
+                if os.path.exists(stash_path):
+                    passkey_files.append(passkey_path)
+                else:
+                    # Log warning for missing stash file
+                    colour_print(
+                        colour=bcolors.WARNING,
+                        component='Authenticator_validate_pin',
+                        msg=f'{filename} missing corresponding .stash file'
+                    )
+            elif not filename.endswith('.stash'):
                 colour_print(
-                    colour=bcolors.WARNING, 
+                    colour=bcolors.WARNING,
                     component='Authenticator_validate_pin',
                     msg=f'{filename} has invalid file type'
                 )
         return passkey_files
+
+    @classmethod
+    def _validate_and_create_keypair(cls, passkey: dict, passkey_file: str):
+        """
+        Validates passkey structure and creates KeyPair.
+        
+        Args:
+            passkey: Decrypted passkey dictionary
+            passkey_file: Path to passkey file (for error messages)
+            
+        Returns:
+            Tuple of (x5c certificate bytes, KeyPair instance)
+            
+        Raises:
+            ValueError: If key is not valid
+        """
+        ca_x5c = passkey.get('x5c')
+        key = passkey.get('key')
+        
+        if isinstance(key, ec.EllipticCurvePrivateKey):
+            return ca_x5c, KeyPair(key, key.public_key())
+        
+        raise ValueError(
+            f"Key in {passkey_file} must be an EllipticCurvePrivateKey or KeyPair, got {type(key)}. "
+            f"The passkey file may be corrupted. Please recreate it."
+        )
 
     @classmethod
     def _process_passkey_file(cls, passkey_file: str, pinHash: bytes, cid: bytes) -> typing.Optional[bytes]:
@@ -217,12 +366,7 @@ class AuthenticatorAPI(object):
         )
         
         # Extract certificate and key pair
-        ca_x5c = passkey.get('x5c')
-        key = passkey.get('key')
-        if not isinstance(key, ec.EllipticCurvePrivateKey):
-            raise ValueError("Key must be an ECPrivateKey")
-        key_pair = KeyPair(key, key.public_key())
-        #seed = passkey.get('seed')
+        ca_x5c, key_pair = cls._validate_and_create_keypair(passkey, passkey_file)
         
         # Reset PIN retry counter
         cls._pin_retry = 5
@@ -231,26 +375,30 @@ class AuthenticatorAPI(object):
         pin_auth_token = secrets.token_bytes(32)
         
         # Store the opened keys
-        cls._lock.acquire()
-        try:
+        with cls._lock:
+            existing_pin_token_kp = cls._open_keys.get(cid, {}).get('pin_token_kp')
+            existing_up = cls._open_keys.get(cid, {}).get('up', False)
+            
             cls._open_keys[cid] = {
                 'x5c': ca_x5c,
                 'kp': key_pair,
                 'file': passkey_file,
                 'ph': pinHash,
                 'pinAuth': pin_auth_token,
+                'pin_token_kp': existing_pin_token_kp,  # Preserve the pin_token_kp that was created in get_pin_cose_key()
+                'up': existing_up,  # Preserve UP result gathered from getInfo
                 'tStart': time.time() # Get Unix timestamp to compare against for watchdog thread (expiry timer)
             }
             return pin_auth_token
-        finally:
-            cls._lock.release()
 
 
     @classmethod
     def get_pin_cose_key(cls, pin_req, cid):
-        if cls._pin_token_kp == None:
-            cls._pin_token_kp = KeyPair.generate_ecdsa()
-        return {1: KeyUtils.get_cose_key(cls._pin_token_kp.get_public(), hashes.SHA256(), eckx=True)}
+        """
+        Return the authenticator's public key for PIN protocol.
+        """
+        pin_token_kp = cls._get_or_create_pin_token_kp(cid)
+        return {1: KeyUtils.get_cose_key(pin_token_kp.get_public(), hashes.SHA256(), eckx=True)}
 
     @classmethod
     def get_pin_retries(cls, pin_req, cid):
@@ -258,17 +406,25 @@ class AuthenticatorAPI(object):
         return {3: cls._pin_retry}
 
     @classmethod
-    def decapsulate(cls, ecCoseKey):
-        cose_type_to_curve_map = { #These are kind of made up, as per 
-                    #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
+    def decapsulate(cls, ecCoseKey, cid: bytes):
+        """
+        Perform ECDH key exchange using the per-CID pin token key.
+        """
+        cose_type_to_curve_map = { #These are kind of made up, as per
+        #https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-errata-20220621.html#pinProto1
                     -25: ec.SECP256R1,
                     -26: ec.SECP521R1
                 }
         ec_pub_numbs = ec.EllipticCurvePublicNumbers(KeyUtils._bytes_to_long(ecCoseKey[-2]),
-                            KeyUtils._bytes_to_long(ecCoseKey[-3]), 
+                            KeyUtils._bytes_to_long(ecCoseKey[-3]),
                             cose_type_to_curve_map[ecCoseKey[3]]())
         pubkey = ec_pub_numbs.public_key()
-        shared_point = cls._pin_token_kp.get_private().exchange(ec.ECDH(), pubkey) # type: ignore don't decapsulate without a key exchange
+        with cls._lock:
+            if cid not in cls._open_keys or 'pin_token_kp' not in cls._open_keys[cid]:
+                raise ValueError(f"Pin token key not found for CID {cid.hex()}")
+            pin_token_kp = cls._open_keys[cid]['pin_token_kp']
+        
+        shared_point = pin_token_kp.get_private().exchange(ec.ECDH(), pubkey)
         hasher = hashes.Hash(hashes.SHA256())
         hasher.update(shared_point)
         return hasher.finalize()
@@ -279,9 +435,9 @@ class AuthenticatorAPI(object):
         logging.debug(f"pin_req: {pin_req}")
         platform_cose_key = pin_req[3]
         pin_hash_enc = pin_req[6]
-        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token', 
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token',
                      msg='plat cose key: {}; pinHashEnc: {}'.format(platform_cose_key, pin_hash_enc))
-        sharedSecret = cls.decapsulate(platform_cose_key)
+        sharedSecret = cls.decapsulate(platform_cose_key, cid)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.get_pin_token',
                      msg='shared secret: {};'.format(sharedSecret))
         cipher = Cipher(algorithms.AES256(sharedSecret), modes.CBC(bytes([0] * 16))) # nosemgrep part of the CTAP2 spec
@@ -294,70 +450,185 @@ class AuthenticatorAPI(object):
             return {2: pinAuthTokenEnc}
         return None
 
+    @classmethod
+    def _validate_cid(cls, cid) -> bool:
+        """Validate that CID exists in open keys."""
+        return cid in cls._open_keys
 
     @classmethod
-    def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts, cid):
+    def _validate_ca_keypair(cls, ca_kp) -> bool:
+        """Validate that CA keypair is valid KeyPair instance."""
+        return isinstance(ca_kp, KeyPair)
+
+    @classmethod
+    def _resolve_passkey(cls, options, cid):
+        """
+        Resolve passkey based on options (rk/uv flags).
+        Returns: (passkey_dict, resident_creds, attestation_type, request_rk)
+        """
+        options = options or {}
+        
+        # Use platform key if rk or uv not requested
+        if options.get('rk', False) == False and options.get('uv', False) == False:
+            return {
+                'kp': KeyUtils._get_platform_kp()
+            }, None, 'packed-self', False
+    
+        # Use opened passkey
+        passkey = cls._open_keys[cid]
+        res_creds = KeyUtils._load_passkey(passkey['ph'], 
+                                            passkey['file']).get('res.creds')
+        return passkey, res_creds, 'packed', True
+
+    @classmethod
+    def _check_credential_excluded(cls, rp_id: str, user_id: bytes, res_creds: typing.Optional[list]) -> bool:
+        """
+        Check if credential already exists for rpID:userID combination.
+        Returns True if credential should be excluded.
+        """
+        if not res_creds:
+            return False
+        
+        for cred in res_creds:
+            if rp_id == cred['rp.id'] and user_id == cred['user.id']:
+                colour_print(
+                    colour=bcolors.FAIL,
+                    component='Authenticator.attestation_out',
+                    msg=f'existing rpID and userID found: {rp_id}, {user_id}'
+                )
+                return True
+        
+        return False
+
+    @classmethod
+    def _select_algorithm(cls, pubKeyCredParams: list) -> int:
+        """Select the best supported COSE algorithm from pubKeyCredParams.
+        
+        maybe try ML-DSA-44 (-48) if ES256 (-7) not offered.
+        
+        Args:
+            pubKeyCredParams: List of public key credential parameters from the RP
+            
+        Returns:
+            int: Selected COSE algorithm identifier
+        """
+        supported_algs = [
+            param.get("alg")
+            for param in pubKeyCredParams
+            if param.get("type") == "public-key"
+        ]
+        if -7 in supported_algs:
+            return -7
+        if -48 in supported_algs:
+            return -48
+        # Fallback to ES256 if nothing matches
+        return -7
+
+    @classmethod
+    def _get_hkdf_info(cls) -> str:
+        """Load configured info string from platform configuration."""
+        fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
+        return PlatformConfig(fido_home).info_string
+
+    @classmethod
+    def _create_authenticator(cls, rp_id: str, passkey: dict, pubKeyCredParams: list) -> tuple[Fido2Authenticator, bytes]:
+        """
+        Create authenticator and derrive key.
+        
+        Args:
+            rp_id: Relying party identifier
+            passkey: Passkey data containing master key
+            pubKeyCredParams: Public key credential parameters from RP
+            
+        Returns:
+            tuple: (authenticator, keypair, credential_id)
+        """
+        ca_kp = passkey.get('kp')
+        if ca_kp is None or not isinstance(ca_kp, KeyPair):
+            raise RuntimeError("Corrupted Passkey Data")
+        
+        seed = KeyUtils.get_passkey_seed(
+            rp_id.encode(),
+            ca_kp.get_private(),
+            info=cls._get_hkdf_info()
+        )
+        skey = SymmetricKey(seed.decode())
+        
+        authenticator = Fido2Authenticator(
+            caKeyPair=ca_kp,
+            caCert=passkey.get('x5c'),
+            sKey=skey
+        )
+        
+        cred_id = authenticator._get_credential_id_bytes(authenticator.kp)
+
+        logging.debug(f"RP ID: {rp_id}")
+        logging.debug(f"Credential ID (hex): {cred_id.hex()}")
+        
+        return authenticator, cred_id
+
+    @classmethod
+    def attestation_out(cls, clientDataHash, rp, user, pkCredsParams, excludeList, exts, options, cid):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='open keys: {}'.format(cls._open_keys))
-        if not cid in cls._open_keys.keys():
-            return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None
-        passkey: dict = cls._open_keys[cid]
+
+        passkey, res_creds, attestation, req_rk = cls._resolve_passkey(options, cid)
         ca_kp = passkey.get('kp')
-        if not isinstance(ca_kp, KeyPair): # !panic
-            colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', msg="panic!")
+        if not cls._validate_ca_keypair(ca_kp):
+            colour_print(
+                colour=bcolors.OKPINK,
+                component='Authenticator.attestation_out',
+                msg="panic!"
+            )
             return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None
-        seed = KeyUtils.get_passkey_seed(rp['id'].encode(), ca_kp.get_private())
-        #logging.debug(f"seed : {seed}")
-        fkey = Fernet(seed)
-        kp = KeyPair.generate_ecdsa()
-        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res.creds') #
-        #logging.debug(f"checking for existing registration for {rp} and {user} in {resCreds}")
-        if resCreds: # Check for existing rpID:userID
-            for cred in resCreds:
-                if rp['id'] == cred['rp.id'] and user['id'] == cred['user.id']:
-                    colour_print(colour=bcolors.FAIL, component='Authenticator.attestation_out',
-                                 msg='existing rpID and userID found: {}, {}'.format(rp['id'], user['id']))
-                    return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
-                #else:
-                #    logging.debug(f"{rp['id']} != {cred['rp.id']} or {user['id']} != {cred['user.id']}")
-        authenticator = Fido2Authenticator(keyPair=kp, caKeyPair=ca_kp, 
-                                            caCert=passkey.get('x5c'), fKey=fkey)
-        credId = authenticator._get_credential_id_bytes(kp)
-        pk = {'rp': rp} # authenticator.py expects this structure
-        authData = authenticator.build_authenticator_data(pk, 'packed', kp, True, up=True, be=False, bs=False)
-        colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
-                     msg='credId: {}; toSign: {}'.format(credId, 
-                            base64.b64encode(bytes([*authData, *clientDataHash ])).decode()))
-        attStmt = authenticator.build_packed_attestation_statement('packed', 
-                                                    clientDataHash, authData, None, kp,)
+        
+        # Check for existing credentials
+        if cls._check_credential_excluded(rp['id'], user['id'], res_creds):
+            return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
+
+        # Create authenticator and generate attestation
+        authenticator, cred_id = cls._create_authenticator(rp['id'], passkey, pkCredsParams)
+        authData = authenticator.build_authenticator_data({'rp': rp}, 
+                                attestation, authenticator.kp, True, up=True, be=False, bs=False)
+        colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out',
+                    msg=f'credId: {cred_id}; toSign: {base64.b64encode(
+                                                    bytes([*authData, *clientDataHash])).decode()}')
+        attStmt = authenticator.build_packed_attestation_statement(attestation, 
+                                                    clientDataHash, authData, None, authenticator.kp,)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='attStmt: {}'.format(attStmt))
-        #Since we set UV we can make these resident keys
-        KeyUtils.update_passkey({'cred.id': credId, 'user.id': user['id'], 'rp.id': rp['id']},
-                                passkey['ph'], passkey['file'])
+        if req_rk == True:
+            colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out',
+                    msg=f"Storing resident credential in {passkey['file']}")
+            KeyUtils.update_passkey({'cred.id': cred_id, 'user.id': user['id'], 'rp.id': rp['id']},
+                                    passkey['ph'], passkey['file'])
         return None, authData, attStmt
 
 
     @classmethod
-    def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred): 
-        seed = KeyUtils.get_passkey_seed(rpId.encode(), ca_kp.get_private())
-        #logging.debug(f"seed : {seed}")
-        fkey = Fernet(seed)
-        #skey = SymmetricKey(seed.decode())
-        #Create the authenticator from the raw id, creating the key pair will fail if we don't own the credId
-        b64CredId = base64.urlsafe_b64encode(cred.get('id'))
-        decryptedKp = Fido2Authenticator._get_key_pair_from_credential_id(b64CredId, fkey)
+    def _maybe_next_assertion(cls, rpId, ca_kp, ca_x5c, clientDataHash, cred):
+        seed = KeyUtils.get_passkey_seed(
+            rpId.encode(),
+            ca_kp.get_private(),
+            info=cls._get_hkdf_info()
+        )
+        skey = SymmetricKey(seed.decode())
+
+        logging.debug(f"RP ID: {rpId}")
+        logging.debug(f"Credential ID (hex): {cred.get('id').hex()}")
+        
         colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
                         msg='We have a usable key, sign the challenge')
-        _authenticator = Fido2Authenticator(keyPair=decryptedKp, credId=b64CredId, aaguid=[0] * 16, 
-                                            caKeyPair=ca_kp, caCert=ca_x5c, fKey=fkey)
+        _authenticator = Fido2Authenticator(credId=cred.get('id'), aaguid=[0] * 16,
+                                            caKeyPair=ca_kp, caCert=ca_x5c, sKey=skey)
+        
         credential = {
-                "id": _authenticator._get_credential_id_bytes(_authenticator.kp), #Should be set by __init__()
+                "id": cred.get('id'),
                 "type" : "public-key"
             }
         #Generate the assertion response data
-        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed', _authenticator.kp,
-                                                                 True, up=True, be=False, bs=False)
+        authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed',
+                                    _authenticator.kp, True, up=True, be=False, bs=False)
         #Sign it, authenticator method b64 encodeds the ba so we decode it right away
         sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
         userHandle = cred.get("user")
@@ -365,32 +636,64 @@ class AuthenticatorAPI(object):
 
 
     @classmethod
-    def assertion_out(cls, rpId, clientDataHash, allowedList, exts, cid):
-        if not cid in cls._open_keys.keys():
-            return CBORCommand.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED, None, None, None, None
-        passkey: dict = cls._open_keys[cid]
-        ca_x5c = passkey.get('x5c')
-        ca_kp = passkey.get('kp')
-        if not isinstance(ca_kp, KeyPair): # !panic
-            return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None, None, None
-        resCreds = KeyUtils._load_passkey(passkey['ph'], passkey['file']).get('res.creds')
-        if resCreds != None:
-            colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
-                         msg='passkey has resident credentials, adding them to allowed list')
-            for cred in resCreds:
-                if cred.get('rp.id') == rpId:
-                    allowedList += [{'id': cred.get('cred.id'), 
-                                     'user': cred.get('user.id')}]
+    def _maybe_platform_assertion(cls, rpId, clientDataHash, allowedList):
+        plat_key = KeyUtils._get_platform_kp()
+        seed = KeyUtils.get_passkey_seed(
+            rpId.encode(),
+            plat_key.get_private(),
+            info=cls._get_hkdf_info()
+        )
+        skey = SymmetricKey(seed.decode())
+        
         for cred in allowedList:
-            try:
-                #logging.debug(f"Try {cred}")
-                return cls._maybe_next_assertion(rpId, ca_kp, ca_x5c, clientDataHash, cred)
-            except Exception as e:
-                colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_outputs',
-                             msg='Could not retrieve key pair from credential id {}'.format(cred))
-                logging.exception(e, stack_info=True)
+            cred_id = cred.get('id')
+            if not cred_id.startswith(Fido2Authenticator.CRED_PREFIX):
                 continue
+            logging.debug(f"Credential ID (hex): {cred.get('id').hex()}")
+            colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_outputs',
+                            msg='We have a usable key, sign the challenge')
+            _authenticator = Fido2Authenticator(credId=cred_id, aaguid=[0] * 16,
+                                                caKeyPair=plat_key, caCert=None, sKey=skey)
+            
+            credential = {
+                    "id": cred_id,
+                    "type" : "public-key"
+                }
+            #Generate the assertion response data
+            authData = _authenticator.build_authenticator_data({'rpId': rpId}, 'packed',
+                                _authenticator.kp, True, up=True, be=False, bs=False)
+            #Sign it, authenticator method b64 encodeds the ba so we decode it right away
+            sig = _authenticator.assertion_signature(authData, clientDataHash, _authenticator.kp)
+            return None, credential, authData, sig, None
         return CBORCommand.CBORStatusCode.CTAP2_ERR_NO_CREDENTIALS, None, None, None, None
+
+    @classmethod
+    def assertion_out(cls, rpId, clientDataHash, allowedList, exts, cid):
+        if cid in cls._open_keys.keys() and isinstance(cls._open_keys[cid].get('kp'), KeyPair): ## Try return a res cred assertion
+            passkey: dict = cls._open_keys[cid]
+            ca_x5c = passkey.get('x5c')
+            ca_kp = passkey.get('kp')
+            if 'ph' in passkey and 'file' in passkey:
+                resCreds = KeyUtils._load_passkey(passkey['ph'],
+                            passkey['file']).get('res.creds')
+                if resCreds != None:
+                    colour_print(colour=bcolors.OKPINK, component='FIDO2Authenticator.assertion_out',
+                                msg='passkey has resident credentials, adding them to allowed list')
+                    for cred in resCreds:
+                        if cred.get('rp.id') == rpId:
+                            allowedList += [{'id': cred.get('cred.id'), 'user': cred.get('user.id')}]
+                for cred in allowedList:
+                    try:
+                        #logging.debug(f"Try {cred}")
+                        return cls._maybe_next_assertion(rpId, ca_kp, ca_x5c, clientDataHash, cred)
+                    except Exception as e:
+                        colour_print(colour=bcolors.FAIL, component='FIDO2Authenticator.assertion_out',
+                                    msg=f'Could not retrieve key pair from credential id {cred}')
+                        logging.exception(e, stack_info=True)
+                        continue
+        ## No resident credentials...try platform key
+        return cls._maybe_platform_assertion(rpId, clientDataHash, allowedList)
+
 
     @classmethod
     def quit(cls):
@@ -435,6 +738,7 @@ class CBORCommand(object):
     response_ready = False
     length = 0
     request_segment = 0
+    sequence_buffer = {}  # {seq_num: bytes}
     cmd = None
     ctaphid_cmd = 0
     bcnt = 0
@@ -456,6 +760,7 @@ class CBORCommand(object):
         self.response_segment = 0
         # Track the number of request segments received
         self.request_segment = 0
+        self.sequence_buffer = {}
         # Response buffer. This stores the outgoing response to the received CBOR message and shrinks until the entire
         # response has been transmitted
         self.response = []
@@ -477,14 +782,51 @@ class CBORCommand(object):
             dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.__init__', msg='CTAP response')
 
-    def append_segment(self, seg_buf):
-        self.request += seg_buf
+    def append_segment(self, seg_buf, seq_num):
+        """Append segment data, handling out-of-order packets.
+        
+        Args:
+            seg_buf: Segment data bytes
+            seq_num: Sequence number (required for out-of-order handling)
+        """
+        colour_print(colour=bcolors.OKBLUE, component='CBORCommand.append_segment',
+                    msg=f'seq [{seq_num}], expecting [{self.request_segment}], len={len(self.request)}/{self.length}')
+        
+        # Check if this is the expected sequence
+        if seq_num == self.request_segment:
+            # Expected sequence - append it
+            self.request_segment += 1
+            self.request += seg_buf
+            colour_print(colour=bcolors.OKGREEN, component='CBORCommand.append_segment',
+                        msg=f'Appended seq [{seq_num}], now expecting [{self.request_segment}], len={len(self.request)}/{self.length}')
+            
+            # Process any buffered sequences now in order
+            while self.request_segment in self.sequence_buffer:
+                buffered = self.sequence_buffer.pop(self.request_segment)
+                self.request_segment += 1
+                self.request += buffered
+                colour_print(colour=bcolors.OKGREEN, component='CBORCommand.append_segment',
+                            msg=f'Processed buffered seq, now expecting [{self.request_segment}], len={len(self.request)}/{self.length}')
+        elif seq_num > self.request_segment:
+            # Future sequence - buffer it
+            self.sequence_buffer[seq_num] = seg_buf
+            colour_print(colour=bcolors.WARNING, component='CBORCommand.append_segment',
+                        msg=f'Buffered out-of-order seq [{seq_num}], expecting [{self.request_segment}]')
+            return
+        else:
+            colour_print(colour=bcolors.WARNING, component='CBORCommand.append_segment',
+                        msg=f'Ignoring old/duplicate seq [{seq_num}], expecting [{self.request_segment}]')
+            return
+        
+        # Check if message is complete
+        colour_print(colour=bcolors.OKBLUE, component='CBORCommand.append_segment',
+                    msg=f'Checking completion: len={len(self.request)} >= {self.length}?')
         if len(self.request) >= self.length:
+            colour_print(colour=bcolors.OKGREEN, component='CBORCommand.append_segment',
+                        msg='Message complete, unpacking...')
             self.unpack()
             dump_bytes(self.response, colour=bcolors.OKPINK,
                        component='CBORCommand.append_segment', msg='CTAP response')
-        else:
-            self.request_segment += 1
 
     def _error(self, ba):
         self.response = list(int.to_bytes(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND))
@@ -532,31 +874,157 @@ class CBORCommand(object):
     def set_pending(cls, pending):
         cls._pending = pending
 
-    def gather_user_presence(self):
-        if os.environ.get('SOFT_FIDO2_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
-            colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence', 
-                    msg='Skipping user presence check')
-            return True
-        elif AuthenticatorAPI.has_cached_up(self.cid):
-            return True
+    def prompt_for_fprint(self, result_queue):
+        """
+        Run fingerprint verification in parallel with GUI prompt.
+        Puts result in queue when complete.
+        
+        Args:
+            result_queue: Queue to put the verification result ('fprint', True/None)
+        """
+        from soft_fido2.fprint_device import get_fprint_device, BiometricResult
+        fprint_device = get_fprint_device()
+        if not fprint_device.is_available():
+            result_queue.put(('fprint', None))
+            return
+            
+        colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                    msg='Starting fingerprint verification...')
+        
+        # Callback for when VerifyFingerSelected signal is received
+        def on_finger_needed(finger_name):
+            colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                        msg=f'Place {finger_name} finger on scanner')
+        
+        result, message = fprint_device.verify_with_retries(
+            username=None,
+            on_finger_needed=on_finger_needed,
+            timeout=15.0,
+            max_retries=3
+        )
+        
+        if result == BiometricResult.SUCCESS:
+            colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                        msg='Fingerprint verified - cancelling GUI prompt')
+            # Cancel any pending GUI notifications
+            MessageQueue.notify_sysapp.put(QueueMessageType.AUTH_RESPONSE)
+            result_queue.put(('fprint', True))
+        else:
+            colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence',
+                        msg=f'Fingerprint verification failed: {message}')
+            result_queue.put(('fprint', None))
 
-        start_time = time.time()
-        MessageQueue.notify_auth.queue.clear()
-        MessageQueue.notify_sysapp.put(QueueMessageType.USER_REQUEST)
-        msg = None
-        worker = KeepAliveWorker(self._pending, self.cid)
-        worker.start()
-        current_time = time.time()
-        while not msg and current_time - start_time < 60:
-            time.sleep(0.002)
-            current_time = time.time()
-            if MessageQueue.notify_auth.qsize() > 0:
-                msg = MessageQueue.notify_auth.get()
-        worker.interrupt()
-        worker.join()
-        if msg == QueueMessageType.USER_RESPONSE_ACCEPT:
+
+    def gather_user_presence(self, context='default'):
+        """
+        Gather user presence with concurrent fingerprint and GUI verification.
+        
+        Args:
+            context: Context for the UP request - 'getinfo', 'makecred', 'getassertion', or 'default'
+                    This determines the keepalive status code sent to the client.
+        
+        Authentication adapts to credential type and UV requirements:
+        - Passkey + UV Required/Preferred: PIN (already validated) + Fingerprint
+        - UV Discouraged: Fingerprint only
+        - 2nd Factor: Fingerprint only
+        
+        Both fingerprint and GUI can run concurrently. Whichever completes first wins.
+        """
+        if os.environ.get('SOFT_FIDO2_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
+            colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence',
+                    msg='Skipping user presence check')
             AuthenticatorAPI.cache_up(self.cid, True)
             return True
+        
+        if AuthenticatorAPI.has_cached_up(self.cid):
+            colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                    msg=f'Using cached UP for context: {context}')
+            return True
+        
+        
+        result_queue = queue.Queue()
+        
+        from soft_fido2.fprint_device import get_fprint_device
+        fprint_device = get_fprint_device()
+        fprint_available = fprint_device.is_available()
+        
+        # Start fingerprint thread if available
+        fprint_thread = None
+        if fprint_available:
+            try:
+                fprint_thread = threading.Thread(
+                    target=self.prompt_for_fprint,
+                    args=(result_queue,),
+                    daemon=True
+                )
+                fprint_thread.start()
+                colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                            msg='Started fingerprint verification thread')
+            except ImportError:
+                # D-Bus Python bindings not installed
+                fprint_available = False
+        
+        # Start GUI prompt (always show this)
+        colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                    msg=f'Starting GUI prompt for user presence (context: {context})')
+        start_time = time.time()
+        MessageQueue.notify_auth.queue.clear()
+        MessageQueue.notify_sysapp.put(
+            QueueMessageType.USER_REQUEST_FPRINT if fprint_thread is not None
+            else QueueMessageType.USER_REQUEST)
+        
+        # Use appropriate status code based on context
+        # 0x02 = STATUS_UPNEEDED (waiting for user presence)
+        status_code = 0x02
+        
+        colour_print(colour=bcolors.OKBLUE, component='Authenticator.gather_user_presence',
+                    msg=f'Starting KeepAliveWorker with status_code=0x{status_code:02x} (STATUS_UPNEEDED)')
+        
+        worker = KeepAliveWorker(self._pending, self.cid, status_code=status_code)
+        worker.start()
+        
+        # Poll for results from either fingerprint or GUI
+        gui_msg = None
+        fprint_result = None
+        current_time = time.time()
+        
+        while current_time - start_time < 15:
+            time.sleep(0.002)
+            current_time = time.time()
+            
+            # Check for fingerprint result
+            if fprint_available and not fprint_result and not result_queue.empty():
+                source, fprint_result = result_queue.get()
+                if fprint_result:  # Fingerprint succeeded
+                    colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                                msg='Fingerprint verification succeeded')
+                    worker.interrupt()
+                    worker.join()
+                    AuthenticatorAPI.cache_up(self.cid, True)
+                    return True
+                # If fingerprint failed, continue waiting for GUI
+            
+            # Check for GUI click
+            if MessageQueue.notify_auth.qsize() > 0:
+                gui_msg = MessageQueue.notify_auth.get()
+                if gui_msg == QueueMessageType.USER_RESPONSE_ACCEPT:
+                    colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                                msg='GUI click accepted')
+                    worker.interrupt()
+                    worker.join()
+                    AuthenticatorAPI.cache_up(self.cid, True)
+                    return True
+                else:
+                    # User rejected or timeout
+                    break
+        
+        # Cleanup
+        worker.interrupt()
+        worker.join()
+        time.sleep(0.002)  # Maybe wait for out to sync
+        
+        colour_print(colour=bcolors.FAIL, component='Authenticator.gather_user_presence',
+                    msg=f'User presence denied or timeout for context: {context}')
         return False
 
     def _verify_pin_token(self, clientDataHash, pinUvAuthParam):
@@ -593,10 +1061,19 @@ class CBORCommand(object):
             result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
-    # authenticatorGetInfo takes no inputs so return immediately
+    # authenticatorGetInfo - now gathers user presence before returning info
     def _get_info(self, ba):
+        # Gather user presence with keepalive support
+        if not self.gather_user_presence(context='getinfo'):
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._get_info',
+                        msg='User presence verification failed or denied')
+            return self._set_rsp_fields(
+                list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes())
+            )
+        
+        # Return authenticator info after successful UP verification
         result = {
-            0x01: ["U2F_V2", "FIDO_2_0"],
+            0x01: ["FIDO_2_0"], #, "U2F_V2"
             0x02: ['hmac-secret'],
             #0x03: b"\x13\x37\xF1\xD0" * 4,
             0x03: b"\x00" * 16,
@@ -610,25 +1087,43 @@ class CBORCommand(object):
 
     def _make_cred(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorMakeCredential
-        if self.gather_user_presence() == False:
-            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
+        # Verify UP/UV was already gathered during getInfo
+        if not AuthenticatorAPI.has_cached_up(self.cid):
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                        msg='UP not cached - should have been gathered in getInfo')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()))
+        
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams'), (0x08, 'pinAuth')]:
+        for prop in [(0x01, 'clientDataHash'), (0x02, 'rp'), (0x03, 'user'), (0x04, 'pubkeyCredParams')]:
             if not prop[0] in req.keys():
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
                 return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
-        # Request and validate pin-auth
-        if not self._verify_pin_token(req.get(0x01), req.get(0x08)):
-            if self.cid in AuthenticatorAPI._open_keys:
-                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
-            return self._set_rsp_fields(list(result))
+        
+        # Handle pinAuth validation
+        pinAuth = req.get(0x08)
+        options = req.get(0x07, {})
+        uv_required = options.get('uv', False)
+        
+        # If UV is required but pinAuth is missing, fail
+        if uv_required and not pinAuth:
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                        msg='UV required but pinAuth missing')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()))
+        
+        # If pinAuth is present, validate it
+        if pinAuth:
+            result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+            if not self._verify_pin_token(req.get(0x01), pinAuth):
+                if self.cid in AuthenticatorAPI._open_keys:
+                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                return self._set_rsp_fields(list(result))
         error, authData, attStmt = AuthenticatorAPI.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
-                                            req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
+                                            req.get(0x04), req.get(0x05), req.get(0x06), 
+                                            req.get(0x07, None), self.cid)
         result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
         if error:
             result = error.to_bytes()
@@ -644,25 +1139,45 @@ class CBORCommand(object):
 
     def _get_assertion(self, ba):
         # https://fidoalliance.org/specs/fido-v2.2-rd-20230321/fido-client-to-authenticator-protocol-v2.2-rd-20230321.html#authenticatorGetAssertion
-        if self.gather_user_presence() == False:
-            return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()) )
+        # Verify UP was already gathered during getInfo
+        if not AuthenticatorAPI.has_cached_up(self.cid):
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
+                        msg='UP not cached - should have been gathered in getInfo')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()))
+        
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                      msg='CBOR request {}'.format(req))
-        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash'), (0x06, 'pinAuth')]:
+        for prop in [(0x01, 'rpId'), (0x02, 'clientDataHash')]:
             if not prop[0] in req:
-                colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
                 return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
-        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
-        # Request and validate pin-auth
-        if not self._verify_pin_token(req.get(0x02), req.get(0x06)):
-            if self.cid in AuthenticatorAPI._open_keys:
-                result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
-            return self._set_rsp_fields(list(result))
-        error, credential, authData, signature, userHandle = AuthenticatorAPI.assertion_out(req.get(0x01), 
+        
+        # Handle pinAuth validation
+        pinAuth = req.get(0x06)
+        options = req.get(0x05, {})
+        uv_required = options.get('uv', False)
+        
+        # If UV is required but pinAuth is missing, fail
+        if uv_required and not pinAuth:
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
+                        msg='UV required but pinAuth missing')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()))
+        
+        # If pinAuth is present, validate it
+        if pinAuth:
+            if not self._verify_pin_token(req.get(0x02), pinAuth):
+                result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+                if self.cid in AuthenticatorAPI._open_keys:
+                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                return self._set_rsp_fields(list(result))
+        
+        # Call assertion_out to get the assertion
+        error, credential, authData, signature, userHandle = AuthenticatorAPI.assertion_out(req.get(0x01),
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
+        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
         if error:
             result = error.to_bytes()
         elif credential and authData and signature:
@@ -732,36 +1247,67 @@ class CTAPHIDSeqPkt(BaseStructure):
 
 
 class KeepAliveWorker(threading.Thread):
+    """
+    Background thread that sends CTAPHID keepalive messages.
+    
+    CTAP2 Status Codes (per CTAP2 spec Section 11.2.9.1.7):
+    - 0x01: STATUS_PROCESSING - The authenticator is still processing the current request
+    - 0x02: STATUS_UPNEEDED - The authenticator is waiting for user presence
+    
+    Note: CTAPHID_KEEPALIVE command code is 0x3B per CTAP2 specification.
+    """
 
     cid = b'0xFFFFFFFF'
     not_alive = False
     uhid = None
 
-    def __init__(self, pending, cid):
+    def __init__(self, pending, cid, status_code=0x02, interval_ms=100):
+        """
+        Initialize KeepAliveWorker.
+        
+        Args:
+            pending: Queue to send keepalive packets to
+            cid: Channel ID for the CTAPHID connection
+            status_code: CTAP2 status code (0x01=processing, 0x02=waiting for UP)
+            interval_ms: Interval in milliseconds between keepalive messages (default: 100ms)
+        """
         super().__init__()
         self.pending = pending
         self.cid = cid
+        self.status_code = status_code
+        self.interval_ms = interval_ms
 
     def run(self):
+        interval_sec = self.interval_ms / 1000.0
         while self.not_alive == False:
-            time.sleep(0.1)
-            colour_print(colour=bcolors.FAIL, component='KeepAliveWorker.reply_with_keepalive',
-                            msg='Thread reached timeout of 100ms before response buffer was recieved . . . sending heartbeat response')
-            #We need to reply with keep alive after 50ms this gives us some tolerance
-            #Our status is always still processing
+            time.sleep(interval_sec)
+            
+            # Log keepalive with status code description
+            status_desc = {
+                0x01: 'STATUS_PROCESSING',
+                0x02: 'STATUS_UPNEEDED'
+            }.get(self.status_code, f'UNKNOWN(0x{self.status_code:02x})')
+            
+            colour_print(colour=bcolors.FAIL, component='KeepAliveWorker.run',
+                        msg=f'Sending keepalive with status {status_desc} (0x{self.status_code:02x})')
+            
+            # Send keepalive packet with correct CTAPHID_KEEPALIVE command (0x3B per spec)
             rsp = CTAPHIDInitPkt(cid=int.from_bytes(self.cid),
-                                  cmd=0xBB,
+                                  cmd=0x3B,  # CTAPHID_KEEPALIVE per CTAP2 spec
                                   bcnt=0x01,
-                                  data=b'\x02').pack()
+                                  data=bytes([self.status_code])).pack()
             self.pending.put(rsp)
 
     def interrupt(self):
+        """Stop the keepalive worker thread."""
         self.not_alive = True
 
 
 class CTAP2HIDevice(UserDevice):
     #This will contain the current set of channel id's and associated state
     cids = {}
+    # Lock to prevent race conditions when processing packets in parallel threads
+    cids_lock = threading.Lock()
 
     def __init__(self, devpath):
         super().__init__(devPath=devpath)
@@ -804,7 +1350,7 @@ class CTAP2HIDevice(UserDevice):
 
 
     def ctaphid_ping(self, usb_req):
-        cid = usb_req.data[0:4]
+        cid = usb_req.data[1:5]
         cborCmd = CBORCommand(cid, None, skip_init=True)
         cborCmd.ctaphid_cmd = 0x01
         cborCmd.response = list(b'U2F_V2')
@@ -820,13 +1366,13 @@ class CTAP2HIDevice(UserDevice):
 
         #Only supporting extended length encoding, section 3.1.3
         #https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html
-        cid = usb_req.data[0:4]
+        cid = usb_req.data[1:5]
         if not cid in self.cids:
-            colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice.ctaphid_msg', 
+            colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice.ctaphid_msg',
                          msg='Unknown CID {}'.format(cid))
-        cmd = usb_req.data[4:5]
-        bcnt = usb_req.data[5:7]
-        apdu = usb_req.data[7:]
+        cmd = usb_req.data[5:6]
+        bcnt = usb_req.data[6:8]
+        apdu = usb_req.data[8:]
         print("ctaphid_msg", int.from_bytes(cmd))
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_msg', 
                     msg='cmd = {}; bcnt = {}; apdu = {}'.format(
@@ -849,10 +1395,10 @@ class CTAP2HIDevice(UserDevice):
             self.send_response_segment(cid, self.cids[cid]['cborCmd'])
 
     def ctaphid_init(self, usb_req):
-        cid = usb_req.data[0:4]
-        cmd = usb_req.data[4:5]
-        bcnt = usb_req.data[5:7]
-        nonce = usb_req.data[7:15]
+        cid = usb_req.data[1:5]
+        cmd = usb_req.data[5:6]
+        bcnt = usb_req.data[6:8]
+        nonce = usb_req.data[8:16]
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', 
                 msg='Nonce {}'.format(self._bytes_to_str(nonce)))
         assignedCID = bytes([0, random.randint(0, 255), 0, random.randint(0, 255)])
@@ -872,33 +1418,45 @@ class CTAP2HIDevice(UserDevice):
         self.send_response_segment(cid, initCmd)
 
     def ctaphid_cbor(self, usb_req):
-        cid = usb_req.data[0:4]
-        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor', 
+        cid = usb_req.data[1:5]
+        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor',
                     msg='CBOR message recieved on channel {}'.format(self._bytes_to_str(cid)))
-        cmd = usb_req.data[4:5]
-        bcnt = usb_req.data[5:7]
-        ctap_cmd = usb_req.data[7:8]
+        cmd = usb_req.data[5:6]
+        bcnt = usb_req.data[6:8]
+        ctap_cmd = usb_req.data[8:9]
         logging.debug(f"CBOR bcnt: {int.from_bytes(bcnt) - 1}")
-        cbor_data = usb_req.data[8: 7 + int.from_bytes(bcnt)]
-        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor', 
+        cbor_data = usb_req.data[9: 8 + int.from_bytes(bcnt)]
+        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor',
                      msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
                                                                    self._bytes_to_str(bcnt)))
-        dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor', 
+        dump_bytes(cbor_data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor',
                     msg='CBOR encoded bytes: ')
-        cbor_cmd = CBORCommand(cid, usb_req.data[5:MAX_DATA_FRAME])
-        cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
-        if cbor_cmd.response_ready == True: #We can respond immediatly
-            dump_bytes(cbor_cmd.response, colour=bcolors.OKGREEN, 
-                       component='CTAP2HIDevice.ctaphid_cbor', msg='CBOR response: ')
-            return self.send_response_segments(cid, cbor_cmd)
-        else:
-            self.cids[cid]['cborCmd'] = cbor_cmd
-            colour_print(colour=bcolors.OKYELLOW, component='CTAP2HIDevice.ctaphid_cbor', 
-                         msg="Waiting for rest of command to arrive . . .")
-            return
+        
+        with self.cids_lock:
+            # Check if there's a pending transaction for this CID
+            if cid in self.cids and 'cborCmd' in self.cids[cid]:
+                colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice.ctaphid_cbor',
+                            msg='CID {} has pending transaction, ignoring new command until complete'.format(
+                                self._bytes_to_str(cid)))
+                return
+            
+            cbor_cmd = CBORCommand(cid, usb_req.data[6:MAX_DATA_FRAME+1])
+            cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
+            
+            if cbor_cmd.response_ready == True: #We can respond immediately
+                dump_bytes(cbor_cmd.response, colour=bcolors.OKGREEN,
+                           component='CTAP2HIDevice.ctaphid_cbor', msg='CBOR response: ')
+                self.send_response_segments(cid, cbor_cmd)
+            else:
+                # Store the command while holding the lock to prevent race with sequence packets
+                self.cids[cid]['cborCmd'] = cbor_cmd
+                colour_print(colour=bcolors.OKYELLOW, component='CTAP2HIDevice.ctaphid_cbor',
+                             msg="Waiting for rest of command to arrive . . .")
+                return
+
 
     def _ctap_ack(self, usb_req):
-        cid = usb_req.data[0:4]
+        cid = usb_req.data[1:5]
         rsp = CBORCommand(cid, None, skip_init=True)
         rsp.response = []
         #if cid in self.cids:
@@ -937,39 +1495,45 @@ class CTAP2HIDevice(UserDevice):
         }.get(ctapCmd, self.ctaphid_unknown)(usb_req)
 
     def _handle_incoming_sequence(self, cid, usb_req):
-        seqNum = int.from_bytes(usb_req.data[4:5])
-        context = self.cids.get(cid)
-        if context != None:
+        seqNum = int.from_bytes(usb_req.data[5:6])
+        
+        transaction = None
+        with self.cids_lock:
+            context = self.cids.get(cid)
+            if context is None:
+                colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming_sequence',
+                            msg='CID not found')
+                return
+                
             transaction = context.get("cborCmd")
-            if transaction != None and seqNum == transaction.request_segment:
-                transaction.append_segment(usb_req.data[5:MAX_DATA_FRAME])
-                if transaction.response_ready == True:
-                    del self.cids[cid]['cborCmd']
-                    self.send_response_segments(cid, transaction)
-                else:
-                    colour_print(colour=bcolors.OKPURPLE, component='CTAP2HIDevice._handle_incoming_sequence', 
-                                 msg='Sequence number [{}] not the last expected sequence'.format(seqNum))
+            if transaction is None:
+                colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming_sequence',
+                            msg='No transaction for CID')
+                return
+            
+            transaction.append_segment(usb_req.data[6:MAX_DATA_FRAME+1], seq_num=seqNum)
+            
+            if transaction.response_ready:
+                del self.cids[cid]['cborCmd']
             else:
-                colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming_sequence', 
-                             msg='Sequence number [{}] not the next expected sequence [{}]'.format(
-                                 seqNum, transaction.request_segment))
-        else:
-            colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming_sequence', 
-                         msg='CID not found in device context, don\'t know what to do')
+                return
+        
+        # Send response outside lock
+        if transaction and transaction.response_ready:
+            self.send_response_segments(cid, transaction)
 
     def process_output(self, event):
         ep = event.data[0]
-        event.data = event.data[1:]
-        cid = event.data[0:4]
-        cmd = event.data[4:5]
-        dump_bytes(event.data[:event.ev_len])
+        cid = event.data[1:5]
+        cmd = event.data[5:6]
+        dump_bytes(event.data[1:event.ev_len+1])
 
-        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice._handle_incoming', 
+        colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice._handle_incoming',
                     msg='EP: {} CID: {}; CMD/SEQ {}; DATA: {}'.format(
-                        ep, cid, cmd, self._bytes_to_str(event.data[:event.ev_len])))
+                        ep, cid, cmd, self._bytes_to_str(event.data[1:event.ev_len+1])))
 
         if(int.from_bytes(cmd) & 0x80) > 0:
-            colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming', 
+            colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming',
                         msg='bit 8 set we got a command msg')
             return self._handle_incoming_cmd(cmd, event)
         else:

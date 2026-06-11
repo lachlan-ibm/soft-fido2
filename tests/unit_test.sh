@@ -14,4 +14,5 @@ pytest symmetric_key_test.py
 pytest passkey_device_test.py
 pytest passkey_file_test.py
 pytest credential_recovery_test.py
+pytest hash_storage_test.py
 #pytest pqc_tests.py #TODO enable when better supported
