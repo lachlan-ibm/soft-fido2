@@ -591,8 +591,7 @@ class AuthenticatorAPI(object):
         authData = authenticator.build_authenticator_data({'rp': rp}, 
                                 attestation, authenticator.kp, True, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out',
-                    msg=f'credId: {cred_id}; toSign: {base64.b64encode(
-                                                    bytes([*authData, *clientDataHash])).decode()}')
+                    msg=f'credId: {cred_id}; toSign: {base64.b64encode(bytes([*authData, *clientDataHash])).decode()}')
         attStmt = authenticator.build_packed_attestation_statement(attestation, 
                                                     clientDataHash, authData, None, authenticator.kp,)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
