@@ -7,7 +7,7 @@ name = "soft_fido2"
 dynamic = ["version"]
 description = "Software FIDO2 Passkey Authenticator"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 authors = [
     {name = "Lachlan Gleeson", email = "lgleeson@au1.ibm.com"}
 ]

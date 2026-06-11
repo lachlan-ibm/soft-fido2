@@ -30,6 +30,7 @@ class CleanCommand(Command):
 
 # Most configuration is in pyproject.toml
 setup(
+    name='soft_fido2',
     version='0.4.%s' % os.environ.get('GITHUB_RUN_NUMBER', 0),
     cmdclass={
         'clean': CleanCommand,
