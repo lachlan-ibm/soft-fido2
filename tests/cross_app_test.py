@@ -43,6 +43,11 @@ def test_load_java_passkey():
 
     print(f"{java_passkey_bytes}")
     
+    # Legacy format: first 230 bytes are the encrypted PIN header, rest is PKCS12 body
+    # Split the legacy format into header and body
+    header_bytes = java_passkey_bytes[:230]
+    body_bytes = java_passkey_bytes[230:]
+    
     # Create temporary directory and write passkey file
     tdir = tempfile.TemporaryDirectory()
     
@@ -52,11 +57,17 @@ def test_load_java_passkey():
         # Create platform key needed for decryption
         KeyUtils.create_platform_key()
         
-        # Write the Java passkey to a file
+        # Write the passkey body to .passkey file
         passkey_filename = 'java_test.passkey'
         passkey_path = os.path.join(tdir.name, passkey_filename)
         with open(passkey_path, 'wb') as f:
-            f.write(java_passkey_bytes)
+            f.write(body_bytes)
+        
+        # Write the header to .stash file
+        stash_filename = 'java_test.stash'
+        stash_path = os.path.join(tdir.name, stash_filename)
+        with open(stash_path, 'wb') as f:
+            f.write(header_bytes)
         
         pin_hash = KeyUtils.get_pin_hash('00000000')
         passkey = KeyUtils._load_passkey(pin_hash, passkey_filename)

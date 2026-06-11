@@ -4,6 +4,7 @@
 
 import os
 import base64
+import secrets
 import pytest
 from cryptography.fernet import Fernet
 
@@ -58,17 +59,19 @@ def test_data():
 
 def create_authenticator_with_key(rp_id, key_type="fernet"):
     """
-    Create an authenticator with either a Fernet key or SymmetricKey.
+    Create an authenticator with either a Fernet key or SymmetricKey using new prefix format.
     
     Args:
         rp_id (str): The Relying Party ID to use for seed generation
         key_type (str): Type of key to create - "fernet" or "symmetric"
         
     Returns:
-        tuple: (authenticator, key, seed) where:
+        tuple: (authenticator, key, seed, ca_key_pair, cose_alg) where:
             - authenticator is the Fido2Authenticator instance
             - key is either the Fernet key or SymmetricKey
             - seed is the raw seed bytes
+            - ca_key_pair is the CA key pair
+            - cose_alg is the COSE algorithm identifier
     """
     # Generate a key pair for the authenticator
     ca_key_pair = KeyPair.generate_ecdsa()
@@ -79,20 +82,27 @@ def create_authenticator_with_key(rp_id, key_type="fernet"):
         
     seed = KeyUtils.get_passkey_seed(rp_id.encode(), ca_key_pair.get_private())
     
+    # Generate credential keypair
+    cose_alg = -7  # ES256
+    kp = KeyPair.generate_ecdsa()
+    
     # Create the appropriate key type
     if key_type.lower() == "fernet":
         key = Fernet(seed)
-        authenticator = Fido2Authenticator(fKey=key)
+        authenticator = Fido2Authenticator(keyPair=kp, fKey=key)
     elif key_type.lower() == "symmetric":
         key = SymmetricKey(seed.decode())
-        authenticator = Fido2Authenticator(sKey=key)
+        authenticator = Fido2Authenticator(keyPair=kp, sKey=key)
     else:
         raise ValueError(f"Unsupported key type: {key_type}")
+    
+    # Generate credential ID with prefix format
+    authenticator._get_credential_id_bytes(kp, alg_id=cose_alg)
     
     if authenticator.kp is None:
         raise ValueError("Failed to create authenticator: KeyPair missing")
         
-    return authenticator, key, seed, ca_key_pair
+    return authenticator, key, seed, ca_key_pair, cose_alg
 
 def generate_credential(authenticator, attestation_options, assertion_options):
     """
@@ -153,21 +163,18 @@ def verify_assertion_result(assertion_result, cred_id, original_authenticator, n
 
 def test_credential_recovery_with_fernet_key(test_data):
     """
-    Test creating a credential with Fernet key and then recovering it for assertion.
+    Test creating a credential with Fernet key and then recovering it for assertion using new prefix format.
     
     This test verifies the credential recovery flow using a Fernet key:
     1. Creating an authenticator with a Fernet key derived from a seed
     2. Generating a credential (attestation) with the authenticator
     3. Extracting the credential ID for later use
-    4. Creating a new authenticator instance with the same credential ID and Fernet key
+    4. Reconstructing the keypair directly from the credential ID
     5. Performing an assertion with the recovered authenticator
     6. Verifying the assertion result and that the private keys match
-    
-    This follows the pattern in passkey_device.py's _maybe_next_assertion method
-    and tests the credential recovery mechanism using Fernet encryption.
     """
     # Create authenticator with Fernet key
-    authenticator, key, seed, caKp = create_authenticator_with_key(test_data["rp_id"], "fernet")
+    authenticator, key, seed, ca_kp, cose_alg = create_authenticator_with_key(test_data["rp_id"], "fernet")
     
     # Ensure key is of the correct type
     assert isinstance(key, Fernet), "Key must be a Fernet instance"
@@ -180,15 +187,19 @@ def test_credential_recovery_with_fernet_key(test_data):
         test_data["assertion_options"]
     )
 
-    
-
-    regen_seed = KeyUtils.get_passkey_seed(test_data["rp_id"].encode(), caKp.get_private())
+    # Verify seed regeneration
+    regen_seed = KeyUtils.get_passkey_seed(test_data["rp_id"].encode(), ca_kp.get_private())
     assert regen_seed == seed, f"registration seed {seed} != assertion seed {regen_seed}"
 
-    
+    # Reconstruct keypair directly from credential ID (new prefix format)
+    # cred_id is a base64-encoded string, decode it to get raw bytes
+    cred_id_bytes = base64.urlsafe_b64decode(cred_id + '==') if isinstance(cred_id, str) else cred_id
+    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, Fernet(regen_seed))
+
     # Create a new authenticator instance for assertion
-    recoveredKp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id, Fernet(regen_seed))
-    new_authenticator = Fido2Authenticator(keyPair=recoveredKp, credId=cred_id, fKey=Fernet(seed))
+    # Pass the raw bytes (already decoded above), not re-encoded
+    new_authenticator = Fido2Authenticator(keyPair=recovered_kp, credId=cred_id_bytes, fKey=Fernet(seed))
+    
     # Perform an assertion with the recovered key
     assertion_result = new_authenticator.credential_request(test_data["assertion_options"])
     
@@ -197,23 +208,24 @@ def test_credential_recovery_with_fernet_key(test_data):
 
 def test_credential_recovery_with_symmetric_key(test_data):
     """
-    Test creating a credential with SymmetricKey and then recovering it for assertion.
+    Test creating a credential with SymmetricKey and then recovering it for assertion using new prefix format.
     
     This test verifies the credential recovery flow using a SymmetricKey:
     1. Creating an authenticator with a SymmetricKey derived from a seed
     2. Generating a credential (attestation) with the authenticator
     3. Extracting the credential ID for later use
-    4. Creating a new authenticator instance with the same credential ID and SymmetricKey
+    4. Reconstructing the keypair directly from the credential ID
     5. Performing an assertion with the recovered authenticator
     6. Verifying the assertion result and that the private keys match
     
-    This test is similar to test_credential_recovery but uses SymmetricKey instead of Fernet,
+    This test is similar to test_credential_recovery_with_fernet_key but uses SymmetricKey instead of Fernet,
     which provides an alternative encryption mechanism for credential recovery.
     """
     # Create authenticator with SymmetricKey
-    authenticator, key, seed, caKp = create_authenticator_with_key(test_data["rp_id"], "symmetric")
+    authenticator, key, seed, ca_kp, cose_alg = create_authenticator_with_key(test_data["rp_id"], "symmetric")
 
-    regen_seed = KeyUtils.get_passkey_seed(test_data["rp_id"].encode(), caKp.get_private())
+    # Verify seed regeneration
+    regen_seed = KeyUtils.get_passkey_seed(test_data["rp_id"].encode(), ca_kp.get_private())
     assert regen_seed == seed, f"registration seed {seed} != assertion seed {regen_seed}"
 
     # Ensure key is of the correct type
@@ -227,9 +239,16 @@ def test_credential_recovery_with_symmetric_key(test_data):
         test_data["assertion_options"]
     )
     
+    # Reconstruct keypair directly from credential ID (new prefix format)
+    # cred_id is a base64-encoded string, decode it to get raw bytes
+    cred_id_bytes = base64.urlsafe_b64decode(cred_id + '==') if isinstance(cred_id, str) else cred_id
+    recovered_kp = Fido2Authenticator._get_key_pair_from_credential_id(cred_id_bytes, skey)
+
     # Create a new authenticator instance for assertion
+    # Pass the raw bytes (already decoded above), not re-encoded
     new_authenticator = Fido2Authenticator(
-        credId=cred_id,
+        keyPair=recovered_kp,
+        credId=cred_id_bytes,
         sKey=skey
     )
     

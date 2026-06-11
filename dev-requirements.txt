@@ -1,5 +1,5 @@
 cbor2>=4.1.2
-cryptography>=38.0.1
+cryptography>=47.0.0
 asn1>=2.2.0
 PyJwt>=0.6.1
 wheel
@@ -9,4 +9,6 @@ pytest
 setuptools
 build
 PyQt6
-# oqs version compatible with os libs
+tpm2_pytss
+dbus-python>=1.2.18
+setproctitle

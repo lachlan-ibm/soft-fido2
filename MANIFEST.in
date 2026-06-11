@@ -1,0 +1,3 @@
+include README.md
+include LICENSE
+graft soft_fido2/icons

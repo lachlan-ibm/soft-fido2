@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "soft_fido2"
+dynamic = ["version"]
+description = "Software FIDO2 Passkey Authenticator"
+readme = "README.md"
+license = {text = "MIT"}
+authors = [
+    {name = "Lachlan Gleeson", email = "lgleeson@au1.ibm.com"}
+]
+requires-python = ">=3.7"
+dependencies = [
+    "cbor2>=4.1.2",
+    "cryptography>=48.0.0",
+    "asn1>=2.2.0",
+    "PyJwt>=0.6.1"
+]
+
+[project.optional-dependencies]
+bio = [
+    "jeepney>=0.9.0"
+]
+tpm = [
+    "tpm2-pytss>=2.0.0"
+]
+ux = [
+    "PyQt6",
+    "jeepney>=0.9.0",
+    "setproctitle"
+]
+full = [
+    "jeepney>=0.9.0",
+    "tpm2-pytss>=2.0.0",
+    "PyQt6",
+    "setproctitle"
+]
+
+[project.urls]
+Homepage = "https://github.com/lachlan-ibm/soft-fido2"
+Documentation = "https://github.com/lachlan-ibm/soft-fido2/README.md"
+Source = "https://github.com/lachlan-ibm/soft-fido2"
+Tracker = "https://github.com/lachlan-ibm/soft-fido2/issues"
+
+[tool.setuptools]
+packages = ["soft_fido2", "soft_fido2.qt_ux", "soft_fido2.qt_svc", "soft_fido2.icons"]
+zip-safe = false
+include-package-data = true

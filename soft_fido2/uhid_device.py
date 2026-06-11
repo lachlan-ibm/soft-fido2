@@ -1,6 +1,5 @@
 #!/bin/python
 #IBM Confidential
-# Assisted by watsonx Code Assistant
 # Copyright IBM Corp. 2025
 
 import os, struct, fcntl, time, queue, threading, logging, re
@@ -149,7 +148,7 @@ class BaseStructure(object):
                 pack_format += field[1][1:]
             else:
                 pack_format += field[1]
-        logging.debug(pack_format)
+        #logging.debug(pack_format)
         return pack_format.encode('utf-8')
 
     def pack(self):
@@ -168,7 +167,7 @@ class BaseStructure(object):
                     values.append(getattr(self, field[0], 0))
         #Python 2 -> 3, str != bytestring so conditionally remap any strings we find.
         values = [bytes(v, 'utf-8') if isinstance(v, str) else v for v in values]
-        logging.debug(values)
+        #logging.debug(values)
         packed = struct.pack(self.format(), *values)
         #logging.debug("packed [{}]".format(packed))
         return packed
@@ -208,7 +207,7 @@ REPORT_DESCRIPTOR = bytes([
     0xC0 # End Collection
 ])
 
-DEVICE_NAME = b"EyeBeeKey"
+DEVICE_NAME = b"AyeBeKey"
 PHYSICAL_ADDRESS = b"ibm-0101:01:01.0-1"
 UNIQUE_ADDRESS = b"virtual-fido-uhid-01"
 

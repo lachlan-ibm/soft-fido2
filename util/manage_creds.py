@@ -1,4 +1,4 @@
-import os, sys
+import os, sys, traceback
 from soft_fido2.key_pair import KeyUtils
 from cryptography.hazmat.primitives import hashes
 from getpass import getpass
@@ -14,20 +14,23 @@ passkey = input("Passkey filename [default]: ")
 passkey = "default" if passkey == None or len(passkey) == 0 else passkey
 passkey = os.path.join(os.environ["FIDO_HOME"], passkey + '.passkey')
 pinHash = KeyUtils.get_pin_hash(pin)
-lowerPinHash = pinHash[:16]
 
 try:
-    d = KeyUtils._load_passkey(lowerPinHash, passkey) #Throws if invalid
+    # Pass full 32-byte pin hash since we have the complete PIN from user
+    d = KeyUtils._load_passkey(pinHash, passkey)
 except Exception as e:
     print("Pin is invalid or passkey does not exist")
+    traceback.print_exc()
     exit(1)
 ca = d['x5c']
 pk = d['key']
 resCreds = d.get('res.creds', [])
 print(f"Passkey {passkey} in {os.environ.get("FIDO_HOME")} "\
         "can be validated with the provided pin! :)")
+print(f"resident credentials: {resCreds}")
 newCreds = []
 prompt = "Remove credential for user {} on {}? Y:[N]"
+
 for cred in resCreds:
     rpId = cred['rp.id']
     userId = cred['user.id']
@@ -36,11 +39,11 @@ for cred in resCreds:
     rsp = input(prompt.format(userId, rpId))
     if rsp.upper() != 'Y':
         newCreds += [cred]
-d['res.creds'] = newCreds
-KeyUtils._save_passkey(
-    d['key'],
-    d['x5c'],
-    d['res.creds'],
-    pinHash,
-    passkey
-)
+if len(resCreds) != len(newCreds):
+    KeyUtils._save_passkey(
+        d['key'],
+        d['x5c'],
+        newCreds,
+        pinHash,
+        passkey
+    )
