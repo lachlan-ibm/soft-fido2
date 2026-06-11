@@ -1090,7 +1090,7 @@ class CBORCommand(object):
         if not AuthenticatorAPI.has_cached_up(self.cid):
             colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                         msg='UP not cached - should have been gathered in getInfo')
-            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()))
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big')))
         
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
@@ -1100,7 +1100,7 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
-                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes(1, 'big')) )
         
         # Handle pinAuth validation
         pinAuth = req.get(0x08)
@@ -1111,19 +1111,19 @@ class CBORCommand(object):
         if uv_required and not pinAuth:
             colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
                         msg='UV required but pinAuth missing')
-            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()))
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')))
         
         # If pinAuth is present, validate it
         if pinAuth:
-            result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+            result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')
             if not self._verify_pin_token(req.get(0x01), pinAuth):
                 if self.cid in AuthenticatorAPI._open_keys:
-                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes(1, 'big')
                 return self._set_rsp_fields(list(result))
         error, authData, attStmt = AuthenticatorAPI.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), 
                                             req.get(0x07, None), self.cid)
-        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
+        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes(1, 'big')
         if error:
             result = error.to_bytes(1, 'big')
         if authData and attStmt:
@@ -1152,7 +1152,7 @@ class CBORCommand(object):
                 colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                              msg='{} missing from request:\n{}'.format(prop[1], cbor.dumps(req)))
                 logging.debug("Missing required property %s" % prop[1])
-                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes()) )
+                return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes(1, 'big')) )
         
         # Handle pinAuth validation
         pinAuth = req.get(0x06)
@@ -1163,20 +1163,20 @@ class CBORCommand(object):
         if uv_required and not pinAuth:
             colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                         msg='UV required but pinAuth missing')
-            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()))
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')))
         
         # If pinAuth is present, validate it
         if pinAuth:
             if not self._verify_pin_token(req.get(0x02), pinAuth):
-                result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+                result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')
                 if self.cid in AuthenticatorAPI._open_keys:
-                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes()
+                    result = (self.CBORStatusCode.CTAP2_ERR_PIN_AUTH_INVALID).to_bytes(1, 'big')
                 return self._set_rsp_fields(list(result))
         
         # Call assertion_out to get the assertion
         error, credential, authData, signature, userHandle = AuthenticatorAPI.assertion_out(req.get(0x01),
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
-        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
+        result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes(1, 'big')
         if error:
             result = error.to_bytes(1, 'big')
         elif credential and authData and signature:
@@ -1423,7 +1423,7 @@ class CTAP2HIDevice(UserDevice):
         cmd = usb_req.data[5:6]
         bcnt = usb_req.data[6:8]
         ctap_cmd = usb_req.data[8:9]
-        logging.debug(f"CBOR bcnt: {int.from_bytes(bcnt) - 1}")
+        logging.debug(f"CBOR bcnt: {int.from_bytes(bcnt, 'big') - 1}")
         cbor_data = usb_req.data[9: 8 + int.from_bytes(bcnt)]
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor',
                      msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
