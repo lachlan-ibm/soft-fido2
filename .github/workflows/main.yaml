@@ -17,7 +17,7 @@ jobs:
     - name: Install TPM2 system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libtss2-dev
+        sudo apt-get install -y libtss2-dev libdbus-1-dev
 
     # Install dependencies
     - name: Set up Python 3.10.5
