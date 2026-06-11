@@ -752,7 +752,7 @@ class CBORCommand(object):
             colour_print(colour=bcolors.OKYELLOW, component='CBORCommand.__init__', 
                     msg="Byte Array must be at least one byte long")
         # Length of the incoming CBOR message (total).
-        self.length = int.from_bytes(ba[0:2]) - 1 # subtract CMD byte
+        self.length = int.from_bytes(ba[0:2], 'big') - 1 # subtract CMD byte
         # Request buffer. This stores the incoming CBOR message and grows until all segments have been received
         self.request = ba[3:]
         # Track then number of response segments transmitted, the number transmitted in the continue sequence packet
@@ -767,7 +767,7 @@ class CBORCommand(object):
         # Command received in CTAPHID frame, this is likely 0x90 (CBOR_MSG) but might be different
         self.ctaphid_cmd = 0
         # Authenticator API command byte received in initial packet
-        self.cmd = self.CommandByte(int.from_bytes(ba[2:3]))
+        self.cmd = self.CommandByte(int.from_bytes(ba[2:3], 'big'))
         #Length of the payload bytes
         self.bcnt = 0
         # Signal that the response buffer is ready to be sent back to the client
@@ -829,7 +829,7 @@ class CBORCommand(object):
                        component='CBORCommand.append_segment', msg='CTAP response')
 
     def _error(self, ba):
-        self.response = list(int.to_bytes(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND))
+        self.response = list(self.CBORStatusCode.CTAP1_ERR_INVALID_COMMAND.to_bytes(1, 'big'))
         self.bcnt = 0
         self.response_ready = True
 
@@ -1056,9 +1056,9 @@ class CBORCommand(object):
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='pin sub_cmd: {}'.format(sub_cmd))
         rsp = pin_sub_cmds[sub_cmd](req_data, self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes()
+        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes(1, 'big')
         if rsp != None:
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
     # authenticatorGetInfo - now gathers user presence before returning info
@@ -1081,7 +1081,7 @@ class CBORCommand(object):
             0x05: 1200,
             0x06: [1]
         }
-        result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result) )
+        result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(result) )
         logging.debug(f"len: {len(result)}")
         return self._set_rsp_fields(list(result))
 
@@ -1126,14 +1126,14 @@ class CBORCommand(object):
                                             req.get(0x07, None), self.cid)
         result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
         if error:
-            result = error.to_bytes()
+            result = error.to_bytes(1, 'big')
         if authData and attStmt:
             rsp = {
                 0x01: 'packed', #fmt
                 0x02: authData,
                 0x03: attStmt
             }
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
 
@@ -1179,7 +1179,7 @@ class CBORCommand(object):
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
         result = (self.CBORStatusCode.CTAP1_ERR_OTHER).to_bytes()
         if error:
-            result = error.to_bytes()
+            result = error.to_bytes(1, 'big')
         elif credential and authData and signature:
             rsp = {
                     0x01: credential,
@@ -1188,7 +1188,7 @@ class CBORCommand(object):
             }
             if userHandle:
                 rsp[0x04] = {'id': userHandle}
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         return self._set_rsp_fields(list(result))
 
 
@@ -1324,7 +1324,7 @@ class CTAP2HIDevice(UserDevice):
             logging.debug(f"bcnt from init pkt: {cbor_cmd.bcnt}")
             data, _ = cbor_cmd.get_rsp_seg(57)
             logging.debug(f"bcnt: {cbor_cmd.bcnt}")
-            rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), 
+            rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid, 'big'), 
                                     cmd=cbor_cmd.ctaphid_cmd,
                                     bcnt=cbor_cmd.bcnt,
                                     data=bytes(data)).pack()
@@ -1332,7 +1332,7 @@ class CTAP2HIDevice(UserDevice):
             data, seq_num = cbor_cmd.get_rsp_seg(59)
             colour_print(colour=bcolors.WARNING, component='send_response_segment', 
                     msg='Sequence number {}'.format(seq_num))
-            rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid),
+            rsp_data = CTAPHIDSeqPkt(cid=int.from_bytes(cid, 'big'),
                                      seq=seq_num,
                                      data=bytes(data)).pack()
         colour_print(colour=bcolors.WARNING, component='send_response_segment', 
@@ -1389,7 +1389,7 @@ class CTAP2HIDevice(UserDevice):
         if u2f_cla == b'\x00' and u2f_ins == b'\x03':
             #U2F_VERSION request, send the expected response
             cborCmd = CBORCommand(cid, None, skip_init=True)
-            cborCmd.ctaphid_cmd = int.from_bytes(cmd)
+            cborCmd.ctaphid_cmd = int.from_bytes(cmd, 'big')
             cborCmd.bcnt = 6
             cborCmd.response = list(b'U2F_V2')
             self.send_response_segment(cid, self.cids[cid]['cborCmd'])
@@ -1407,13 +1407,13 @@ class CTAP2HIDevice(UserDevice):
         data = nonce + assignedCID
         # protocol == 2; major version == 5; minor version = 1; build version = 2; flags === CAPABILITY_WINK | CAPABILITY_CBOR | CAPABILITY_NMSG
         for i in [2, 5, 1, 2, 0x01 | 0x04 | 0x08]:
-            data += int.to_bytes(i)
+            data += i.to_bytes(1, 'big')
         dump_bytes(data, colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_init', msg='Response data')
         data += b'\00' * (57 - len(data)) # 64 - 4 (CID) - 1 (cmd) - 2 (bcnt) - len of response
         initCmd = CBORCommand(cid, None, skip_init=True)
         self.cids[assignedCID] = { }
         initCmd.response = data
-        initCmd.ctaphid_cmd = int.from_bytes(cmd)
+        initCmd.ctaphid_cmd = int.from_bytes(cmd, 'big')
         initCmd.bcnt = 17
         self.send_response_segment(cid, initCmd)
 
@@ -1480,7 +1480,7 @@ class CTAP2HIDevice(UserDevice):
         self._ctap_ack(usb_req)
 
     def _handle_incoming_cmd(self, cmd, usb_req):
-        ctapCmd = int.from_bytes(cmd) & 0x7F
+        ctapCmd = int.from_bytes(cmd, 'big') & 0x7F
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice._handle_incoming_cmd', 
                     msg='recieved command {}'.format(ctapCmd))
         return {
