@@ -642,7 +642,7 @@ class CTAP2HIDevice(USBDevice):
         colour_print(colour=bcolors.WARNING, component='send_response_segment', msg='pad with {} 0 bytes'.format(64 - len(rsp_data)))
         rsp_data += b'\00' * (64 - len(rsp_data)) # pad the 64 byte frame with 0x00 if required
         '''
-        rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid), cmd=int.from_bytes(cmd), bcnt=17, data=data).pack()
+        rsp_data = CTAPHIDInitPkt(cid=int.from_bytes(cid, 'big'), cmd=int.from_bytes(cmd, 'big'), bcnt=17, data=data).pack()
         dump_bytes(rsp, colour=bcolors.OKGREEN, component='USBDevice.ctaphid_init', msg='Packed response')
         rsp_data = cid
         rsp_data += int.to_bytes(cbor_cmd.response_segment, 1)

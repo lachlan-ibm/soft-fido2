@@ -1291,7 +1291,7 @@ class KeepAliveWorker(threading.Thread):
                         msg=f'Sending keepalive with status {status_desc} (0x{self.status_code:02x})')
             
             # Send keepalive packet with correct CTAPHID_KEEPALIVE command (0x3B per spec)
-            rsp = CTAPHIDInitPkt(cid=int.from_bytes(self.cid),
+            rsp = CTAPHIDInitPkt(cid=int.from_bytes(self.cid, 'big'),
                                   cmd=0x3B,  # CTAPHID_KEEPALIVE per CTAP2 spec
                                   bcnt=0x01,
                                   data=bytes([self.status_code])).pack()
@@ -1372,7 +1372,7 @@ class CTAP2HIDevice(UserDevice):
         cmd = usb_req.data[5:6]
         bcnt = usb_req.data[6:8]
         apdu = usb_req.data[8:]
-        print("ctaphid_msg", int.from_bytes(cmd))
+        print("ctaphid_msg", int.from_bytes(cmd, 'big'))
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_msg', 
                     msg='cmd = {}; bcnt = {}; apdu = {}'.format(
                         self._bytes_to_str(cmd), self._bytes_to_str(bcnt), apdu))
@@ -1494,7 +1494,7 @@ class CTAP2HIDevice(UserDevice):
         }.get(ctapCmd, self.ctaphid_unknown)(usb_req)
 
     def _handle_incoming_sequence(self, cid, usb_req):
-        seqNum = int.from_bytes(usb_req.data[5:6])
+        seqNum = int.from_bytes(usb_req.data[5:6], 'big')
         
         transaction = None
         with self.cids_lock:
@@ -1531,7 +1531,7 @@ class CTAP2HIDevice(UserDevice):
                     msg='EP: {} CID: {}; CMD/SEQ {}; DATA: {}'.format(
                         ep, cid, cmd, self._bytes_to_str(event.data[1:event.ev_len+1])))
 
-        if(int.from_bytes(cmd) & 0x80) > 0:
+        if(int.from_bytes(cmd, 'big') & 0x80) > 0:
             colour_print(colour=bcolors.FAIL, component='CTAP2HIDevice._handle_incoming',
                         msg='bit 8 set we got a command msg')
             return self._handle_incoming_cmd(cmd, event)
