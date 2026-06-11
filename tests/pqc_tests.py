@@ -96,8 +96,8 @@ def test_ML_DSA_44_sign():
     assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
-    assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
-                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04))
+    assert flags == int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'), "Flags not correct {} != {}".format(
+                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'))
     assert cose[3] == -48, "ML-DSA-44 alg id"
     rhoTone = cose[-1]
     # Compare serialized public key bytes
@@ -119,8 +119,8 @@ def test_ML_DSA_67_sign():
     assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
-    assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
-                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04))
+    assert flags == int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'), "Flags not correct {} != {}".format(
+                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'))
     assert cose[3] == -49, "ML-DSA-65 alg id"
     rhoTone = cose[-1]
     # Compare serialized public key bytes
@@ -142,8 +142,8 @@ def test_ML_DSA_87_sign():
     assert cred_id == cid, "Cred id not correct {} != {}".format(cred_id, cid)
     assert isinstance(cose, dict), "COSE key missing"
     assert counter == b'\x00' * 4, "Counter not correct"
-    assert flags == int.to_bytes(0x01 | 0x40 | 0x04), "Flags not correct {} != {}".format(
-                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04))
+    assert flags == int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'), "Flags not correct {} != {}".format(
+                                                                        flags, int.to_bytes(0x01 | 0x40 | 0x04, 1, 'big'))
     assert cose[3] == -50, "ML-DSA-87 alg id"
     rhoTone = cose[-1]
     pubkey_bytes = pubkey.public_bytes(encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw)
