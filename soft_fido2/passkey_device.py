@@ -1440,7 +1440,7 @@ class CTAP2HIDevice(UserDevice):
                 return
             
             cbor_cmd = CBORCommand(cid, usb_req.data[6:MAX_DATA_FRAME+1])
-            cbor_cmd.ctaphid_cmd = int.from_bytes(cmd)
+            cbor_cmd.ctaphid_cmd = int.from_bytes(cmd, 'big')
             
             if cbor_cmd.response_ready == True: #We can respond immediately
                 dump_bytes(cbor_cmd.response, colour=bcolors.OKGREEN,
