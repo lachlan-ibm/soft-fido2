@@ -1067,7 +1067,7 @@ class CBORCommand(object):
             colour_print(colour=bcolors.FAIL, component='CBORCommand._get_info',
                         msg='User presence verification failed or denied')
             return self._set_rsp_fields(
-                list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes())
+                list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big'))
             )
         
         # Return authenticator info after successful UP verification
@@ -1142,7 +1142,7 @@ class CBORCommand(object):
         if not AuthenticatorAPI.has_cached_up(self.cid):
             colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
                         msg='UP not cached - should have been gathered in getInfo')
-            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes()))
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big')))
         
         req = cbor.loads(ba)
         colour_print(colour=bcolors.FAIL, component='CBORCommand._get_assertion',
@@ -1424,7 +1424,7 @@ class CTAP2HIDevice(UserDevice):
         bcnt = usb_req.data[6:8]
         ctap_cmd = usb_req.data[8:9]
         logging.debug(f"CBOR bcnt: {int.from_bytes(bcnt, 'big') - 1}")
-        cbor_data = usb_req.data[9: 8 + int.from_bytes(bcnt)]
+        cbor_data = usb_req.data[9: 8 + int.from_bytes(bcnt, 'big')]
         colour_print(colour=bcolors.OKGREEN, component='CTAP2HIDevice.ctaphid_cbor',
                      msg='CBOR msg frame cmd: {}; bcnt: {}'.format(self._bytes_to_str(ctap_cmd),
                                                                    self._bytes_to_str(bcnt)))

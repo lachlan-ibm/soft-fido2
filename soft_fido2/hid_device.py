@@ -392,9 +392,9 @@ class CBORCommand(object):
         colour_print(colour=bcolors.OKGREEN, component='CBORCommand._client_pin',
                      msg='pin sub_cmd: {}'.format(sub_cmd))
         rsp = pin_sub_cmds[sub_cmd](req_data, self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes()
+        result = (self.CBORStatusCode.CTAP2_ERR_PIN_INVALID).to_bytes(1, 'big')
         if rsp != None:
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -410,7 +410,7 @@ class CBORCommand(object):
             0x05: 1200,
             0x06: [1]
         }
-        result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(result)
+        result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(result)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -427,14 +427,14 @@ class CBORCommand(object):
                 raise Exception("Missing required property %s" % prop[1])
         authData, attStmt = Authenticator.attestation_out(req.get(0x01), req.get(0x02), req.get(0x03),
                                             req.get(0x04), req.get(0x05), req.get(0x06), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')
         if authData and attStmt:
             rsp = {
                 0x01: 'packed', #fmt
                 0x02: authData,
                 0x03: attStmt
             }
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
@@ -452,7 +452,7 @@ class CBORCommand(object):
                 raise Exception("Missing required property %s" % prop[1])
         credential, authData, signature, userHandle = Authenticator.assertion_out(req.get(0x01), 
                                                 req.get(0x02), req.get(0x03, []), req.get(0x04, {}), self.cid)
-        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes()
+        result = (self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')
         if credential and authData and signature:
             rsp = {
                     0x01: credential,
@@ -461,7 +461,7 @@ class CBORCommand(object):
             }
             if userHandle:
                 rsp[0x04] = {'id': userHandle}
-            result = (self.CBORStatusCode.CTAP2_OK).to_bytes() + cbor.dumps(rsp)
+            result = (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(rsp)
         self.bcnt = len(result)
         self.response_ready = True
         return result
