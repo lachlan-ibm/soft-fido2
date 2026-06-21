@@ -10,18 +10,3 @@ system tray application. Components are organized by responsibility:
 - advanced_dialog: Advanced configuration dialog UI
 - main_window: System tray icon and main window UI
 """
-
-from .config import PlatformConfig
-from .workers import Worker, WorkerSignals
-from .settings_dialog import SettingsDialog
-from .advanced_dialog import AdvancedConfigDialog
-from .main_window import SysTrayMainWindow
-
-__all__ = [
-    'PlatformConfig',
-    'Worker',
-    'WorkerSignals',
-    'SettingsDialog',
-    'AdvancedConfigDialog',
-    'SysTrayMainWindow',
-]

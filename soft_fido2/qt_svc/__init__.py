@@ -8,14 +8,3 @@ Services are organized by domain:
 - passkey_service: Passkey wallet operations
 - credential_service: Credential management operations
 """
-
-from .platform_key_service import PlatformKeyService
-from .passkey_service import PasskeyService
-from .credential_service import CredentialService
-
-__all__ = [
-    'PlatformKeyService',
-    'PasskeyService',
-    'CredentialService',
-]
-
