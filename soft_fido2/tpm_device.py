@@ -143,12 +143,15 @@ class TPMDevice(object):
         
         return in_public
 
-    def create_key(self):
+    def create_key(self, password: bytes = b""):
         """Generate or retrieve the FIDO2 platform key at FIDO2_KEY_BASE handle
         
         Creates an EC P-256 primary key in the TPM and persists it at the
         FIDO2_KEY_BASE handle. If a key already exists at this handle,
         returns the existing key.
+        
+        Args:
+            password: Optional password to protect the key (bytes)
         
         Returns:
             tuple: (handle, public_key) where handle is ESYS_TR and
@@ -166,7 +169,17 @@ class TPMDevice(object):
             logging.debug(f"Key not found at {hex(self.FIDO2_KEY_BASE)}, creating new key: {e}")
         
         in_public = self._create_ec_p256_template()
-        in_sensitive = TPM2B_SENSITIVE_CREATE()
+        
+        # Set password in sensitive structure
+        if password:
+            from tpm2_pytss.types import TPM2B_AUTH, TPMS_SENSITIVE_CREATE
+            auth = TPM2B_AUTH(password)
+            in_sensitive = TPM2B_SENSITIVE_CREATE(
+                TPMS_SENSITIVE_CREATE(userAuth=auth)
+            )
+        else:
+            in_sensitive = TPM2B_SENSITIVE_CREATE()
+        
         outside_info = TPM2B_DATA()
         creation_pcr = TPML_PCR_SELECTION()
         
@@ -245,8 +258,14 @@ class TPMDevice(object):
         point.point.y.buffer = numbers.y.to_bytes(32, 'big')
         return point
 
-    def ecdh_encrypt(self, plaintext: bytes, public_key, persistent_handle=None):
+    def ecdh_encrypt(self, plaintext: bytes, public_key, persistent_handle=None, password: bytes = b""):
         """Encrypt plaintext for this TPM key using ECDH and AES-GCM.
+        
+        Args:
+            plaintext: Data to encrypt
+            public_key: Ephemeral public key for ECDH
+            persistent_handle: TPM handle (defaults to FIDO2_KEY_BASE)
+            password: Optional password to unlock the key (bytes)
         
         Returns the same blob format as [`KeyUtils.ec_encrypt()`](soft_fido2/key_pair.py:566):
         4-byte PEM length || ephemeral public PEM || iv || tag || ciphertext
@@ -256,7 +275,7 @@ class TPMDevice(object):
             if persistent_handle is None:
                 persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
             handle = esapi.tr_from_tpmpublic(persistent_handle)
-            esapi.tr_set_auth(handle, b"")
+            esapi.tr_set_auth(handle, password if password else b"")
 
         in_point = self._public_key_to_tpm_ecc_point(public_key)
         z_point = esapi.ecdh_zgen(handle, in_point)
@@ -277,8 +296,17 @@ class TPMDevice(object):
         anon_pub_bytes = len(anon_pub).to_bytes(4, 'big') + anon_pub
         return anon_pub_bytes + iv + encryptor.tag + ciphertext
 
-    def ecdh_decrypt(self, encrypted: bytes, persistent_handle=None):
-        """Decrypt blob encrypted to the TPM platform key using ECDH and AES-GCM."""
+    def ecdh_decrypt(self, encrypted: bytes, persistent_handle=None, password: bytes = b""):
+        """Decrypt blob encrypted to the TPM platform key using ECDH and AES-GCM.
+        
+        Args:
+            encrypted: Encrypted data blob
+            persistent_handle: TPM handle (defaults to FIDO2_KEY_BASE)
+            password: Optional password to unlock the key (bytes)
+        
+        Returns:
+            bytes: Decrypted plaintext
+        """
         pub_bytes_len = int.from_bytes(encrypted[:4], 'big')
         pub_bytes = encrypted[4:pub_bytes_len + 4]
         pubkey = load_pem_public_key(pub_bytes)
@@ -290,7 +318,7 @@ class TPMDevice(object):
             if persistent_handle is None:
                 persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
             handle = esapi.tr_from_tpmpublic(persistent_handle)
-            esapi.tr_set_auth(handle, b"")
+            esapi.tr_set_auth(handle, password if password else b"")
 
         in_point = self._public_key_to_tpm_ecc_point(pubkey)
         z_point = esapi.ecdh_zgen(handle, in_point)
@@ -307,7 +335,7 @@ class TPMDevice(object):
         return decryptor.update(ciphertext[32:]) + decryptor.finalize()
 
 
-    def hmac(self, data: bytes, persistent_handle=None):
+    def hmac(self, data: bytes, persistent_handle=None, password: bytes = b""):
         """
         Perform HMAC-SHA256 operation using TPM key.
         
@@ -318,6 +346,7 @@ class TPMDevice(object):
         Args:
             data: Data to HMAC (bytes)
             persistent_handle: TPM handle (defaults to FIDO2_KEY_BASE)
+            password: Optional password to unlock the key (bytes)
             
         Returns:
             bytes: HMAC output (32 bytes for SHA256)
@@ -330,7 +359,7 @@ class TPMDevice(object):
             if persistent_handle is None:
                 persistent_handle = TPM2_HANDLE(self.FIDO2_KEY_BASE)
             handle = esapi.tr_from_tpmpublic(persistent_handle)
-            esapi.tr_set_auth(handle, b"")
+            esapi.tr_set_auth(handle, password if password else b"")
         
         # Prepare input buffer
         buffer = TPM2B_MAX_BUFFER()
@@ -344,3 +373,105 @@ class TPMDevice(object):
         )
         
         return bytes(result.buffer)
+
+
+class TPMKeyPair:
+    """
+    Wrapper class for TPM-backed key pairs.
+    
+    This class provides a KeyPair-compatible interface for keys stored in the TPM,
+    allowing transparent use of TPM keys alongside software keys. The private key
+    material never leaves the TPM hardware.
+    
+    Attributes:
+        tpm_handle: TPM persistent handle for the key
+        tpm_password: Password to unlock the TPM key (bytes)
+        public_key: The public key corresponding to the TPM private key
+        is_tpm: Always True to identify this as a TPM-backed key
+    """
+    
+    def __init__(self, tpm_handle: int, public_key, tpm_password: bytes = b""):
+        """
+        Initialize a TPM key pair wrapper.
+        
+        Args:
+            tpm_handle: TPM persistent handle for the key
+            public_key: The public key (cryptography EC public key object)
+            tpm_password: Optional password to unlock the key (bytes)
+        """
+        self.tpm_handle = tpm_handle
+        self.tpm_password = tpm_password if tpm_password else b""
+        self.public = public_key
+        self.private = None  # TPM keys don't expose private key material
+        self.is_tpm = True
+        self._tpm_device = None
+    
+    @property
+    def tpm_device(self):
+        """Lazy-load TPM device to avoid initialization overhead."""
+        if self._tpm_device is None:
+            self._tpm_device = TPMDevice()
+        return self._tpm_device
+    
+    @property
+    def handle(self):
+        """Alias for tpm_handle for backward compatibility."""
+        return self.tpm_handle
+    
+    def get_public(self):
+        """Get the public key."""
+        return self.public
+    
+    def get_private(self):
+        """
+        Get private key (not available for TPM keys).
+        
+        Raises:
+            ValueError: Always, as TPM private keys cannot be exported
+        """
+        raise ValueError("TPM private keys cannot be exported from hardware")
+    
+    def get_public_bytes(self):
+        """Get public key as PEM-encoded bytes."""
+        from cryptography.hazmat.primitives import serialization
+        return self.public.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    
+    def tpm_decrypt(self, ciphertext: bytes) -> bytes:
+        """
+        Decrypt data using TPM key with stored password.
+        
+        Args:
+            ciphertext: Encrypted data blob
+            
+        Returns:
+            bytes: Decrypted plaintext
+        """
+        return self.tpm_device.ecdh_decrypt(
+            ciphertext,
+            self.tpm_handle,
+            password=self.tpm_password
+        )
+    
+    def tpm_encrypt(self, plaintext: bytes, public_key) -> bytes:
+        """
+        Encrypt data for this TPM key using ECDH.
+        
+        Args:
+            plaintext: Data to encrypt
+            public_key: Ephemeral public key for ECDH
+            
+        Returns:
+            bytes: Encrypted data blob
+        """
+        return self.tpm_device.ecdh_encrypt(
+            plaintext,
+            public_key,
+            self.tpm_handle,
+            password=self.tpm_password
+        )
+    
+    def __repr__(self):
+        return f"TPMKeyPair(handle={hex(self.tpm_handle)}, password_protected={bool(self.tpm_password)})"

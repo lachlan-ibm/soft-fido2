@@ -95,20 +95,53 @@ class AuthenticatorAPI(object):
             cls._lock.release()
 
     @classmethod
-    def cache_up(cls, cid, up: bool):
+    def get_user_state(cls, cid) -> str:
+        """Get the user authentication state for a CID.
+        
+        Args:
+            cid: Channel ID
+            
+        Returns:
+            "verified" if user is fully verified (fingerprint or standard accept)
+            "present" if user presence only (U2F mode)
+            "unknown" if CID not found
+        """
+        cls._lock.acquire()
+        try:
+            if cid in cls._open_keys:
+                user_state = cls._open_keys[cid].get("user", "unknown")
+                colour_print(colour=bcolors.OKBLUE, component='AuthenticatorAPI.get_user_state',
+                            msg=f'CID {cid.hex()} user state: {user_state}')
+                return user_state
+            colour_print(colour=bcolors.WARNING, component='AuthenticatorAPI.get_user_state',
+                        msg=f'CID {cid.hex()} NOT in _open_keys')
+            return "unknown"
+        finally:
+            cls._lock.release()
+
+    @classmethod
+    def cache_up(cls, cid, user_state: str):
+        """Cache user presence/verification state.
+        
+        Args:
+            cid: Channel ID
+            user_state: Either "verified" (full UV) or "present" (UP only)
+        """
         with cls._lock:
             if cid in cls._open_keys:
-                cls._open_keys[cid]["up"] = up
+                cls._open_keys[cid]["up"] = True
+                cls._open_keys[cid]["user"] = user_state
                 colour_print(colour=bcolors.OKGREEN, component='AuthenticatorAPI.cache_up',
-                            msg=f'Updated existing CID entry: UP={up} for CID {cid.hex()}')
+                            msg=f'Updated CID entry: UP=True, user={user_state} for CID {cid.hex()}')
             else:
                 # Create minimal entry to cache UP before PIN validation
                 cls._open_keys[cid] = {
-                    "up": up,
+                    "up": True,
+                    "user": user_state,
                     "tStart": time.time()
                 }
                 colour_print(colour=bcolors.OKGREEN, component='AuthenticatorAPI.cache_up',
-                            msg=f'Created new CID entry to cache UP={up} for CID {cid.hex()}')
+                            msg=f'Created CID entry: UP=True, user={user_state} for CID {cid.hex()}')
 
     @classmethod
     def initialize_biometric_tpm_mode(cls):
@@ -464,21 +497,20 @@ class AuthenticatorAPI(object):
     def _resolve_passkey(cls, options, cid):
         """
         Resolve passkey based on options (rk/uv flags).
-        Returns: (passkey_dict, resident_creds, attestation_type, request_rk)
+        Returns: (passkey_dict, resident_creds, attestation_type, request_rk, request_uv)
         """
         options = options or {}
-        
         # Use platform key if rk or uv not requested
         if options.get('rk', False) == False and options.get('uv', False) == False:
             return {
                 'kp': KeyUtils._get_platform_kp()
-            }, None, 'packed-self', False
+            }, None, 'packed-self', False, options.get('uv', False)
     
         # Use opened passkey
         passkey = cls._open_keys[cid]
         res_creds = KeyUtils._load_passkey(passkey['ph'], 
                                             passkey['file']).get('res.creds')
-        return passkey, res_creds, 'packed', True
+        return passkey, res_creds, 'packed', True, options.get('uv', False)
 
     @classmethod
     def _check_credential_excluded(cls, rp_id: str, user_id: bytes, res_creds: typing.Optional[list]) -> bool:
@@ -572,7 +604,7 @@ class AuthenticatorAPI(object):
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out', 
                      msg='open keys: {}'.format(cls._open_keys))
 
-        passkey, res_creds, attestation, req_rk = cls._resolve_passkey(options, cid)
+        passkey, res_creds, attestation, req_rk, req_uv = cls._resolve_passkey(options, cid)
         ca_kp = passkey.get('kp')
         if not cls._validate_ca_keypair(ca_kp):
             colour_print(
@@ -582,14 +614,12 @@ class AuthenticatorAPI(object):
             )
             return CBORCommand.CBORStatusCode.CTAP1_ERR_OTHER, None, None
         
-        # Check for existing credentials
         if cls._check_credential_excluded(rp['id'], user['id'], res_creds):
             return CBORCommand.CBORStatusCode.CTAP2_ERR_CREDENTIAL_EXCLUDED, None, None
 
-        # Create authenticator and generate attestation
         authenticator, cred_id = cls._create_authenticator(rp['id'], passkey, pkCredsParams)
         authData = authenticator.build_authenticator_data({'rp': rp}, 
-                                attestation, authenticator.kp, True, up=True, be=False, bs=False)
+                                attestation, authenticator.kp, uv=req_uv, up=True, be=False, bs=False)
         colour_print(colour=bcolors.OKPINK, component='Authenticator.attestation_out',
                     msg=f'credId: {cred_id}; toSign: {base64.b64encode(bytes([*authData, *clientDataHash])).decode()}')
         attStmt = authenticator.build_packed_attestation_statement(attestation, 
@@ -932,7 +962,7 @@ class CBORCommand(object):
         if os.environ.get('SOFT_FIDO2_SKIP_UP', 'False').lower() in ['y', 'yes', '1', 'true', 't']:
             colour_print(colour=bcolors.WARNING, component='Authenticator.gather_user_presence',
                     msg='Skipping user presence check')
-            AuthenticatorAPI.cache_up(self.cid, True)
+            AuthenticatorAPI.cache_up(self.cid, "verified")
             return True
         
         if AuthenticatorAPI.has_cached_up(self.cid):
@@ -999,7 +1029,7 @@ class CBORCommand(object):
                                 msg='Fingerprint verification succeeded')
                     worker.interrupt()
                     worker.join()
-                    AuthenticatorAPI.cache_up(self.cid, True)
+                    AuthenticatorAPI.cache_up(self.cid, "verified")
                     return True
                 # If fingerprint failed, continue waiting for GUI
             
@@ -1011,7 +1041,14 @@ class CBORCommand(object):
                                 msg='GUI click accepted')
                     worker.interrupt()
                     worker.join()
-                    AuthenticatorAPI.cache_up(self.cid, True)
+                    AuthenticatorAPI.cache_up(self.cid, "verified")
+                    return True
+                elif gui_msg == QueueMessageType.USER_RESPONSE_ACCEPT_U2F:
+                    colour_print(colour=bcolors.OKGREEN, component='Authenticator.gather_user_presence',
+                                msg='GUI click accepted (U2F mode)')
+                    worker.interrupt()
+                    worker.join()
+                    AuthenticatorAPI.cache_up(self.cid, "present")
                     return True
                 else:
                     # User rejected or timeout
@@ -1070,16 +1107,29 @@ class CBORCommand(object):
                 list((self.CBORStatusCode.CTAP2_ERR_OPERATION_DENIED).to_bytes(1, 'big'))
             )
         
+        # Get user authentication state
+        user_state = AuthenticatorAPI.get_user_state(self.cid)
+        
         # Return authenticator info after successful UP verification
         result = {
-            0x01: ["FIDO_2_0"], #, "U2F_V2"
+            0x01: ["FIDO_2_0"],
             0x02: ['hmac-secret'],
             #0x03: b"\x13\x37\xF1\xD0" * 4,
             0x03: b"\x00" * 16,
             0x04: {'rk': True, 'up': True, 'plat': False, 'clientPin': True},
             0x05: 1200,
-            0x06: [1]
         }
+        
+        # Conditionally include pinProtocols based on user state
+        if user_state == "verified":
+            result[0x06] = [1]  # Include PIN protocol support for verified users
+            colour_print(colour=bcolors.OKBLUE, component='CBORCommand._get_info',
+                        msg='Returning get_info WITH PIN protocol (user verified)')
+        else:  # user_state == "present"
+            #result[0x06] = ["U2F_V2"] # Omit pinProtocols field; advertise as CTAP1
+            colour_print(colour=bcolors.OKBLUE, component='CBORCommand._get_info',
+                        msg='Returning get_info WITHOUT PIN protocol (user present only - U2F mode)')
+        
         result = bytes( (self.CBORStatusCode.CTAP2_OK).to_bytes(1, 'big') + cbor.dumps(result) )
         logging.debug(f"len: {len(result)}")
         return self._set_rsp_fields(list(result))
@@ -1102,16 +1152,34 @@ class CBORCommand(object):
                 logging.debug("Missing required property %s" % prop[1])
                 return self._set_rsp_fields( list((self.CBORStatusCode.CTAP2_ERR_MISSING_PARAMETER).to_bytes(1, 'big')) )
         
+        # Get user authentication state and options
+        user_state = AuthenticatorAPI.get_user_state(self.cid)
+        options = req.get(0x07, {})
+        rk_required = options.get('rk', False)
+        uv_required = options.get('uv', False)        
+       
+        # Validate UV requirement
+        if uv_required and user_state != "verified":
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                        msg='UV required by RP but not provided by user')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')))
+        
+        # Validate RK requirement (resident keys require UV per CTAP spec)
+        if rk_required and user_state != "verified":
+            colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
+                        msg='RK (resident key) required but UV not provided - RK requires UV')
+            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')))
+        
+        # Log key selection based on authentication context
+        if user_state == "verified":
+            colour_print(colour=bcolors.OKGREEN, component='CBORCommand._make_cred',
+                        msg='UV context detected - using passkey file key')
+        else:  # user_state == "present"
+            colour_print(colour=bcolors.OKGREEN, component='CBORCommand._make_cred',
+                        msg='UP-only context detected - using platform key')
+        
         # Handle pinAuth validation
         pinAuth = req.get(0x08)
-        options = req.get(0x07, {})
-        uv_required = options.get('uv', False)
-        
-        # If UV is required but pinAuth is missing, fail
-        if uv_required and not pinAuth:
-            colour_print(colour=bcolors.FAIL, component='CBORCommand._make_cred',
-                        msg='UV required but pinAuth missing')
-            return self._set_rsp_fields(list((self.CBORStatusCode.CTAP2_ERR_PUAT_REQUIRED).to_bytes(1, 'big')))
         
         # If pinAuth is present, validate it
         if pinAuth:

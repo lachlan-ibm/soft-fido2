@@ -1201,7 +1201,7 @@ class KeyUtils(object):
         raise ValueError(f"Unsupported COSE algorithm: {cose_alg}")
 
 
-class KeyPair(object):  
+class KeyPair(object):
 
     def __init__(self, privateKey, publicKey):
         object.__init__(self)

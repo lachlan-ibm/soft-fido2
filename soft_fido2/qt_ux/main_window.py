@@ -241,7 +241,11 @@ class SysTrayMainWindow:
             message="User Verification request: accept" + ("? or scan your fingerprint!" if fprint_pending else "?"),
             urgency="critical",
             timeout=15000,
-            actions=[('accept', 'Accept'), ('decline', 'Decline')] if self.notification_fw == self.NotificationFramework.DBUS else None
+            actions=[
+                ('accept', 'Accept'),
+                ('accept_u2f', 'Accept [U2F]'),
+                ('decline', 'Decline')
+            ] if self.notification_fw == self.NotificationFramework.DBUS else None
         )
     
     def cancel_notification(self):
@@ -346,8 +350,13 @@ class SysTrayMainWindow:
         logging.info(f"Notification action: {action_key}")
         
         if action_key == 'accept':
-            # User clicked Accept button (authentication)
+            # User clicked Accept button (verified)
             MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
+            # Restore status icon after user response
+            self._restore_status_icon()
+        elif action_key == 'accept_u2f':
+            # User clicked Accept [U2F] button (U2F mode)
+            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT_U2F)
             # Restore status icon after user response
             self._restore_status_icon()
         elif action_key == 'decline':

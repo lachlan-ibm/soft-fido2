@@ -54,12 +54,35 @@ class PlatformKeyService:
         self.fido_home = fido_home
         self.logger = logging.getLogger(__name__)
     
-    def create_tpm_key(self) -> Tuple[bool, str]:
+    def _get_tpm_password_file(self) -> str:
+        """Get path to TPM password configuration file."""
+        return os.path.join(self.fido_home, '.tpm_password_protected')
+    
+    def is_tpm_password_protected(self) -> bool:
+        """Check if TPM key is password-protected."""
+        return os.path.exists(self._get_tpm_password_file())
+    
+    def _save_tpm_password_flag(self):
+        """Mark TPM key as password-protected."""
+        os.makedirs(self.fido_home, exist_ok=True)
+        with open(self._get_tpm_password_file(), 'w') as f:
+            f.write('1')
+    
+    def _remove_tpm_password_flag(self):
+        """Remove password-protected flag."""
+        path = self._get_tpm_password_file()
+        if os.path.exists(path):
+            os.remove(path)
+    
+    def create_tpm_key(self, password: str = "") -> Tuple[bool, str]:
         """Create a TPM-based platform key.
         
         Creates a new platform key using the Trusted Platform Module (TPM).
         The key is stored securely in the TPM and can only be accessed on
         the same hardware.
+        
+        Args:
+            password: Optional password to protect the key
         
         Returns:
             Tuple containing:
@@ -77,7 +100,16 @@ class PlatformKeyService:
             from soft_fido2.tpm_device import TPMDevice
             
             tpm = TPMDevice()
-            tpm.create_key()
+            
+            # Convert password to bytes
+            pwd_bytes = password.encode('utf-8') if password else b""
+            tpm.create_key(password=pwd_bytes)
+            
+            # Mark as password-protected if password provided
+            if password:
+                self._save_tpm_password_flag()
+            else:
+                self._remove_tpm_password_flag()
             
             self.logger.info("TPM platform key created successfully")
             return True, "TPM platform key created successfully"
@@ -185,6 +217,63 @@ class PlatformKeyService:
             error_msg = f"Failed to unlock platform key: {str(e)}"
             self.logger.warning(error_msg)
             return False, None, "Invalid password or corrupted key file"
+    
+    def unlock_tpm_key(self, password: str) -> Tuple[bool, Any, str]:
+        """Unlock a password-protected TPM key.
+        
+        Args:
+            password: Password to unlock the key
+            
+        Returns:
+            Tuple of (success, key_pair, message)
+        """
+        try:
+            from soft_fido2.tpm_device import TPMDevice
+            
+            tpm = TPMDevice()
+            pwd_bytes = password.encode('utf-8')
+            
+            # Try to get key with password
+            handle, public_key_tpm = tpm.get_key()
+            
+            # Convert TPM key to KeyPair-compatible wrapper
+            key_pair = self._convert_tpm_to_keypair(handle, public_key_tpm, pwd_bytes)
+            
+            return True, key_pair, "TPM key unlocked successfully"
+        except Exception as e:
+            error_msg = f"Failed to unlock TPM key: {str(e)}"
+            self.logger.error(error_msg)
+            return False, None, error_msg
+    
+    def load_tpm_key(self, password: Optional[str] = None) -> Tuple[bool, Optional[Any], str]:
+        """Load TPM-based platform key.
+        
+        Args:
+            password: Optional password if key is password-protected
+        """
+        try:
+            from soft_fido2.tpm_device import TPMDevice
+            
+            tpm = TPMDevice()
+            
+            # Check if password-protected
+            if self.is_tpm_password_protected():
+                if not password:
+                    return False, None, "TPM key requires password"
+                pwd_bytes = password.encode('utf-8')
+            else:
+                pwd_bytes = b""
+            
+            handle, public_key_tpm = tpm.get_key()
+            
+            # Convert TPM key to KeyPair-compatible wrapper
+            tpm_key_pair = self._convert_tpm_to_keypair(handle, public_key_tpm, pwd_bytes)
+            
+            return True, tpm_key_pair, "TPM key loaded successfully"
+        except Exception as e:
+            error_msg = f"Failed to load TPM key: {str(e)}"
+            self.logger.error(error_msg)
+            return False, None, error_msg
     
     def check_key_exists(self, key_type: str) -> bool:
         """Check if a platform key of the specified type exists.
@@ -312,80 +401,32 @@ class PlatformKeyService:
             return False, error_msg
 
     
-    def load_tpm_key(self) -> Tuple[bool, Optional[Any], str]:
-        """Load platform key from TPM.
-        
-        Attempts to load the platform key from the Trusted Platform Module (TPM).
-        Returns a TPMKeyPair wrapper that provides a KeyPair-compatible interface.
-        
-        Returns:
-            Tuple containing:
-                - success (bool): True if key was loaded successfully
-                - key_pair (Optional[TPMKeyPair]): The loaded TPM key wrapper, or None on failure
-                - message (str): Success or error message
-        
-        Example:
-            success, key_pair, msg = service.load_tpm_key()
-            if success:
-                print(f"TPM key loaded: {msg}")
-                # Use key_pair for authentication
-            else:
-                print(f"Failed: {msg}")
-        """
-        try:
-            from soft_fido2.tpm_device import TPMDevice
-            tpm = TPMDevice()
-            handle, public_key = tpm.get_key()
-            # Convert TPM key to KeyPair-compatible wrapper
-            tpm_key_pair = self._convert_tpm_to_keypair(handle, public_key)
-            self.logger.info("Platform key loaded from TPM")
-            return True, tpm_key_pair, "Platform key loaded from TPM"
-        except Exception as e:
-            error_msg = f"TPM key not available: {e}"
-            self.logger.debug(error_msg)
-            return False, None, error_msg
-    
-    def _convert_tpm_to_keypair(self, handle, public_key) -> Any:
+    def _convert_tpm_to_keypair(self, handle, public_key_tpm, tpm_password: bytes = b"") -> Any:
         """Convert TPM key to KeyPair-compatible wrapper.
         
-        Creates a wrapper class that provides a KeyPair-compatible interface
+        Creates a TPMKeyPair wrapper that provides a KeyPair-compatible interface
         for TPM-based keys, allowing them to be used interchangeably with
         file-based keys.
         
         Args:
             handle: TPM key handle
-            public_key: Public key bytes
+            public_key_tpm: TPM2B_PUBLIC object
+            tpm_password: Password bytes for the TPM key
         
         Returns:
             TPMKeyPair: Wrapper object with KeyPair-compatible interface
         """
-        from soft_fido2.tpm_device import TPMDevice
-
-        class TPMKeyPair:
-            """Wrapper for TPM keys to provide KeyPair-compatible interface."""
-            def __init__(self, handle, public_key):
-                self.handle = handle
-                self.public_key = public_key
-                self.is_tpm = True
-                self.tpm_device = TPMDevice()
-            
-            def get_private(self):
-                return self.handle
-            
-            def get_public(self):
-                return self.public_key
-
-            def tpm_encrypt(self, plaintext, public_key):
-                return self.tpm_device.ecdh_encrypt(
-                    plaintext, public_key, persistent_handle=self.handle
-                )
-
-            def tpm_decrypt(self, encrypted):
-                return self.tpm_device.ecdh_decrypt(
-                    encrypted, persistent_handle=self.handle
-                )
+        from soft_fido2.tpm_device import TPMKeyPair
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.backends import default_backend
         
-        return TPMKeyPair(handle, public_key)
+        # Convert TPM public key to cryptography public key
+        x = int.from_bytes(bytes(public_key_tpm.publicArea.unique.ecc.x), 'big')
+        y = int.from_bytes(bytes(public_key_tpm.publicArea.unique.ecc.y), 'big')
+        public_numbers = ec.EllipticCurvePublicNumbers(x, y, ec.SECP256R1())
+        public_key = public_numbers.public_key(default_backend())
+        
+        return TPMKeyPair(handle, public_key, tpm_password=tpm_password)
     
     def load_file_key(self, password: Optional[bytes] = None) -> Tuple[bool, Optional[KeyPair], str]:
         """Load platform key from filesystem.
@@ -457,9 +498,13 @@ class PlatformKeyService:
         if preferred_key_type is not None:
             # User has a saved preference
             if preferred_key_type == 'tpm':
-                success, key_pair, message = self.load_tpm_key()
+                success, key_pair, message = self.load_tpm_key(password=None)
                 if success:
                     return True, key_pair, message
+                # Check if it's password-protected
+                if self.is_tpm_password_protected():
+                    self.logger.info("TPM key requires password, staying locked")
+                    return False, None, "TPM key requires password"
                 self.logger.info("TPM key not available, staying locked")
                 return False, None, "TPM key not available"
             elif preferred_key_type == 'file':
@@ -470,7 +515,7 @@ class PlatformKeyService:
                 return False, None, "File key requires password or doesn't exist"
         
         # No preference set - try fallbacks
-        success, key_pair, message = self.load_tpm_key()
+        success, key_pair, message = self.load_tpm_key(password=None)
         if success:
             return True, key_pair, message
         

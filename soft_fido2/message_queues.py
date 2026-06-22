@@ -31,6 +31,7 @@ class QueueMessageType:
     PLATFORM_KEY_RESPONSE = 11
     PLATFORM_KEY_ERROR = 12
     USER_REQUEST_FPRINT = 13
+    USER_RESPONSE_ACCEPT_U2F = 14  # Accept without PIN protocol (U2F mode)
 
 
 class MessageQueue:
