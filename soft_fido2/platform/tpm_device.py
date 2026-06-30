@@ -3,8 +3,14 @@ import os
 import sys
 import tempfile
 from contextlib import contextmanager
-from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION, TPM2_CAP, TPM2B_MAX_BUFFER
-from tpm2_pytss.types import TPM2_HANDLE, TPM2B_ECC_POINT, TPM2_ALG
+
+try:
+    from tpm2_pytss import ESAPI, TPM2B_PUBLIC, TPM2B_SENSITIVE_CREATE, ESYS_TR, TPM2B_DATA, TPML_PCR_SELECTION, TPM2_CAP, TPM2B_MAX_BUFFER
+    from tpm2_pytss.types import TPM2_HANDLE, TPM2B_ECC_POINT, TPM2_ALG
+    _TPM2_PYTSS_AVAILABLE = True
+except ImportError:
+    _TPM2_PYTSS_AVAILABLE = False
+
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes

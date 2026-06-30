@@ -3,22 +3,17 @@
 import logging
 import time
 from contextlib import contextmanager
-from enum import Enum
 from typing import Any, Callable, Optional, Tuple
 
-from jeepney import DBusAddress, HeaderFields, MatchRule, MessageType, new_method_call
-from jeepney.io.blocking import open_dbus_connection
-from jeepney.wrappers import new_method_call as wrappers_new_method_call
+try:
+    from jeepney import DBusAddress, HeaderFields, MatchRule, MessageType, new_method_call
+    from jeepney.io.blocking import open_dbus_connection
+    from jeepney.wrappers import new_method_call as wrappers_new_method_call
+    _JEEPNEY_AVAILABLE = True
+except ImportError:
+    _JEEPNEY_AVAILABLE = False
 
-
-class BiometricResult(Enum):
-    SUCCESS = "verify-match"
-    NO_MATCH = "verify-no-match"
-    RETRY = "verify-retry-scan"
-    DISCONNECTED = "verify-disconnected"
-    UNKNOWN_ERROR = "verify-unknown-error"
-    NOT_AVAILABLE = "not-available"
-    TIMEOUT = "timeout"
+from soft_fido2.platform.types import BiometricResult
 
 
 class FprintDevice:

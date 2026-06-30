@@ -664,11 +664,8 @@ class KeyUtils(object):
         upper_hash = pinHash[16:]
         
         platform_key_pair = cls.__request_platform_kp()
-        platform_key = platform_key_pair.get_private()
 
-        if isinstance(platform_key, ec.EllipticCurvePrivateKey):
-            header = cls.ec_encrypt(upper_hash, platform_key)
-        elif hasattr(platform_key_pair, 'tpm_encrypt'):
+        if hasattr(platform_key_pair, 'tpm_encrypt'):
             platform_public = platform_key_pair.get_public()
             if hasattr(platform_public, 'to_pem'):
                 platform_public = serialization.load_pem_public_key(
@@ -676,7 +673,10 @@ class KeyUtils(object):
                 )
             header = platform_key_pair.tpm_encrypt(upper_hash, platform_public)
         else:
-            raise ValueError(f"{platform_key} must be an EllipticCurvePrivateKey")
+            platform_key = platform_key_pair.get_private()
+            if not isinstance(platform_key, ec.EllipticCurvePrivateKey):
+                raise ValueError(f"{platform_key} must be an EllipticCurvePrivateKey")
+            header = cls.ec_encrypt(upper_hash, platform_key)
         pkcs12_bytes = cls.create_pcks12_bytes(
             key,
             x5c,

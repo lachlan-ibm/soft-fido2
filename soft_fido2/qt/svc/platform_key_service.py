@@ -97,7 +97,7 @@ class PlatformKeyService:
                 print(f"Failed: {message}")
         """
         try:
-            from soft_fido2.tpm_device import TPMDevice
+            from soft_fido2.platform.tpm_device import TPMDevice
             
             tpm = TPMDevice()
             
@@ -220,30 +220,36 @@ class PlatformKeyService:
     
     def unlock_tpm_key(self, password: str) -> Tuple[bool, Any, str]:
         """Unlock a password-protected TPM key.
-        
+
+        Performs a proof-of-knowledge round-trip (ecdh_encrypt + ecdh_decrypt)
+        before reporting success.
+
         Args:
             password: Password to unlock the key
-            
+
         Returns:
             Tuple of (success, key_pair, message)
         """
         try:
-            from soft_fido2.tpm_device import TPMDevice
-            
+            from soft_fido2.platform.tpm_device import TPMDevice
+
             tpm = TPMDevice()
             pwd_bytes = password.encode('utf-8')
-            
-            # Try to get key with password
+
             handle, public_key_tpm = tpm.get_key()
-            
-            # Convert TPM key to KeyPair-compatible wrapper
             key_pair = self._convert_tpm_to_keypair(handle, public_key_tpm, pwd_bytes)
-            
+
+            # Verify the password is correct before reporting success.
+            # ecdh_zgen requires auth in both directions — pass password to both.
+            _probe = os.urandom(32)
+            _blob = tpm.ecdh_encrypt(_probe, key_pair.public, handle, password=pwd_bytes)
+            tpm.ecdh_decrypt(_blob, handle, password=pwd_bytes)
+
             return True, key_pair, "TPM key unlocked successfully"
         except Exception as e:
             error_msg = f"Failed to unlock TPM key: {str(e)}"
             self.logger.error(error_msg)
-            return False, None, error_msg
+            return False, None, "Invalid password"
     
     def load_tpm_key(self, password: Optional[str] = None) -> Tuple[bool, Optional[Any], str]:
         """Load TPM-based platform key.
@@ -252,7 +258,7 @@ class PlatformKeyService:
             password: Optional password if key is password-protected
         """
         try:
-            from soft_fido2.tpm_device import TPMDevice
+            from soft_fido2.platform.tpm_device import TPMDevice
             
             tpm = TPMDevice()
             
@@ -292,7 +298,7 @@ class PlatformKeyService:
         """
         if key_type == 'tpm':
             try:
-                from soft_fido2.tpm_device import TPMDevice
+                from soft_fido2.platform import TPMBackend as TPMDevice
                 tpm = TPMDevice()
                 tpm.get_key()
                 return True
@@ -416,7 +422,7 @@ class PlatformKeyService:
         Returns:
             TPMKeyPair: Wrapper object with KeyPair-compatible interface
         """
-        from soft_fido2.tpm_device import TPMKeyPair
+        from soft_fido2.platform.tpm_device import TPMKeyPair
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.backends import default_backend
         

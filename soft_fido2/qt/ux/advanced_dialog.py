@@ -26,11 +26,11 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QThreadPool, Qt
 
 try:
-    from soft_fido2.qt_ux.workers import Worker
-    from soft_fido2.qt_svc.platform_key_service import PlatformKeyService
+    from soft_fido2.qt.ux.workers import Worker
+    from soft_fido2.qt.svc.platform_key_service import PlatformKeyService
 except ImportError:
-    from qt_ux.workers import Worker
-    from qt_svc.platform_key_service import PlatformKeyService
+    from qt.ux.workers import Worker
+    from qt.svc.platform_key_service import PlatformKeyService
 
 
 class AdvancedConfigDialog(QDialog):
@@ -283,11 +283,14 @@ class AdvancedConfigDialog(QDialog):
             
             if reply == QMessageBox.StandardButton.Yes:
                 try:
-                    # Use TPM device directly for deletion (not in service layer yet)
-                    from soft_fido2.tpm_device import TPMDevice
+                    from soft_fido2.platform.tpm_device import TPMDevice
                     tpm = TPMDevice()
                     tpm.delete_key()
-                    
+
+                    # Remove the password-protected sentinel so the UI does
+                    # not show the password field after the key is gone.
+                    self.platform_key_service._remove_tpm_password_flag()
+
                     QMessageBox.information(
                         self,
                         "Success",
@@ -471,7 +474,7 @@ class AdvancedConfigDialog(QDialog):
                     def restart_worker():
                         try:
                             if self.device_manager:
-                                self.device_manager.restart()
+                                self.device_manager.restart_device()
                             return (True, "Device restarted successfully")
                         except Exception as e:
                             return (False, str(e))

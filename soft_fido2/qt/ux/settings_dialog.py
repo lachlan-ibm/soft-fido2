@@ -31,17 +31,17 @@ from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
 
 try:
-    from soft_fido2.qt_svc.platform_key_service import PlatformKeyService
-    from soft_fido2.qt_svc.passkey_service import PasskeyService
-    from soft_fido2.qt_svc.credential_service import CredentialService
-    from soft_fido2.qt_ux.advanced_dialog import AdvancedConfigDialog
-    from soft_fido2.qt_ux.config import PlatformConfig
+    from soft_fido2.qt.svc.platform_key_service import PlatformKeyService
+    from soft_fido2.qt.svc.passkey_service import PasskeyService
+    from soft_fido2.qt.svc.credential_service import CredentialService
+    from soft_fido2.qt.ux.advanced_dialog import AdvancedConfigDialog
+    from soft_fido2.qt.ux.config import PlatformConfig
 except ImportError:
-    from qt_svc.platform_key_service import PlatformKeyService
-    from qt_svc.passkey_service import PasskeyService
-    from qt_svc.credential_service import CredentialService
-    from qt_ux.advanced_dialog import AdvancedConfigDialog
-    from qt_ux.config import PlatformConfig
+    from qt.svc.platform_key_service import PlatformKeyService
+    from qt.svc.passkey_service import PasskeyService
+    from qt.svc.credential_service import CredentialService
+    from qt.ux.advanced_dialog import AdvancedConfigDialog
+    from qt.ux.config import PlatformConfig
 
             
 class SettingsDialog(QDialog):
@@ -84,7 +84,7 @@ class SettingsDialog(QDialog):
         self.setMinimumHeight(500)
         
         # Set window icon
-        icon_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons')
+        icon_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'icons')
         main_icon_path = os.path.join(icon_dir, 'main_icon.svg')
         if os.path.exists(main_icon_path):
             self.setWindowIcon(QIcon(main_icon_path))
@@ -205,7 +205,7 @@ class SettingsDialog(QDialog):
         controls_layout = QHBoxLayout()
         
         # Get icon directory path
-        icon_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons')
+        icon_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'icons')
         
         # Create Platform Key Button
         self.create_key_btn = QPushButton()
@@ -434,7 +434,7 @@ class SettingsDialog(QDialog):
     def _check_tpm_available(self):
         """Check if TPM is available on the system."""
         try:
-            from soft_fido2.tpm_device import TPMDevice
+            from soft_fido2.platform.tpm_device import TPMDevice
             tpm = TPMDevice()
             # Try to get key to verify TPM is actually functional
             try:
@@ -570,10 +570,14 @@ class SettingsDialog(QDialog):
         """
         tpm_exists, file_exists = self._check_cache_key_status()
         selected_tpm = self.tpm_radio.isChecked()
-        
-        # Priority 1: If file key exists, is password-protected, and NOT unlocked, focus on password input
-        if not selected_tpm and file_exists and self._is_key_password_protected() and not self.platform_key_unlocked:
-            return 'secret_input'
+
+        # Priority 1: If the selected key is password-protected and not yet
+        # unlocked, focus the password input so the user knows what to do.
+        if not self.platform_key_unlocked:
+            if selected_tpm and tpm_exists and self.platform_key_service.is_tpm_password_protected():
+                return 'secret_input'
+            if not selected_tpm and file_exists and self._is_key_password_protected():
+                return 'secret_input'
         
         # Priority 2: If no platform key exists, focus on create button
         if not tpm_exists and not file_exists:

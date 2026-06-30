@@ -11,9 +11,13 @@ for reliable, interactive desktop notifications on Linux systems.
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from jeepney import DBusAddress, HeaderFields, MatchRule, MessageType, new_method_call
-from jeepney.io.blocking import open_dbus_connection
-from jeepney.wrappers import new_method_call as wrappers_new_method_call
+try:
+    from jeepney import DBusAddress, HeaderFields, MatchRule, MessageType, new_method_call
+    from jeepney.io.blocking import open_dbus_connection
+    from jeepney.wrappers import new_method_call as wrappers_new_method_call
+    _JEEPNEY_AVAILABLE = True
+except ImportError:
+    _JEEPNEY_AVAILABLE = False
 
 
 class DBusNotifier:

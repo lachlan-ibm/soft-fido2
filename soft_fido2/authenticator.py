@@ -932,7 +932,6 @@ class Fido2Authenticator(object):
                                              keyPair=keyPair,
                                              signKeyPair=self.caKeyPair,
                                              nonce=nonceHash)
-        print(CertUtils.get_encoded(appleCert))
         return {'x5c': [CertUtils.get_encoded(appleCert), CertUtils.get_encoded(self.caCertificate)]}
 
     def _error(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):

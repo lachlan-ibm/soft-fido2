@@ -18,15 +18,15 @@ from PyQt6.QtCore import QTimer
 
 try:
     from soft_fido2.message_queues import QueueMessageType, MessageQueue
-    from soft_fido2.qt_ux.settings_dialog import SettingsDialog
+    from soft_fido2.qt.ux.settings_dialog import SettingsDialog
 except ImportError:
     from message_queues import QueueMessageType, MessageQueue
-    from qt_ux.settings_dialog import SettingsDialog
+    from qt.ux.settings_dialog import SettingsDialog
 
 try:
-    from soft_fido2.dbus_notify import DBusNotifier, DBusNotificationListener
+    from soft_fido2.platform import Notifier as DBusNotifier
+    from soft_fido2.platform import NotificationListener as DBusNotificationListener
 except ImportError:
-    # D-Bus not available, will use Qt fallback
     DBusNotifier = None
     DBusNotificationListener = None
 
@@ -92,7 +92,8 @@ class SysTrayMainWindow:
         """
         icon = None
         # Try to find icon relative to the module directory
-        module_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        # __file__ is soft_fido2/qt/ux/main_window.py → go up 3 levels to reach soft_fido2/
+        module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         icon_path = os.path.join(module_dir, 'icons', path)
         if os.path.exists(icon_path):
             icon = QIcon(icon_path)
@@ -112,7 +113,7 @@ class SysTrayMainWindow:
     
     def _set_ceremony_icon(self):
         """Set tray icon to main_icon.svg during authentication ceremony."""
-        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'icons', 'main_icon.svg')
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'icons', 'main_icon.svg')
         if os.path.exists(icon_path):
             self._tray_icon.setIcon(QIcon(icon_path))
             logging.info("Set ceremony icon: main_icon.svg")
@@ -314,7 +315,7 @@ class SysTrayMainWindow:
         if urgency == "critical" and actions:
             self._set_ceremony_icon()
             icon_path = os.path.abspath(os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), 'icons', 'main_icon.svg'
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'icons', 'main_icon.svg'
             ))
         else:
             icon_path = 'dialog-password'

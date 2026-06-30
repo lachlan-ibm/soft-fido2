@@ -16,7 +16,7 @@ try:
     from soft_fido2.key_pair import KeyPair, KeyUtils
     from soft_fido2.authenticator import Fido2Authenticator
     from soft_fido2.symmetric_key import SymmetricKey
-    from soft_fido2.qt_ux.config import PlatformConfig
+    from soft_fido2.qt.ux.config import PlatformConfig
 except ImportError:
     sys.path.append(os.path.dirname(os.path.abspath(__file__)))
     from message_queues import QueueMessageType, MessageQueue
@@ -157,7 +157,7 @@ class AuthenticatorAPI(object):
         with cls._biometric_tpm_mode_lock:
             # Check biometric device
             try:
-                from soft_fido2.fprint_device import get_fprint_device
+                from soft_fido2.platform import get_biometric_device as get_fprint_device
                 if not get_fprint_device().is_available():
                     colour_print(colour=bcolors.WARNING,
                                component='AuthenticatorAPI.initialize_biometric_tpm_mode',
@@ -176,7 +176,7 @@ class AuthenticatorAPI(object):
             
             # Check TPM device
             try:
-                from soft_fido2.tpm_device import TPMDevice
+                from soft_fido2.platform import TPMBackend as TPMDevice
                 if not TPMDevice.is_available():
                     colour_print(colour=bcolors.WARNING,
                                component='AuthenticatorAPI.initialize_biometric_tpm_mode',
@@ -911,7 +911,7 @@ class CBORCommand(object):
         Args:
             result_queue: Queue to put the verification result ('fprint', True/None)
         """
-        from soft_fido2.fprint_device import get_fprint_device, BiometricResult
+        from soft_fido2.platform import get_biometric_device as get_fprint_device, BiometricResult
         fprint_device = get_fprint_device()
         if not fprint_device.is_available():
             result_queue.put(('fprint', None))
@@ -973,7 +973,7 @@ class CBORCommand(object):
         
         result_queue = queue.Queue()
         
-        from soft_fido2.fprint_device import get_fprint_device
+        from soft_fido2.platform import get_biometric_device as get_fprint_device
         fprint_device = get_fprint_device()
         fprint_available = fprint_device.is_available()
         
