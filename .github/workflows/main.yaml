@@ -8,7 +8,7 @@ on:
 
 # This job installs dependencies, builds the project's doc, and pushes it to `gh-pages`
 jobs:
-  deploy-gh-pages:
+  build-test-publish:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3

@@ -260,8 +260,8 @@ class TestDeterministicKeyDerivation(unittest.TestCase):
         rp_id = b"example.com"
         nonce = b"B" * 32
 
-        kp1 = KeyUtils.derive_mldsa_keypair(master_secret, rp_id, nonce, "ML-DSA-44", -48)
-        kp2 = KeyUtils.derive_mldsa_keypair(master_secret, rp_id, nonce, "ML-DSA-44", -48)
+        kp1 = KeyUtils.derive_mldsa44_keypair(master_secret, rp_id, nonce)
+        kp2 = KeyUtils.derive_mldsa44_keypair(master_secret, rp_id, nonce)
 
         self.assertEqual(kp1.get_public(), kp2.get_public())
 
@@ -326,7 +326,7 @@ class TestDeterministicKeyDerivation(unittest.TestCase):
         rp_id = b"example.com"
         nonce = b"B" * 32
 
-        kp_direct = KeyUtils.derive_mldsa_keypair(master_secret, rp_id, nonce, "ML-DSA-44", -48)
+        kp_direct = KeyUtils.derive_mldsa44_keypair(master_secret, rp_id, nonce)
         kp_dispatch = KeyUtils.derive_keypair_from_context(master_secret, rp_id, nonce, -48)
 
         self.assertEqual(kp_direct.get_public(), kp_dispatch.get_public())

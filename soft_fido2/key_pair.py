@@ -1090,36 +1090,34 @@ class KeyUtils(object):
         return KeyPair(private_key, private_key.public_key())
 
     @classmethod
-    def derive_mldsa_keypair(
+    def derive_mldsa44_keypair(
         cls,
         master_secret: bytes,
         rp_id: bytes,
         credential_nonce: bytes,
-        alg_name: str,
-        cose_alg: int,
     ):
         """
-        Derive a deterministic ML-DSA keypair.
+        Derive a deterministic ML-DSA-44 keypair.
         
         Args:
             master_secret: Master secret (passkey seed)
             rp_id: Relying Party ID as bytes
             credential_nonce: Random nonce for this credential
-            alg_name: ML-DSA algorithm name (e.g., "ML-DSA-44")
             cose_alg: COSE algorithm identifier
             
         Returns:
-            KeyPair: Deterministically derived ML-DSA keypair
+            KeyPair: Deterministically derived ML-DSA-44 keypair
         """
         seed = cls.derive_credential_key_material(
             master_secret=master_secret,
             rp_id=rp_id,
             credential_nonce=credential_nonce,
-            cose_alg=cose_alg,
+            cose_alg=-48,
             length=32,
             alg_suffix=b"|MLDSA",
         )
-        return cls.load_mldsa_key(alg_name, seed)
+        private_key = mldsa.MLDSA44PrivateKey.from_seed_bytes(seed)
+        return KeyPair(private_key, private_key.public_key())
 
     @classmethod
     def derive_keypair_from_context(
@@ -1150,9 +1148,7 @@ class KeyUtils(object):
         if cose_alg == -7:
             return cls.derive_p256_keypair(master_secret, rp_id, credential_nonce)
         if cose_alg == -48:
-            return cls.derive_mldsa_keypair(
-                master_secret, rp_id, credential_nonce, "ML-DSA-44", -48
-            )
+            return cls.derive_mldsa44_keypair(master_secret, rp_id, credential_nonce)
         raise ValueError(f"Unsupported COSE algorithm: {cose_alg}")
 
 
