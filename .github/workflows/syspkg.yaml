@@ -1,12 +1,17 @@
 name: syspkg-workflow
 
 on:
-  push:
+  workflow_run:
+    workflows:
+    - pypi-publish
+    types:
+    - completed
     branches:
     - stable
 
 jobs:
   build-deb:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -35,6 +40,7 @@ jobs:
       if: github.ref == 'refs/heads/stable'
 
   build-rpm:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     container:
       image: fedora:43
