@@ -1,0 +1,13 @@
+# soft_fido2 / AyeBeKey virtual FIDO2 UHID token
+# UHID devices do not expose idVendor/idProduct sysfs attrs; match on KERNELS
+# (bus=0003, vendor=1337, product=1337). Must be numbered < 70-snap.*.rules
+# so tags are set before snap-device-helper dispatch lines run.
+
+# Grant snap-confined Chromium access
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1337:1337.*", TAG+="snap_chromium_chromium"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1337:1337.*", TAG+="snap_chromium_chromedriver"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1337:1337.*", TAG+="snap_chromium_daemon"
+
+# Grant snap-confined Firefox access
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1337:1337.*", TAG+="snap_firefox_firefox"
+SUBSYSTEM=="hidraw", KERNEL=="hidraw*", KERNELS=="0003:1337:1337.*", TAG+="snap_firefox_geckodriver"

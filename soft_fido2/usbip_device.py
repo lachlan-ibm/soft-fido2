@@ -32,8 +32,8 @@ Update 2022 by Lachlan Gleeson for python 3
 import socketserver, datetime, struct, traceback, re, signal, threading, random, time
 from typing import Optional
 
-from .ctaphid_protocol import BaseStructure as _BaseStructure, bcolors, colour_print, CTAPHIDInitPkt, CTAPHIDSeqPkt
-from .passkey_device import CBORCommand
+from .ctap.packet import BaseStructure as _BaseStructure, bcolors, colour_print, CTAPHIDInitPkt, CTAPHIDSeqPkt
+from .ctap import CBORCommand
 from enum import Enum
 
 def print_bytes(*args):
@@ -957,7 +957,7 @@ class CTAP2USBIPDevice(USBDevice):
             cid: Channel ID
             cbor_cmd: CBORCommand with response data
         """
-        # CTAPHIDInitPkt and CTAPHIDSeqPkt imported at module top from ctaphid_protocol
+        # CTAPHIDInitPkt and CTAPHIDSeqPkt imported at module top from ctap.protocol
         
         if len(self.pending) == 0:
             colour_print(colour=bcolors.FAIL, component='send_response_segment',

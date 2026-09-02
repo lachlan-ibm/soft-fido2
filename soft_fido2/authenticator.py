@@ -240,15 +240,9 @@ class Fido2Authenticator(object):
         private_key = keyPair.get_private()
         
         # Determine algorithm ID and extract key material
-        if alg_id is None:
-            config = KeyUtils._get_key_config(private_key, self.hashAlg)
-            assert 'alg_id' in config and isinstance(config['alg_id'], int)
-            alg_id = config['alg_id']
-            if 'extract_key' not in config or not callable(config['extract_key']):
-                raise RuntimeError("Panic!")
-            key_material = config['extract_key'](private_key)
-        else:
-            key_material = KeyUtils._extract_key_material(private_key, self.hashAlg)
+        config = KeyUtils._get_key_config(private_key, self.hashAlg)
+        alg_id = alg_id if alg_id is not None else config.alg_id
+        key_material = config.extract_key(private_key)
         
         # Build plaintext and encrypt
         plaintext = self._build_credential_id_plaintext(alg_id, key_material)

@@ -3,7 +3,8 @@
 
 import struct
 import os
-from typing import Any, Callable, ClassVar, TypedDict, cast
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar
 import cbor2 as cbor
 import secrets
 import base64
@@ -21,11 +22,54 @@ from .cert_utils import CertUtils
 
 
 
-class _KeyConfig(TypedDict):
+@dataclass(frozen=True)
+class _KeyConfig:
     alg_id: int
-    extract_key: Callable[..., bytes]
-    recover_key: Callable[..., Any]
-    args: bool
+    extract_key: Callable[[Any], bytes]
+    recover_key: Callable[[bytes], Any]
+    requires_hash: bool
+
+
+# ---------------------------------------------------------------------------
+# Tell me your secrets
+# ---------------------------------------------------------------------------
+
+def _extract_ec_key(pk: ec.EllipticCurvePrivateKey) -> bytes:
+    return pk.private_numbers().private_value.to_bytes(
+        (pk.curve.key_size + 7) // 8, byteorder='big'
+    )
+
+
+def _recover_ec_p256(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP256R1(), default_backend())
+
+
+def _recover_ec_p384(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP384R1(), default_backend())
+
+
+def _recover_ec_p521(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP521R1(), default_backend())
+
+
+def _extract_raw_key(pk: Any) -> bytes:
+    return pk.private_bytes_raw()
+
+
+def _recover_ed25519(key_material: bytes) -> ed25519.Ed25519PrivateKey:
+    return ed25519.Ed25519PrivateKey.from_private_bytes(key_material)
+
+
+def _recover_mldsa44(key_material: bytes) -> mldsa.MLDSA44PrivateKey:
+    return mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material)
+
+
+def _recover_mldsa65(key_material: bytes) -> mldsa.MLDSA65PrivateKey:
+    return mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material)
+
+
+def _recover_mldsa87(key_material: bytes) -> mldsa.MLDSA87PrivateKey:
+    return mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material)
 
 
 class KeyUtils(object):
@@ -37,58 +81,46 @@ class KeyUtils(object):
     # Maps private key types to their COSE algorithm IDs and key extraction methods
     _KEY_TYPE_CONFIG: ClassVar[dict[Any, _KeyConfig]] = {
         (ec.EllipticCurvePrivateKey, hashes.SHA256): _KeyConfig(
-            alg_id=-7,  # ES256 (ECDSA with SHA-256)
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            )),
-            recover_key=cast(Callable[..., Any], lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'), ec.SECP256R1(), default_backend()
-            )),
-            args=True,
+            alg_id=-7,           # ES256 (ECDSA with SHA-256)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p256,
+            requires_hash=True,
         ),
         (ec.EllipticCurvePrivateKey, hashes.SHA384): _KeyConfig(
-            alg_id=-35,  # ES384 (ECDSA with SHA-384)
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            )),
-            recover_key=cast(Callable[..., Any], lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'), ec.SECP384R1(), default_backend()
-            )),
-            args=True,
+            alg_id=-35,          # ES384 (ECDSA with SHA-384)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p384,
+            requires_hash=True,
         ),
         (ec.EllipticCurvePrivateKey, hashes.SHA512): _KeyConfig(
-            alg_id=-36,  # ES512 (ECDSA with SHA-512)
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            )),
-            recover_key=cast(Callable[..., Any], lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'), ec.SECP521R1(), default_backend()
-            )),
-            args=True,
+            alg_id=-36,          # ES512 (ECDSA with SHA-512)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p521,
+            requires_hash=True,
         ),
         ed25519.Ed25519PrivateKey: _KeyConfig(
-            alg_id=-8,  # ED25519
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_bytes_raw()),
-            recover_key=cast(Callable[..., Any], lambda key_material: ed25519.Ed25519PrivateKey.from_private_bytes(key_material)),
-            args=False,
+            alg_id=-8,           # EdDSA / Ed25519
+            extract_key=_extract_raw_key,
+            recover_key=_recover_ed25519,
+            requires_hash=False,
         ),
         mldsa.MLDSA44PrivateKey: _KeyConfig(
-            alg_id=-48,  # ML-DSA-44
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_bytes_raw()),
-            recover_key=cast(Callable[..., Any], lambda key_material: mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material)),
-            args=False,
+            alg_id=-48,          # ML-DSA-44
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa44,
+            requires_hash=False,
         ),
         mldsa.MLDSA65PrivateKey: _KeyConfig(
-            alg_id=-49,  # ML-DSA-65
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_bytes_raw()),
-            recover_key=cast(Callable[..., Any], lambda key_material: mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material)),
-            args=False,
+            alg_id=-49,          # ML-DSA-65
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa65,
+            requires_hash=False,
         ),
         mldsa.MLDSA87PrivateKey: _KeyConfig(
-            alg_id=-50,  # ML-DSA-87
-            extract_key=cast(Callable[..., bytes], lambda pk: pk.private_bytes_raw()),
-            recover_key=cast(Callable[..., Any], lambda key_material: mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material)),
-            args=False,
+            alg_id=-50,          # ML-DSA-87
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa87,
+            requires_hash=False,
         ),
     }
 
@@ -269,15 +301,11 @@ class KeyUtils(object):
         """
         # Find the config entry with matching alg_id
         for config in cls._KEY_TYPE_CONFIG.values():
-            if config['alg_id'] == alg_id:
-                if 'recover_key' not in config or not callable(config['recover_key']):
-                    raise ValueError(
-                        f"Algorithm {alg_id} does not have a recover_key function defined"
-                    )
-                return config['recover_key'](key_material)
-        
+            if config.alg_id == alg_id:
+                return config.recover_key(key_material)
+
         # If we get here, the algorithm is not supported
-        supported_algs = [config['alg_id'] for config in cls._KEY_TYPE_CONFIG.values()]
+        supported_algs = [config.alg_id for config in cls._KEY_TYPE_CONFIG.values()]
         raise ValueError(
             f"Unsupported algorithm ID: {alg_id}. "
             f"Supported: {supported_algs}"
@@ -298,9 +326,7 @@ class KeyUtils(object):
             ValueError: If key type is unsupported
         """
         config = cls._get_key_config(private_key, hash_alg)
-        if 'extract_key' not in config or not callable(config['extract_key']):
-            raise RuntimeError("Panic!")
-        result = config['extract_key'](private_key)
+        result = config.extract_key(private_key)
         assert isinstance(result, bytes)
         return result
 
@@ -385,10 +411,12 @@ class KeyUtils(object):
         :return:
         '''
         if isinstance(publicKey, rsa.RSAPublicKey):
+            pn = publicKey.public_numbers()
+            key_size_bytes = (publicKey.key_size + 7) // 8
             return {1: 3,
                     3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                   -1: cls._long_to_bytes(publicKey.public_numbers().n),
-                   -2: cls._long_to_bytes(publicKey.public_numbers().e)
+                   -1: pn.n.to_bytes(key_size_bytes, byteorder='big'),
+                   -2: pn.e.to_bytes((pn.e.bit_length() + 7) // 8, byteorder='big')
                  }
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             return {1: 2,

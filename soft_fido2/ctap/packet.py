@@ -33,6 +33,28 @@ def colour_print(colour=bcolors.OKBLUE, component='CTAPHID', msg=''):
     logging.debug('[' + colour + component + bcolors.ENDC + '] ' + msg)
 
 
+def print_bytes(*args):
+    result = ""
+    count = 0
+    for ba in args:
+        for x in ba:
+            result += "%02X " % x
+            count += 1
+            if count == 8:
+                result += " "
+            elif count == 16:
+                logging.debug("\t" + result)
+                result = ""
+                count = 0
+    logging.debug('\t' + result + '\n')
+
+
+def dump_bytes(*args, colour=bcolors.OKPURPLE, component='CTAPHID', msg=''):
+    """Print bytes in a formatted hex dump via logging.debug."""
+    colour_print(colour=colour, component=component, msg=msg)
+    print_bytes(*args)
+
+
 class BaseStructure(object):
     """Base class for binary protocol structures.
 
@@ -114,6 +136,7 @@ class CTAPHIDInitPkt(BaseStructure):
     ]
 
     def __init__(self, **kwargs):
+        self.base_pack_format = '>'
         if 'data' in kwargs:
             index = next(
                 (i for i, f in enumerate(self._fields_) if f[0] == 'data'),
@@ -141,6 +164,7 @@ class CTAPHIDSeqPkt(BaseStructure):
     ]
 
     def __init__(self, **kwargs):
+        self.base_pack_format = '>'
         if 'data' in kwargs:
             index = next(
                 (i for i, f in enumerate(self._fields_) if f[0] == 'data'),

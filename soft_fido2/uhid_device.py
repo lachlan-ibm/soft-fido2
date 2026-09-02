@@ -2,37 +2,15 @@
 #IBM Confidential
 # Copyright IBM Corp. 2025
 
-import os, struct, fcntl, time, queue, threading, logging, re
+import os, struct, fcntl, time, queue, threading, logging
 
 from enum import Enum
 
 from .message_queues import QueueMessageType, MessageQueue
-from .ctaphid_protocol import BaseStructure, bcolors, colour_print
+from .ctap.packet import BaseStructure
 
 # Assisted by watsonx Code Assistant
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-
-def print_bytes(*args):
-    result = ""
-    count = 0
-    for ba in args:
-        for x in ba:
-            result += "%02X " % x
-            count += 1
-            if count == 8 :
-                result += " "
-            elif count == 16:
-                logging.debug("\t" + result)
-                result = ""
-                count = 0
-    logging.debug('\t' + result + '\n')
-
-def dump_bytes(*args, colour=bcolors.OKPURPLE, component='UHID Device', msg=''):
-    #Print bytes in nice format
-    c = colour if colour != None else bcolors.OKPURPLE
-    colour_print(colour=colour, component=component, msg=msg)
-    print_bytes(*args)
 
 
 UHID_EVENT_TYPE_SIZE = 4

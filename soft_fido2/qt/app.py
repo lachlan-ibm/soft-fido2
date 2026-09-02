@@ -9,19 +9,17 @@ This module provides the main application controller that:
 - Handles signal processing
 - Coordinates between UI and services
 
-UI presentation is delegated to qt_ux modules.
-Business logic is delegated to service modules.
+UI presentation is delegated to ux modules.
+Business logic is delegated to svc modules.
 """
 
 import os, time, sys, threading, logging, signal
-
-from enum import Enum
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QThreadPool, QTimer
 
 from ..message_queues import QueueMessageType, MessageQueue, PlatformKeyRequest, PlatformKeyResponse
-from .ux.config import PlatformConfig
+from .ux.config import PlatformConfig, AppState
 from .ux.workers import Worker
 from .ux.settings_dialog import SettingsDialog
 from .ux.main_window import SysTrayMainWindow
@@ -41,13 +39,6 @@ class SysTrayApp(QDialog):
     App logic is delegated to qt_svc modules.
     """
     
-    # === Nested Classes ===
-    
-    class AppState(Enum):
-        """Application state enumeration."""
-        LOCKED = "locked"
-        UNLOCKED = "unlocked"
-    
     # Global flag for signal handling
     _received_signal = False
     _signal_num = 0
@@ -63,7 +54,7 @@ class SysTrayApp(QDialog):
         super().__init__()
         
         # === State Variables ===
-        self._current_state = self.AppState.LOCKED
+        self._current_state = AppState.LOCKED
         self._platform_key = None  # Can be KeyPair or TPMKeyPair
         self.fido_home = os.environ.get('FIDO_HOME', os.path.expanduser('~/.fido'))
         self.plat_cfg = PlatformConfig(self.fido_home)
@@ -121,7 +112,7 @@ class SysTrayApp(QDialog):
         Returns:
             bool: True if locked, False if unlocked
         """
-        return self._current_state == self.AppState.LOCKED
+        return self._current_state == AppState.LOCKED
     
     # ============================================================================
     # PLATFORM KEY LOADING
@@ -145,11 +136,11 @@ class SysTrayApp(QDialog):
         
         if success:
             self._platform_key = key_pair
-            self._set_state(self.AppState.UNLOCKED)
+            self._set_state(AppState.UNLOCKED)
             logging.info(message)
         else:
             # Key exists but locked (password-protected)
-            self._set_state(self.AppState.LOCKED)
+            self._set_state(AppState.LOCKED)
             logging.info(message)
     
     # ============================================================================

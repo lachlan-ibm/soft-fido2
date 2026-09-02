@@ -1,0 +1,80 @@
+name: syspkg-workflow
+
+on:
+  push:
+    branches:
+    - stable
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # Install system dependencies for TPM2, D-Bus, Qt6, and DEB build tools
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libtss2-dev libdbus-1-dev libglib2.0-dev qt6-base-dev \
+          debhelper dh-python devscripts python3-build python3-pip python3-setuptools \
+          python3-wheel
+
+    - name: Build DEB package
+      run: |
+        GITHUB_RUN_NUMBER=${{ github.run_number }} dpkg-buildpackage -us -uc -b \
+          --output-dir dist
+        mkdir -p dist
+
+    - name: Upload DEB to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v0.4.${{ github.run_number }}
+        files: dist/soft-fido2_*.deb
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: github.ref == 'refs/heads/stable'
+
+  build-rpm:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:43
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install RPM build dependencies
+      run: |
+        dnf install -y \
+          rpmdevtools \
+          python3-build \
+          python3-setuptools \
+          python3-wheel \
+          python3-devel \
+          python3-pip
+
+    - name: Build source tarball
+      run: |
+        mkdir -p dist .rpmbuild/SOURCES
+        tar --exclude='__pycache__' --exclude='*.pyc' \
+            --exclude='.git' --exclude='dist' --exclude='*.egg-info' \
+            --exclude='.rpmbuild' \
+            -czf .rpmbuild/SOURCES/soft_fido2-0.4.0.tar.gz \
+            --transform 's,^,soft_fido2-0.4.0/,' .
+
+    - name: Build RPM
+      run: |
+        GITHUB_RUN_NUMBER=${{ github.run_number }} \
+        rpmbuild -ba rpmbuild/soft_fido2.spec \
+            --define "_topdir $(pwd)/.rpmbuild" \
+            --define "_rpmdir $(pwd)/dist" \
+            --define "_srcrpmdir $(pwd)/dist"
+
+    - name: Upload RPM to Release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v0.4.${{ github.run_number }}
+        files: |
+          dist/noarch/soft_fido2-*.rpm
+          dist/soft_fido2-*.src.rpm
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: github.ref == 'refs/heads/stable'

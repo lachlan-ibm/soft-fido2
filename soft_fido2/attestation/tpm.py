@@ -16,7 +16,7 @@ def _build_rsa_public_area(keyPair):
     pubArea += [0] * 2   # authPolicy
     pubArea += [0, 0x10] # symmetric = TPM_ALG_NULL
     pubArea += [1, 4]    # scheme = TPM_ALG_RSASSA (PKCS1-v1.5)
-    pubArea += [4, 0]    # keySize
+    pubArea += list(struct.pack("!H", keyPair.get_public().key_size )) # keySize; eg 1024 = [4, 0]    
     pubArea += [0] * 4   # exponent
     unique = KeyUtils._long_to_bytes(keyPair.get_public().public_numbers().n)
     uniqueLength = struct.pack("!H", len(unique))

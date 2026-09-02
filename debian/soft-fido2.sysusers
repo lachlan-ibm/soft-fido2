@@ -1,0 +1,3 @@
+# sysusers.d(5) format — processed by dh_installsysusers at build time.
+# Creates the uhid system group (low GID) required by the udev rule.
+g uhid -

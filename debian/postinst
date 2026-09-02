@@ -1,0 +1,96 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    # ── UHID kernel module ─────────────────────────────────────────────────────
+    modprobe uhid 2>/dev/null || true
+
+    # ── uhid system group ──────────────────────────────────────────────────────
+    # dh_installsysusers handles group creation via sysusers.d;
+    # this is a fallback for systems without systemd-sysusers.
+    if ! getent group uhid >/dev/null; then
+        addgroup --quiet --system uhid
+    fi
+
+    # ── enroll the invoking user into the uhid group ───────────────────────────
+    # Priority 1: $SUDO_USER — set when the user ran: sudo apt install ...
+    # Priority 2: $PKEXEC_UID — set by PackageKit / GNOME Software.
+    # Priority 3: enumerate real users under /home (fallback for dpkg -i as root).
+    _ENROLL_USER=""
+    if [ -n "${SUDO_USER:-}" ] && [ "${SUDO_USER}" != "root" ]; then
+        _ENROLL_USER="${SUDO_USER}"
+    elif [ -n "${PKEXEC_UID:-}" ]; then
+        _ENROLL_USER="$(getent passwd "${PKEXEC_UID}" | cut -d: -f1)"
+    else
+        # Fallback: find all human users (UID >= 1000) with a home under /home.
+        for _u in $(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 && $6 ~ /^\/home\// {print $1}'); do
+            usermod -aG uhid "${_u}" 2>/dev/null && \
+                echo "Added '${_u}' to the uhid group."
+            if getent group tss >/dev/null; then
+                usermod -aG tss "${_u}" 2>/dev/null && \
+                    echo "Added '${_u}' to the tss group."
+            fi
+            # copy skel config for this user if not present
+            _u_home="$(getent passwd "${_u}" | cut -d: -f6)"
+            if [ -n "${_u_home}" ] && [ ! -f "${_u_home}/.fido2/passkey.env" ]; then
+                install -dm700 -o "${_u}" -g "${_u}" "${_u_home}/.fido2"
+                install -m600 -o "${_u}" -g "${_u}" \
+                    /etc/skel/.fido2/passkey.env \
+                    "${_u_home}/.fido2/passkey.env"
+                sed -i "s|FIDO_HOME=%h/|FIDO_HOME=${_u_home}/|" "${_u_home}/.fido2/passkey.env"
+                echo "Created ${_u_home}/.fido2/passkey.env"
+            fi
+        done
+        # Clear _ENROLL_USER — per-user work already done above in the loop.
+        _ENROLL_USER=""
+    fi
+
+    if [ -n "${_ENROLL_USER}" ]; then
+        usermod -aG uhid "${_ENROLL_USER}"
+        echo "Added '${_ENROLL_USER}' to the uhid group."
+        if getent group tss >/dev/null; then
+            usermod -aG tss "${_ENROLL_USER}"
+            echo "Added '${_ENROLL_USER}' to the tss group."
+        fi
+    fi
+
+    # ── copy skel config to the installing user's home if not already present ──
+    # Replace the literal %h placeholder with the user's real home directory so
+    # FIDO_HOME resolves correctly at runtime (systemd does not expand %h inside
+    # EnvironmentFile values, only in unit fields).
+    if [ -n "${_ENROLL_USER}" ]; then
+        _HOME="$(getent passwd "${_ENROLL_USER}" | cut -d: -f6)"
+        if [ -n "${_HOME}" ] && [ ! -f "${_HOME}/.fido2/passkey.env" ]; then
+            install -dm700 -o "${_ENROLL_USER}" -g "${_ENROLL_USER}" "${_HOME}/.fido2"
+            install -m600 -o "${_ENROLL_USER}" -g "${_ENROLL_USER}" \
+                /etc/skel/.fido2/passkey.env \
+                "${_HOME}/.fido2/passkey.env"
+            sed -i "s|FIDO_HOME=%h/|FIDO_HOME=${_HOME}/|" "${_HOME}/.fido2/passkey.env"
+            echo "Created ${_HOME}/.fido2/passkey.env"
+        fi
+    fi
+
+    # ── fix skel file permissions (dpkg install does not preserve 600) ─────────
+    chmod 600 /etc/skel/.fido2/passkey.env 2>/dev/null || true
+
+    # ── globally enable the passkey user service for all users ────────────────
+    # dh_installsystemduser injects the enable snippet after esac (via DEBHELPER).
+    # This explicit call is belt-and-suspenders for bare dpkg installs.
+    systemctl --global enable passkey.service 2>/dev/null || true
+
+    # ── reload udev so /dev/uhid gets GROUP=uhid immediately ──────────────────
+    udevadm control --reload-rules
+    udevadm trigger --subsystem-match=misc
+
+    echo ""
+    echo "soft-fido2 installed. Log out and back in for group membership to take effect."
+    echo "The passkey service will start automatically at your next graphical login."
+    ;;
+  remove)
+    systemctl --global disable passkey.service 2>/dev/null || true
+    ;;
+esac
+
+#DEBHELPER#
+exit 0

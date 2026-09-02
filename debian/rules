@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+%:
+	dh $@ --with python3
+
+override_dh_auto_clean:
+	rm -rf dist build *.egg-info .pybuild
+
+override_dh_auto_configure:
+	# nothing — build is driven entirely by python3 -m build
+
+override_dh_auto_build:
+	GITHUB_RUN_NUMBER=0 python3 -m build --wheel --no-isolation
+
+override_dh_python3:
+	dh_python3 --no-ext-rename
+
+override_dh_auto_test:
+	# skip
+
+override_dh_install:
+	dh_install
+	install -Dm644 rpmbuild/passkey.env debian/soft-fido2/etc/skel/.fido2/passkey.env
+
+override_dh_auto_install:
+	DEB_PYTHON_INSTALL_LAYOUT=deb_system python3 -m pip install \
+	    --no-deps \
+	    --no-build-isolation \
+	    --root debian/soft-fido2 \
+	    --prefix $(shell python3 -c 'import sys; print(sys.prefix)') \
+	    --no-warn-script-location \
+	    dist/*.whl

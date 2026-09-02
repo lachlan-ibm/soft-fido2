@@ -20,6 +20,7 @@ _DISPATCH = {
     "android-safetynet":  build_android_safetynet_attestation_statement,
     "android-key":        build_android_key_attestation_statement,
     "apple":              build_apple_attestation_statement,
+    "anon":               build_apple_attestation_statement #alias for apple/AnonCA
 }
 
 

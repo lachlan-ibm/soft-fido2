@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtCore import QTimer
 
 from ...message_queues import QueueMessageType, MessageQueue
-from .settings_dialog import SettingsDialog
+from .config import APP_TITLE, AppState
 
 try:
     from soft_fido2.platform import Notifier as DBusNotifier
@@ -105,7 +105,7 @@ class SysTrayMainWindow:
     
     def _update_icon_for_state(self):
         """Update the tray icon based on current state."""
-        if self.app._current_state == self.app.AppState.LOCKED:
+        if self.app._current_state == AppState.LOCKED:
             self._tray_icon.setIcon(self.locked_icon)
             self._tray_icon.setToolTip('AyeBeKey - Locked')
         else:
@@ -223,9 +223,9 @@ class SysTrayMainWindow:
         - If locked: Show "get started" message (needs platform key setup)
         - If unlocked: No notification (app in good state)
         """
-        if self.app._current_state == self.app.AppState.LOCKED:
+        if self.app._current_state == AppState.LOCKED:
             self._show_notification(
-                title=SettingsDialog.TITLE,
+                title=APP_TITLE,
                 message="Create or unlock the platform key",
                 urgency="normal",
                 timeout=5000
@@ -239,13 +239,12 @@ class SysTrayMainWindow:
             fprint_pending: Whether fingerprint authentication is pending
         """
         self._show_notification(
-            title=SettingsDialog.TITLE + ": UV",
+            title=APP_TITLE + ": UV",
             message="User Verification request: accept" + ("? or scan your fingerprint!" if fprint_pending else "?"),
             urgency="critical",
             timeout=15000,
             actions=[
                 ('accept', 'Accept'),
-                ('accept_u2f', 'Accept [No Pin]'),
                 ('decline', 'Decline')
             ] if self.notification_fw == self.NotificationFramework.DBUS else None
         )
@@ -354,11 +353,6 @@ class SysTrayMainWindow:
         if action_key == 'accept':
             # User clicked Accept button (verified)
             MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT)
-            # Restore status icon after user response
-            self._restore_status_icon()
-        elif action_key == 'accept_u2f':
-            # User clicked Accept [U2F] button (U2F mode)
-            MessageQueue.notify_auth.put(QueueMessageType.USER_RESPONSE_ACCEPT_U2F)
             # Restore status icon after user response
             self._restore_status_icon()
         elif action_key == 'decline':

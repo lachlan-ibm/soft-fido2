@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.backends import default_backend
 
 from soft_fido2.key_pair import KeyUtils
-from soft_fido2.platform.tpm_device import TPMDevice, TPMKeyPair
+from soft_fido2.platform import TPMDevice, TPMKeyPair
 
 
 class TestTPMDerivation(unittest.TestCase):
@@ -166,8 +166,8 @@ class TestTPMDerivation(unittest.TestCase):
 class TestTPMDeviceECDH(unittest.TestCase):
     """Test TPMDevice ecdh_derive_ikm functionality"""
     
-    @patch('soft_fido2.platform.tpm_device.ESAPI')
-    @patch('soft_fido2.platform.tpm_device.redirect_tcti_to_logging')
+    @patch('soft_fido2.platform.nix.tpm_device.ESAPI')
+    @patch('soft_fido2.platform.nix.tpm_device.redirect_tcti_to_logging')
     def test_ecdh_derive_ikm_basic_operation(self, mock_redirect, mock_esapi_class):
         """Test basic ecdh_derive_ikm operation"""
         mock_esapi = MagicMock()
@@ -197,8 +197,8 @@ class TestTPMDeviceECDH(unittest.TestCase):
         # Verify ecdh_zgen was called
         mock_esapi.ecdh_zgen.assert_called_once()
 
-    @patch('soft_fido2.platform.tpm_device.ESAPI')
-    @patch('soft_fido2.platform.tpm_device.redirect_tcti_to_logging')
+    @patch('soft_fido2.platform.nix.tpm_device.ESAPI')
+    @patch('soft_fido2.platform.nix.tpm_device.redirect_tcti_to_logging')
     def test_ecdh_derive_ikm_custom_handle(self, mock_redirect, mock_esapi_class):
         """Test ecdh_derive_ikm with custom persistent handle"""
         mock_esapi = MagicMock()

@@ -29,6 +29,9 @@ import os
 import logging
 from typing import Optional, Tuple, Any
 
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.backends import default_backend
+
 from ...key_pair import KeyUtils, KeyPair
 
 
@@ -94,7 +97,7 @@ class PlatformKeyService:
                 print(f"Failed: {message}")
         """
         try:
-            from soft_fido2.platform.tpm_device import TPMDevice
+            from ...platform import TPMDevice
             
             tpm = TPMDevice()
             
@@ -228,7 +231,7 @@ class PlatformKeyService:
             Tuple of (success, key_pair, message)
         """
         try:
-            from soft_fido2.platform.tpm_device import TPMDevice
+            from ...platform import TPMDevice
 
             tpm = TPMDevice()
             pwd_bytes = password.encode('utf-8')
@@ -255,7 +258,7 @@ class PlatformKeyService:
             password: Optional password if key is password-protected
         """
         try:
-            from soft_fido2.platform.tpm_device import TPMDevice
+            from ...platform import TPMDevice
             
             tpm = TPMDevice()
             
@@ -295,7 +298,7 @@ class PlatformKeyService:
         """
         if key_type == 'tpm':
             try:
-                from soft_fido2.platform import TPMBackend as TPMDevice
+                from ...platform import TPMDevice
                 tpm = TPMDevice()
                 tpm.get_key()
                 return True
@@ -419,9 +422,7 @@ class PlatformKeyService:
         Returns:
             TPMKeyPair: Wrapper object with KeyPair-compatible interface
         """
-        from soft_fido2.platform.tpm_device import TPMKeyPair
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.backends import default_backend
+        from ...platform import TPMDevice, TPMKeyPair
         
         # Convert TPM public key to cryptography public key
         x = int.from_bytes(bytes(public_key_tpm.publicArea.unique.ecc.x), 'big')
