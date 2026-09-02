@@ -1,0 +1,5 @@
+soft-fido2 (0.4.0-1) unstable; urgency=medium
+
+  * Initial DEB package build: aye.be.key
+
+ -- soft_fido2 packager <lgleeson@au1.ibm.com>  Mon, 01 Jan 2024 00:00:00 +0000

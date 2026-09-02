@@ -1,9 +1,9 @@
 # Copyrite IBM 2022, 2025
 # IBM Confidential
 
-import hashlib, json, struct, re, base64, binascii, sys, array, os, time, logging, jwt
+import hashlib, json, struct, re, base64, binascii, sys, array, os, logging
 import cbor2 as cbor
-from typing import Optional, List
+from typing import Optional, List, Union, Any
 
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, mldsa,  padding, utils
 from cryptography.hazmat.primitives import serialization, hashes
@@ -11,26 +11,16 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 from cryptography.fernet import Fernet
 
-
-try:
-    from soft_fido2.key_pair import KeyPair, KeyUtils
-    from soft_fido2.cert_utils import CertUtils
-    from soft_fido2.symmetric_key import SymmetricKey
-except:
-    try:
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from cert_utils import CertUtils
-        from key_pair import KeyPair, KeyUtils
-        from symmetric_key import SymmetricKey    
-    except Exception as e:
-        logging.debug("Module load error")
-        logging.exception(e)
-        raise e
+from .key_pair import KeyPair, KeyUtils
+from .attestation import process_attestation_statement  as _build_att_stmt
+from .symmetric_key import SymmetricKey
 
 
 class Fido2Authenticator(object):
 
     CRED_PREFIX = b"1337C0D3"
+
+    userHandle: Optional[Union[bytes,str]] = None
 
     def __init__(self,
             keyPair: Optional[KeyPair] = None,
@@ -250,12 +240,9 @@ class Fido2Authenticator(object):
         private_key = keyPair.get_private()
         
         # Determine algorithm ID and extract key material
-        if alg_id is None:
-            config = KeyUtils._get_key_config(private_key, self.hashAlg)
-            alg_id = config['alg_id']
-            key_material = config['extract_key'](private_key)
-        else:
-            key_material = KeyUtils._extract_key_material(private_key, self.hashAlg)
+        config = KeyUtils._get_key_config(private_key, self.hashAlg)
+        alg_id = alg_id if alg_id is not None else config.alg_id
+        key_material = config.extract_key(private_key)
         
         # Build plaintext and encrypt
         plaintext = self._build_credential_id_plaintext(alg_id, key_material)
@@ -546,437 +533,17 @@ class Fido2Authenticator(object):
         authData = bytes(authDataBytes)
         return authData
 
-    def build_packed_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statment with the packed format. Hashing alg used in this format is controleld by
-        the `self.hashAlg` property
-
-        Args:
-            atteStmtFmt (str): statement format, either 'packed' or 'packed-self' to indicate self signed attestation
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: packed attestation statement,
-                    https://www.w3.org/TR/webauthn/#packed-attestation
-        """
-        result = {} # Key order is important
-        result[u"alg"] = KeyUtils.get_alg_id_from_pubkey_and_hash(
-                    keyPair.get_public(), self.hashAlg, pss=True if self.salt_len else False)
-        toSign = bytes([*authData, *clientDataHash])
-        sig = ""
-
-        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            #sig = keyPair.get_private().sign( toSign, padding.PKCS1v15(), hashes.SHA256() )
-            sig = keyPair.get_private().sign(toSign, padding.PKCS1v15(), self.hashAlg)
-
-        elif isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            #digest = hashes.Hash(hashes.SHA256())
-            digest = hashes.Hash(self.hashAlg)
-            digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
-            #sig = keyPair.get_private().sign( digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
-            sig = keyPair.get_private().sign(digest.finalize(), 
-                                                ec.ECDSA(utils.Prehashed(self.hashAlg)))
-        elif isinstance(keyPair.get_public(), 
-                    (mldsa.MLDSA44PublicKey, mldsa.MLDSA65PublicKey, mldsa.MLDSA87PublicKey, ed25519.Ed25519PublicKey)):
-            sig = keyPair.get_private().sign(toSign) # Generic sign method
-        else:
-            raise RuntimeError("Unsupported key type")
-
-        result[u"sig"] = sig
-
-        #Maybe add X5c
-        selfAttestation = True if 'self' in atteStmtFmt else False
-        if not selfAttestation:
-            if not self.caCertificate:
-                raise RuntimeError("Packed Attestation requires a CA certificate to be "\
-                        "present when the authenticator is created")
-            leafSubj = x509.Name([
-                x509.NameAttribute(x509.NameOID.COMMON_NAME, u'leaf'),
-                x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-                x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
-                x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
-            ])
-            leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                              issuer=self.caCertificate.subject,
-                                              keyPair=keyPair,
-                                              signKeyPair=self.caKeyPair,
-                                              aaguid=self.get_aaguid(hexString=False))
-            # Final trust chain to add to AttesationObject
-            result['x5c'] = [CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate)]
-        return result
-
-    def build_fido_u2f_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the U2F format.
-
-        Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: u2f attestation statement,
-                    https://www.w3.org/TR/webauthn/#fido-u2f-attestation
-
-        """
-        if not isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey):
-            raise Exception("FIDO U2F only supports ECDSA keys")
-
-        pubKey = bytearray(b'\x04')
-        pubKey.extend(self._long_to_bytes(keyPair.get_public().public_numbers().x))
-        pubKey.extend(self._long_to_bytes(keyPair.get_public().public_numbers().y))
-
-        subject = x509.Name([
-            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'root'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'IBM Security')
-        ])
-        cert = CertUtils.gen_ca_cert(subject=subject, keyPair=keyPair)
-
-        rpIdHash = authData[0:32]
-        toSign = []
-        toSign += ['\x00']
-        toSign += rpIdHash
-        toSign += clientDataHash
-        toSign += credIdBytes
-        toSign += pubKey
-        digest = hashes.Hash(hashes.SHA256())
-        digest.update(b''.join([(x.encode() if isinstance(x, str) else bytes([x])) for x in toSign]))
-        sig = keyPair.get_private().sign(digest.finalize(), ec.ECDSA(utils.Prehashed(hashes.SHA256())))
-        result = {'sig': sig, 'x5c': [CertUtils.get_encoded(cert)]}
-
-        return result
-
-    def _build_rsa_public_area(self, keyPair):
-        pubArea = []
-        pubArea += [0, 1]  # TPM_ALG_ID = TPM_ALG_RSA
-        pubArea += [0, 11]  # name_alg = TPM_ALG_SHA256
-        pubArea += [0] * 4  # TPMA_OBJECT
-        pubArea += [0] * 2  # authPolicy
-        pubArea += [0, 0x10]  # symetric = TPM_ALG_NULL
-        pubArea += [1, 4]  # scheme = TMP_ALG_RSASSA (PKCS1-v1.5)
-        pubArea += [4, 0]  # keySize
-        pubArea += [0] * 4  # exponent
-        unique = self._long_to_bytes(keyPair.get_public().public_numbers().n)
-        uniqueLength = struct.pack("!H", len(unique))
-        pubArea += [uniqueLength[0], uniqueLength[1]]
-        pubArea += unique
-        return bytes(pubArea)
-
-    def _build_ec_public_area(self, keypair):
-        pubArea = []
-        pubArea += [0, 0x23] # TPM_ALG_ID = TPM_ALG_ECC
-        pubArea += [0, 0x0B] # TPM_ALG_SHA256
-        pubArea += [0] * 4  # TPMA_OBJECT
-        pubArea += [0] * 2  # authPolicy
-        pubArea += [0, 0x10]  # symetric = TPM_ALG_NULL
-        pubArea += [0, 0x10]  # scheme = TPM_ALG_NULL
-        pubArea += [0, 0x03]  # curve_id == TPM_ECC_NIST_P256
-        pubArea += [0, 0x10]  # kdf == TPM_ALG_NULL
-        xBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().x)
-        xByteLen = struct.pack("!H", len(xBytes))
-        pubArea += [xByteLen[0], xByteLen[1]]
-        pubArea += xBytes
-        yBytes = KeyUtils._long_to_bytes(keypair.get_public().public_numbers().y)
-        yByteLen = struct.pack("!H", len(yBytes))
-        pubArea += [yByteLen[0], yByteLen[1]]
-        pubArea += yBytes
-        return bytes(pubArea)
-
-    def _build_cert_info(self, attsToSign, pubInfo):
-        certInfo = [0xFF, 0x54, 0x43, 0x47]  # TPM_GENERATED
-        certInfo += [0x80, 0x17]  # TPM_ST_ATTEST_CERTIFY
-        certInfo += [0] * 2  # qualified signer length
-        digest = hashes.Hash(hashes.SHA256())
-        digest.update(attsToSign)
-        sigHash = digest.finalize()
-        #certInfo += [ int((len(sigHash) - (len(sigHash) & 0xFF)) / 256), len(sigHash) & 0xFF ]
-        sigHashLength = struct.pack("!H", len(sigHash))
-        certInfo += [sigHashLength[0], sigHashLength[1]]
-        certInfo += sigHash
-        certInfo += [0] * 17  # clock info
-        vendorId = struct.pack("!L", CertUtils.TPM_VENDOR_ID)
-        certInfo += [0] * (8 - len(vendorId))
-        certInfo += vendorId
-        attestedName = [0x00, 0x0B]  #name_alg
-        digest = hashes.Hash(hashes.SHA256())
-        digest.update(pubInfo)
-        attestedName += digest.finalize()
-        attestedNameLength = struct.pack("!H", len(attestedName))
-        certInfo += [attestedNameLength[0], attestedNameLength[1]]
-        certInfo += attestedName
-        certInfo += [0] * 2  # attested qualified name length
-        return bytes(certInfo)
-
-    def build_tpm_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the TPM format.
-
-        Args:
-            atteStmtFmt (str): Statement format ('tpm')
-            clientDataHash (bytes): Hash of the client data as defined in
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (bytes): Authenticator data as defined in
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (bytes): Credential ID bytes
-            keyPair (KeyPair): Public/private key pair to sign data with
-
-        Returns:
-            dict: TPM attestation statement as defined in
-                  https://www.w3.org/TR/webauthn/#tpm-attestation
-        """
-        if not self.caCertificate:
-            raise RuntimeError("TPM Attestation requires a CA certificate to be "\
-                    "present when the authenticator is created")
-        #Generate TPM certificates
-        vendorId = CertUtils._long_to_bytes(CertUtils.TPM_VENDOR_ID).hex()
-        tpmSan = x509.Name([
-            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_MANUFACTURER), u"id:{}".format(vendorId)),
-            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_VENDOR), u"IBMTPM"),
-            x509.NameAttribute(x509.ObjectIdentifier(CertUtils.TPM_FW_VERSION), u"id:1")
-        ])
-        tpmCert = CertUtils.gen_aik_cert(subject=x509.Name([]),
-                                         issuer=self.caCertificate.subject,
-                                         keyPair=keyPair,
-                                         signKeyPair=self.caKeyPair,
-                                         aaguid=self.get_aaguid(hexString=False),
-                                         san=tpmSan)
-        x5c = [CertUtils.get_encoded(tpmCert), CertUtils.get_encoded(self.caCertificate)]
-
-        # Build sign data
-        toSign = bytes([*authData, *clientDataHash])
-        pubArea = self._build_rsa_public_area(keyPair) if isinstance(keyPair.get_public(), rsa.RSAPublicKey) else \
-                    self._build_ec_public_area(keyPair)
-        certInfo = self._build_cert_info(toSign, pubArea)
-        sig = None
-        theHash = hashes.SHA256()
-        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            keyPair.get_private().sign(certInfo, padding.PKCS1v15(), theHash)
-            sig = keyPair.get_private().sign(certInfo, padding.PKCS1v15(), theHash)
-        else:
-            digest = hashes.Hash(hashes.SHA256())
-            digest.update(certInfo)
-            sig = keyPair.get_private().sign(digest.finalize(),
-                                                  ec.ECDSA(utils.Prehashed(theHash)) )
-
-
-        # Build attestation
-        result = {
-            u"pubArea": pubArea,
-            u"certInfo": certInfo,
-            u"sig": sig,
-            u"ver": u"2.0",
-            u"alg": KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), theHash),
-            u"x5c": x5c
-        }
-        return result
-
-    def build_none_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the none format
-
-        Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: none attestation statement,
-                    https://www.w3.org/TR/webauthn/#none-attestation
-        """
-        return {}
-
-    def build_android_safetynet_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes,
-                                                      keyPair):
-        """Create an attestation statement with the Android Safetynet format
-
-        Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: Android safetynet attestation statement,
-                    https://www.w3.org/TR/webauthn/#android-safetynet-attestation
-        """
-        if(isinstance(keyPair.get_public(), ec.EllipticCurvePublicKey)):
-           raise RuntimeError("Android safetynet Attestation requires a RSA key")
-        if self.caCertificate is None:
-            raise RuntimeError("Android safetynet Attestation requires a CA certificate to be" + \
-                    " set for the authenticator")
-        leafSubj = x509.Name([
-            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'attest.android.com'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
-        ])
-        leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                          issuer=self.caCertificate.subject,
-                                          keyPair=keyPair,
-                                          signKeyPair=self.caKeyPair)
-        nonceBytes = [*authData, *clientDataHash]
-        nonceHash = hashlib.sha256(bytes(nonceBytes)).digest()
-        claims = {
-            u'timestampMs': round(time.time() * 1000),
-            u'nonce': base64.b64encode(nonceHash).decode(),
-            u'apkPackageName': u"com.package.name.of.requesting.app",
-            u"apkCertificateDigestSha256": [u"b64 encoded sha256 of cert"],
-            u"ctsProfileMatch": self.ctsProfileMatch,
-            u"basicIntegrity": True
-        }
-        jwtResponse = jwt.encode(
-            claims,
-            keyPair.get_private_bytes(),
-            algorithm="RS256",
-            headers={"x5c": [CertUtils.get_bytes(leafCert).decode(),
-                             CertUtils.get_bytes(self.caCertificate).decode()]})
-        result = {u'ver': u'some version', u'response': jwtResponse.encode()}
-        return result
-
-    def build_android_key_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the Android Keystore format.
-
-        Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: Android Keystore attestation statement,
-                    https://www.w3.org/TR/webauthn/#android-key-attestation
-        """
-        if not self.caCertificate:
-            raise RuntimeError("Android Key Attestation requires a CA certificate to be "\
-                    "present when the authenticator is created")
-
-        #Build x5c chain
-        leafSubj = x509.Name([
-            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'leaf'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
-        ])
-        leafCert = CertUtils.gen_aik_cert(subject=leafSubj,
-                                          issuer=self.caCertificate.subject,
-                                          keyPair=keyPair,
-                                          signKeyPair=self.caKeyPair,
-                                          androidKeyNonce=bytes(clientDataHash))
-        x5c = [CertUtils.get_encoded(leafCert), CertUtils.get_encoded(self.caCertificate)]
-        #Sign data
-        toSign = [*authData, *clientDataHash]
-        sig = None
-        if isinstance(keyPair.get_public(), rsa.RSAPublicKey):
-            sig = keyPair.get_private().sign(bytes(toSign), padding.PKCS1v15(), hashes.SHA256())
-        else: #Must be EC key
-            digest = hashes.Hash(hashes.SHA256())
-            digest.update(bytes(toSign))
-            sig = keyPair.get_private().sign(digest.finalize(),
-                                                  ec.ECDSA(utils.Prehashed(hashes.SHA256())) )
-
-        result = {
-            u"x5c": x5c,
-            u"sig": sig,
-            u"alg": KeyUtils.get_alg_id_from_pubkey_and_hash(keyPair.get_public(), self.hashAlg)
-        }
-        return result
-
-    def build_apple_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Create an attestation statement with the Apple Platform format.
-
-        Args:
-            atteStmtFmt (str): Statement format ('apple')
-            clientDataHash (bytes): Hash of the client data as defined in
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (bytes): Authenticator data as defined in
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (bytes): Credential ID bytes
-            keyPair (KeyPair): Public/private key pair to sign data with
-
-        Returns:
-            dict: Apple platform attestation statement containing x5c certificate chain
-        """
-        if not self.caCertificate:
-            raise RuntimeError("Apple Attestation requires a CA certificate to be "\
-                    "present when the authenticator is created")
-        #First need to generate the apple certificate with the required extension
-        nonceBytes = []
-        nonceBytes += authData
-        nonceBytes += clientDataHash
-        nonceHash = hashlib.sha256(bytes(nonceBytes)).digest()
-        leafSubj = x509.Name([
-            x509.NameAttribute(x509.NameOID.COMMON_NAME, u'apple'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATIONAL_UNIT_NAME, u'Authenticator Attestation'),
-            x509.NameAttribute(x509.NameOID.COUNTRY_NAME, u'AU'),
-            x509.NameAttribute(x509.NameOID.ORGANIZATION_NAME, u'IBM')
-        ])
-        appleCert = CertUtils.gen_apple_cert(subject=leafSubj,
-                                             issuer=self.caCertificate.subject,
-                                             keyPair=keyPair,
-                                             signKeyPair=self.caKeyPair,
-                                             nonce=nonceHash)
-        return {'x5c': [CertUtils.get_encoded(appleCert), CertUtils.get_encoded(self.caCertificate)]}
-
-    def _error(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-            raise ValueError("Unsupported attestation statement format")
-
-    def _process_att_stmt(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        return {
-            "none": self.build_none_attestation_statement,
-            "packed": self.build_packed_attestation_statement,
-            "fido-u2f": self.build_fido_u2f_attestation_statement,
-            "packed-self": self.build_packed_attestation_statement,
-            "android-key": self.build_android_key_attestation_statement,
-            "android-safetynet": self.build_android_safetynet_attestation_statement,
-            "tpm": self.build_tpm_attestation_statement,
-            "apple": self.build_apple_attestation_statement
-        }.get(atteStmtFmt, self._error)(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
-
-    def process_attestation_statement(self, atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair):
-        """Helper function that chooses an attestation statement function based on the atteStmtFmt variable
-
-        Args:
-            atteStmtFmt (str): statement format
-            clientDataHash (str): byte string of clientDataHash,
-                    https://www.w3.org/TR/webauthn/#collectedclientdata-hash-of-the-serialized-client-data
-            authData (str): byte string of the authentication data,
-                    https://www.w3.org/TR/webauthn/#sec-authenticator-data
-            credIdBytes (str): byte string of the credential id
-            keyPair (KeyPair): public/privte key pair to sign data with
-
-        Returns:
-            dict: attestation statement. Type of statement depends on 'atteStmtFmt', see:
-                    https://www.w3.org/TR/webauthn/#defined-attestation-formats
-        """
-        if atteStmtFmt.startswith('compound'):
-            stmtsCsv = atteStmtFmt.split(":")
-            if stmtsCsv == None or len(stmtsCsv) != 2:
-                raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
-            stmts = stmtsCsv[1].split(",")
-            if stmts == None or len(stmts) < 2:
-                raise Exception("Unexpected attestation statement format [{}]".format(atteStmtFmt))
-            result = []
-            for stmt in stmts:
-                result += [{u'fmt': stmt, u'attStmt': 
-                           self._process_att_stmt(stmt, clientDataHash, authData, credIdBytes, keyPair)}]
-            return result
-        #else
-        return self._process_att_stmt(atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair)
+    def process_attestation_statement(self, atteStmtFmt, clientDataHash,
+                                        authData, credIdBytes, keyPair):
+        return _build_att_stmt(
+            atteStmtFmt, clientDataHash, authData, credIdBytes, keyPair,
+            hash_alg=self.hashAlg,
+            salt_len=self.salt_len,
+            ca_certificate=self.caCertificate,
+            ca_key_pair=self.caKeyPair,
+            aaguid=self.get_aaguid(hexString=False),
+            cts_profile_match=self.ctsProfileMatch,
+        )
 
     def attestation_options_response_to_credential_create_options(self, options):
         """Take the options provided by the relying party and extract required information to
@@ -1053,7 +620,7 @@ class Fido2Authenticator(object):
             u'clientDataJSON': str(clientDataEncoded, 'utf-8'),
             u'attestationObject': str(base64.urlsafe_b64encode(cbor.dumps(attestationObject)), 'utf-8')
         }
-        spkc = {
+        spkc: dict[str, Any] = {
             u'id': self.get_credential_id(keyPair),
             u'rawId': self.get_credential_id(keyPair),
             u'response': saar,
@@ -1168,7 +735,7 @@ class Fido2Authenticator(object):
             "clientDataJSON": str(base64.urlsafe_b64encode(clientDataJSON.encode('utf-8')), 'utf-8'),
             "authenticatorData": str(base64.urlsafe_b64encode(authData), 'utf-8')
         }
-        if hasattr(self, 'userHandle') and isinstance(self.userHandle, (str, bytes)):
+        if isinstance(self.userHandle, (str, bytes)):
             saar['userHandle'] = self._urlb64_encode(self.userHandle)
         if "attestation" in cro.keys():
             raise RuntimeError("TODO")

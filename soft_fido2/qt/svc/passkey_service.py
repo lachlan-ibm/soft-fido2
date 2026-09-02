@@ -29,10 +29,8 @@ import os
 import logging
 from typing import Optional, Tuple, List, Dict, Any
 
-try:
-    from soft_fido2.key_pair import KeyUtils
-except ImportError:
-    from key_pair import KeyUtils
+from ...key_pair import KeyUtils
+
 
 
 class PasskeyService:
@@ -245,7 +243,7 @@ class PasskeyService:
                 passkey_data['pin.hash'],
                 passkey_path
             )
-            
+            assert isinstance(passkey_data['res.creds'], list)
             credential_count = len(passkey_data['res.creds'])
             success_msg = f"Successfully loaded {credential_count} credential(s) from {filename}"
             self.logger.info(success_msg)

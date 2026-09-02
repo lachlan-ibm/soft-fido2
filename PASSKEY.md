@@ -379,11 +379,11 @@ python soft_fido2/usbip_device.py
 sudo modprobe vhci-hcd
 
 # List available USB/IP devices on the server
-sudo usbip list -r <SERVER_IP>
+sudo usbip list -r <SERVER_IP/127.0.0.1>
 
 # Attach the FIDO2 authenticator device
-sudo usbip attach -r <SERVER_IP> -b 1-1.1
+sudo usbip attach -r <SERVER_IP/127.0.0.1> -b 1-1.1
 
 # Verify the device is attached
-lsusb -v -d 3713:3713
+lsusb -v -d 1337:1337
 ```

@@ -5,7 +5,7 @@ sudo modprobe uhid
 echo 'uhid' | sudo tee /etc/modules-load.d/uhid.conf
 
 # Create uhid group (if it doesn't exist)
-sudo groupadd uhid 2>/dev/null || true
+getent group uhid >/dev/null || sudo groupadd -r uhid
 
 # Add your user to uhid group
 sudo usermod -aG uhid $USER

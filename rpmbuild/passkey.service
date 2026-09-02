@@ -1,5 +1,5 @@
 [Unit]
-Description=Software FIDO2 Passkey (User Service with GUI)
+Description=Software FIDO2 Passkey Authenticator
 PartOf=graphical-session.target
 After=graphical-session.target
 
@@ -9,7 +9,6 @@ ExecStart=/usr/bin/python3 -m soft_fido2
 Restart=on-failure
 RestartSec=5
 EnvironmentFile=%h/.fido2/passkey.env
-Environment="PYTHONPATH=%h/.local/lib/python3.14/site-packages"
 TimeoutStopSec=10
 KillMode=mixed
 

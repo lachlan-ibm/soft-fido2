@@ -29,27 +29,12 @@ advised of the possibility of such damage.
 Update 2022 by Lachlan Gleeson for python 3
 '''
 
-import socketserver, datetime, struct, traceback, re, signal, threading, sys, random, time
+import socketserver, datetime, struct, traceback, re, signal, threading, random, time
+from typing import Optional
 
-
-# Hey StackOverflow !
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    OKPINK = '\033[95m'
-    OKYELLOW = '\033[93m'
-    OKPURPLE = '\033[35m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-
-def colour_print(colour=bcolors.OKBLUE, component='USB/IP', msg=''):
-    print('[' + colour + component + bcolors.ENDC + '] ' + msg)
-
+from .ctap.packet import BaseStructure as _BaseStructure, bcolors, colour_print, CTAPHIDInitPkt, CTAPHIDSeqPkt
+from .ctap import CBORCommand
+from enum import Enum
 
 def print_bytes(*args):
     result = ""
@@ -73,35 +58,22 @@ def dump_bytes(*args, colour=bcolors.OKPURPLE, component='USB/IP CONTROLLER', ms
     print_bytes(*args)
 
 
-class BaseStructure(object):
-    """Base class for USB/IP protocol structures with dynamic attributes.
-    
-    Subclasses define _fields_ to specify structure layout.
-    Attributes are created dynamically based on _fields_.
-    """
-    _fields_ = []
+class BaseStructure(_BaseStructure):
+    """USB/IP protocol structure base.
 
-    def __init__(self, **kwargs):
-        self.init_from_dict(**kwargs)
-        for field in self._fields_:
-            if len(field) > 2:
-                if not hasattr(self, field[0]):
-                    setattr(self, field[0], field[2])
+    Overrides byte-order to big-endian (``>``) and adds ``__getattr__``
+    so that accessing an undefined field returns ``None`` rather than
+    raising ``AttributeError``.  Also provides ``formatDevicesList`` /
+    ``packDevicesList`` for multi-device list encoding.
+    """
+    base_pack_format = '>'
 
     def __getattr__(self, name):
-        """Allow dynamic attribute access for fields defined in _fields_."""
-        # Return None for undefined attributes to avoid AttributeError
+        """Return None for undefined attributes instead of raising AttributeError."""
         return None
 
-    def init_from_dict(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def size(self):
-        return struct.calcsize(self.format())
-
     def format(self):
-        pack_format = '>'
+        pack_format = self.base_pack_format
         for field in self._fields_:
             if isinstance(field[1], BaseStructure):
                 pack_format += str(field[1].size()) + 's'
@@ -111,7 +83,6 @@ class BaseStructure(object):
                 pack_format += field[1][1:]
             else:
                 pack_format += field[1]
-        print(pack_format)
         return pack_format.encode('utf-8')
 
     def formatDevicesList(self, devicesCount):
@@ -240,10 +211,7 @@ class OPREPDevList(BaseStructure):
             field = (str(key), value[0], value[1])
             self._fields_.append(field)
 
-        for field in self._fields_:
-            if len(field) > 2:
-                if not hasattr(self, field[0]):
-                    setattr(self, field[0], field[2])
+        super().__init__()
 
 class OPREPImport(BaseStructure):
     _fields_ = [
@@ -289,6 +257,8 @@ class USBIPRETSubmit(BaseStructure):
         ('error_count', 'I'),
         ('padding', 'Q')
     ]
+
+    data_frame: bytes | str = b''
 
     def pack(self):
         packed_data = BaseStructure.pack(self)
@@ -517,6 +487,7 @@ class USBDevice():
                              padding=0,
                              data_frame=usb_res).pack()
         dump_bytes(list(rsp), colour=bcolors.FAIL, component='USBDevice(response)', msg='response bytes:')
+        assert self.connection is not None, "connection socket lost"
         self.connection.sendall(rsp)
 
     def handle_get_descriptor(self, control_req, usb_req):
@@ -637,9 +608,8 @@ fido2_end_point_two = EndPoint(
     bInterval=5  # Poll every 5 millisecond
 )
 
-fido2_interface_d.descriptions = [fido2_hid_class]  # type: ignore[attr-defined]
-fido2_interface_d.endpoints = [fido2_end_point_two, fido2_end_point_one]  # type: ignore[attr-defined]
-
+fido2_interface_d.descriptions = [fido2_hid_class]  # pyright: ignore
+fido2_interface_d.endpoints = [fido2_end_point_two, fido2_end_point_one]  # pyright: ignore
 # Device Configuration
 fido2_configuration = DeviceConfigurations(
     wTotalLength=0x2900,
@@ -649,7 +619,7 @@ fido2_configuration = DeviceConfigurations(
     bmAttributes=0x80,  # valid self powered
     bMaxPower=50  # 50 mah current
 )
-fido2_configuration.interfaces = [fido2_interface_d]  # type: ignore[attr-defined]
+fido2_configuration.interfaces = [fido2_interface_d]  # pyright: ignore
 
 
 # ============================================================================
@@ -689,7 +659,7 @@ class CTAP2USBIPDevice(USBDevice):
         USBDevice.__init__(self)
         self.start_time = datetime.datetime.now()
         # Initialize the CTAP2 API
-        from passkey_device import AuthenticatorAPI
+        from .passkey_device import AuthenticatorAPI
         AuthenticatorAPI()
     
     # ========================================================================
@@ -852,7 +822,6 @@ class CTAP2USBIPDevice(USBDevice):
         Args:
             usb_req: USB request with INIT command
         """
-        from passkey_device import CBORCommand
         
         cid = usb_req.data_frame[0:4]
         cmd = usb_req.data_frame[4:5]
@@ -882,7 +851,6 @@ class CTAP2USBIPDevice(USBDevice):
         Args:
             usb_req: USB request with CBOR command
         """
-        from passkey_device import CBORCommand
         
         cid = usb_req.data_frame[0:4]
         colour_print(colour=bcolors.OKGREEN, component='CTAP2USBIPDevice.ctaphid_cbor',
@@ -917,8 +885,6 @@ class CTAP2USBIPDevice(USBDevice):
         Args:
             usb_req: USB request with U2F message
         """
-        from passkey_device import CBORCommand
-        from enum import Enum
         
         class U2FCommand(Enum):
             U2F_VERSION = 0x0
@@ -991,7 +957,7 @@ class CTAP2USBIPDevice(USBDevice):
             cid: Channel ID
             cbor_cmd: CBORCommand with response data
         """
-        from ctaphid_protocol import CTAPHIDInitPkt, CTAPHIDSeqPkt
+        # CTAPHIDInitPkt and CTAPHIDSeqPkt imported at module top from ctap.protocol
         
         if len(self.pending) == 0:
             colour_print(colour=bcolors.FAIL, component='send_response_segment',
@@ -1138,10 +1104,16 @@ class CTAP2USBIPDevice(USBDevice):
         return ''.join("%02X" % x for x in b)
 
 
+class USBIPTCPServer(socketserver.ThreadingTCPServer):
+    """ThreadingTCPServer with a typed reference back to the owning USBContainer."""
+    usbcontainer: Optional["USBContainer"] = None
+
+
 class USBContainer:
     usb_devices = {}
     attached_devices = {}
     devices_count = 0
+    server: Optional[USBIPTCPServer] = None
 
     def __init__(self):
         self.shutdown_event = threading.Event()
@@ -1165,8 +1137,8 @@ class USBContainer:
         self.usb_devices = {}
         self.devices_count = 0
 
-    def handle_attach(self, busid):
-        if (self.usb_devices[busid] != None):
+    def handle_attach(self, busid) -> OPREPImport:
+        if self.usb_devices[busid] is not None:
             busnum = int(busid[4:])
             return OPREPImport(base=USBIPHeader(command=3, status=0),
                                usbPath='/sys/devices/pci0000:00/0000:00:01.2/usb1/' + busid,
@@ -1183,6 +1155,7 @@ class USBContainer:
                                bNumConfigurations=self.usb_devices[busid].bNumConfigurations,
                                bConfigurationValue=self.usb_devices[busid].bConfigurationValue,
                                bNumInterfaces=self.usb_devices[busid].bNumInterfaces)
+        raise KeyError(f"No USB device registered for busid '{busid}'")
 
     def handle_device_list(self):
         devices = {}
@@ -1216,8 +1189,8 @@ class USBContainer:
     def run(self, ip='0.0.0.0', port=3240):
         colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Starting server')
         socketserver.TCPServer.allow_reuse_address = True
-        self.server = socketserver.ThreadingTCPServer((ip, port), USBIPConnection)
-        self.server.usbcontainer = self  # type: ignore[attr-defined]
+        self.server = USBIPTCPServer((ip, port), USBIPConnection)
+        self.server.usbcontainer = self
         
         # Set up signal handlers for graceful shutdown (must be in main thread)
         def signal_handler(signum, frame):
@@ -1251,9 +1224,13 @@ class USBIPConnection(socketserver.BaseRequestHandler):
         endpoint_requests = {}
         colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='New connection from {}'.format(self.client_address))
         req = USBIPHeader()
+        # Narrow Optional type: usbcontainer is always set before any connection is accepted
+        assert isinstance(self.server, USBIPTCPServer)  # narrow the inherited BaseServer type
+        assert self.server.usbcontainer is not None
+        usbcontainer = self.server.usbcontainer
         # Set socket timeout to allow checking shutdown event
         self.request.settimeout(1.0)
-        while not self.server.usbcontainer.shutdown_event.is_set():  # type: ignore[attr-defined]
+        while not usbcontainer.shutdown_event.is_set():
             if not self.attached:
                 try:
                     data = self.request.recv(8)
@@ -1267,20 +1244,20 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                 colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Command is {}'.format(hex(req.command or 0)))
                 if req.command == 0x8005:
                     colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='Querying device list')
-                    self.request.sendall(self.server.usbcontainer.handle_device_list().pack())  # type: ignore[attr-defined]
+                    self.request.sendall(usbcontainer.handle_device_list().pack())
                 elif req.command == 0x8003:
                     busid = self.request.recv(5).strip()  # receive bus id
-                    colour_print(colour=bcolors.OKBLUE, component='USBIP', 
+                    colour_print(colour=bcolors.OKBLUE, component='USBIP',
                                  msg='Attaching to device with busid [{}]'.format(busid.decode()))
                     self.request.recv(27)
-                    self.request.sendall(self.server.usbcontainer.handle_attach(busid.decode()).pack())  # type: ignore[attr-defined]
+                    self.request.sendall(usbcontainer.handle_attach(busid.decode()).pack())
                     self.attached = True
                     self.attachedBusID = busid.decode()
                     colour_print(colour=bcolors.OKBLUE, component='USBIP', msg='attached')
 
             else:
-                #print(self.server.usbcontainer.usb_devices)
-                if (not self.attachedBusID in self.server.usbcontainer.usb_devices):  # type: ignore[attr-defined]
+                #print(usbcontainer.usb_devices)
+                if (not self.attachedBusID in usbcontainer.usb_devices):
                     colour_print(colour=bcolors.WARNING, component='USBIP', msg='closing')
                     self.request.close()
                     break
@@ -1339,9 +1316,9 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                                    component='USBDevice(send_usb_req)', msg='setup bytes:')
                         dump_bytes(list(usb_req.cmd_frame), list(usb_req.data_frame), colour=bcolors.FAIL, 
                                     component='USBDevice(request)', msg='whole recieved message:')
-                        self.server.usbcontainer.usb_devices[self.attachedBusID].connection = self.request  # type: ignore[attr-defined]
+                        usbcontainer.usb_devices[self.attachedBusID].connection = self.request
                         try:
-                            self.server.usbcontainer.usb_devices[self.attachedBusID].handle_usb_request(usb_req)  # type: ignore[attr-defined]
+                            usbcontainer.usb_devices[self.attachedBusID].handle_usb_request(usb_req)
                         except:
                             colour_print(colour=bcolors.FAIL, component='USBIP', 
                                          msg='Connection with client ' + str(self.client_address) + ' ended')
@@ -1352,7 +1329,7 @@ class USBIPConnection(socketserver.BaseRequestHandler):
                         cmd.unpack(data)
                         dump_bytes(command + cmd.pack(), colour=bcolors.WARNING, component='USBIP', msg='Unlink request')
                         #TODO have we actually sent a USBIP_RET_SUBMIT or not?
-                        success = self.server.usbcontainer.usb_devices[self.attachedBusID].unlink(cmd)  # type: ignore[attr-defined]
+                        success = usbcontainer.usb_devices[self.attachedBusID].unlink(cmd)
                         status = 0x0;
                         if success == True:
                             status = 0xF

@@ -29,10 +29,8 @@ import os
 import logging
 from typing import Optional, Tuple, List, Dict, Any
 
-try:
-    from soft_fido2.key_pair import KeyUtils
-except ImportError:
-    from key_pair import KeyUtils
+
+from ...key_pair import KeyUtils
 
 
 class CredentialService:
@@ -98,7 +96,7 @@ class CredentialService:
             # Load the passkey
             passkey_data = KeyUtils._load_passkey(nonce, passkey_path)
             credentials = passkey_data['res.creds']
-            
+            assert isinstance(credentials, list)
             # Cache the PIN by re-saving (updates cached upper pin hash)
             KeyUtils._save_passkey(
                 passkey_data['key'],

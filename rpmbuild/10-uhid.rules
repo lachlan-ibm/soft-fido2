@@ -1,0 +1,1 @@
+KERNEL=="uhid", GROUP="uhid", MODE="0660"

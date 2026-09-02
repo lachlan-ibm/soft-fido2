@@ -47,8 +47,11 @@ Tracker = "https://github.com/lachlan-ibm/soft-fido2/issues"
 [tool.setuptools]
 packages = [
     "soft_fido2",
+    "soft_fido2.ctap",
+    "soft_fido2.attestation",
     "soft_fido2.icons",
     "soft_fido2.platform",
+    "soft_fido2.platform.nix",
     "soft_fido2.qt",
     "soft_fido2.qt.ux",
     "soft_fido2.qt.svc"

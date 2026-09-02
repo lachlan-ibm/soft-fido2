@@ -4,46 +4,36 @@
 
 import logging, sys, os, argparse, threading
 
-# Set process title for proper notification display
+# Set process title for better name and notification display
 try:
     from setproctitle import setproctitle
     setproctitle('AyeBeKey')
 except ImportError:
     # setproctitle not available, notifications may show __main__.py
     pass
-try:
-    from .passkey_device import CTAPHIDevice
-    from .qt_app import SysTrayApp
-    from .usbip_device import CTAP2USBIPDevice, USBContainer
-except:
-    try:
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from passkey_device import CTAPHIDevice
-        from qt_app import SysTrayApp
-        from usbip_device import CTAP2USBIPDevice, USBContainer
-    except Exception as e:
-        logging.debug("Module load error")
-        logging.exception(e)
-        raise e
+
+from .passkey_device import CTAPHIDevice
+from .qt.app import SysTrayApp
+from .usbip_device import CTAP2USBIPDevice, USBContainer
 
 
 class DeviceManager:
     """Manages UHID device lifecycle"""
     
-    def __init__(self, device_path='/dev/uhid'):
+    def __init__(self, device_path : str = '/dev/uhid'):
         """Initialize device manager
         
         Args:
             device_path: Path to UHID device (default: /dev/uhid)
         """
-        self.device_path = device_path
-        self.device = None
-        self._lock = threading.Lock()
+        self.device_path : str = device_path
+        self.device : CTAPHIDevice | None = None
+        self._lock :threading.Lock = threading.Lock()
     
     def start_device(self):
         """Start the UHID device"""
         with self._lock:
-            if self.device is not None and self.device.is_alive():
+            if self.device and self.device.is_alive():
                 logging.warning("Device already running")
                 return False
             
@@ -52,7 +42,7 @@ class DeviceManager:
             self.device.start()
             return True
     
-    def stop_device(self, timeout=5):
+    def stop_device(self, timeout : int = 5):
         """Stop the UHID device
         
         Args:
@@ -88,7 +78,7 @@ class DeviceManager:
             self.device = None
             return True
     
-    def restart_device(self, timeout=5):
+    def restart_device(self, timeout : int = 5):
         """Restart the UHID device
         
         Args:
@@ -140,19 +130,19 @@ Examples:
   python -m soft_fido2 --transport usbip --port 3240
         """
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--transport',
         choices=['uhid', 'usbip'],
         default='uhid',
         help='Transport layer to use (default: uhid)'
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--port',
         type=int,
         default=3240,
         help='Port for USB/IP transport (default: 3240)'
     )
-    parser.add_argument(
+    _ = parser.add_argument(
         '--no-systray',
         action='store_true',
         help='Disable system tray icon (useful for USB/IP headless mode)'
@@ -180,11 +170,13 @@ Examples:
         
         # Create and start device manager
         device_manager = DeviceManager('/dev/uhid')
-        device_manager.start_device()
-        
+        started = device_manager.start_device()
+        if not started:
+            logging.info("Failed to open uhid")
+            sys.exit(1)
         try:
             if not args.no_systray:
-                app = SysTrayApp(device_manager=device_manager) # runs until quit
+                _ = SysTrayApp(device_manager=device_manager) # runs until quit
             else:
                 # Run without systray - just wait for interrupt
                 print("Running in headless mode (no system tray). Press Ctrl+C to stop.")
@@ -192,7 +184,7 @@ Examples:
                 signal.pause()
         finally: # Ensure clean shutdown
             logging.info("Shutting down UHID device...")
-            device_manager.stop_device(timeout=5)
+            _ = device_manager.stop_device(timeout=5)
     
     elif args.transport == 'usbip':
         logging.info("Starting the AyeBeKey Passkey USB/IP Service")

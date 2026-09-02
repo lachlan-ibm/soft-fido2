@@ -10,9 +10,11 @@ IBM Confidential
 
 import logging
 import traceback
+from typing import Optional
 
 from PyQt6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QDialog,
     QDialogButtonBox,
     QGroupBox,
@@ -21,16 +23,16 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QRadioButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 from PyQt6.QtCore import QThreadPool, Qt
 
-try:
-    from soft_fido2.qt.ux.workers import Worker
-    from soft_fido2.qt.svc.platform_key_service import PlatformKeyService
-except ImportError:
-    from qt.ux.workers import Worker
-    from qt.svc.platform_key_service import PlatformKeyService
+
+from .workers import Worker
+from ..svc.platform_key_service import PlatformKeyService
 
 
 class AdvancedConfigDialog(QDialog):
@@ -46,6 +48,17 @@ class AdvancedConfigDialog(QDialog):
     """
     
     TITLE = "Advanced Configuration"
+
+    tpm_status_label: Optional[QLabel] = None
+    delete_tpm_btn: Optional[QPushButton] = None
+    file_key_status_label: Optional[QLabel] = None
+    info_input: Optional[QLineEdit] = None
+    update_info_btn: Optional[QPushButton] = None
+    device_status_label: Optional[QLabel] = None
+    restart_device_btn: Optional[QPushButton] = None
+    _ctap2_radio: Optional[QRadioButton] = None
+    _ctap1_radio: Optional[QRadioButton] = None
+    _ctap_button_group: Optional[QButtonGroup] = None
     
     def __init__(self, parent, device_manager=None):
         """Initialize advanced config dialog.
@@ -69,20 +82,30 @@ class AdvancedConfigDialog(QDialog):
         # Initialize service layer
         self.platform_key_service = PlatformKeyService(self.fido_home)
         
-        # Build UI
-        main_layout = QVBoxLayout()
+        # Build UI — sections go into a scrollable container
+        scroll_contents = QWidget()
+        scroll_layout = QVBoxLayout(scroll_contents)
         if device_manager:
-            main_layout.addWidget(self._create_device_section())
-        main_layout.addWidget(self._create_warning_label())
-        main_layout.addWidget(self._create_tpm_section())
-        main_layout.addWidget(self._create_file_key_section())
-        main_layout.addWidget(self._create_hkdf_section())
-        
+            scroll_layout.addWidget(self._create_device_section())
+        scroll_layout.addWidget(self._create_ctap_version_section())
+        scroll_layout.addWidget(self._create_warning_label())
+        scroll_layout.addWidget(self._create_hkdf_section())
+        scroll_layout.addWidget(self._create_tpm_section())
+        scroll_layout.addWidget(self._create_file_key_section())
+        scroll_layout.addStretch()
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidget(scroll_contents)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(scroll_area)
         main_layout.addWidget(self._create_button_box())
-        
+
         self.setLayout(main_layout)
         self.setMinimumWidth(550)
-        self.setMinimumHeight(600)
+        self.setMinimumHeight(400)
     
     def _create_warning_label(self):
         """Create warning label at top."""
@@ -117,7 +140,7 @@ class AdvancedConfigDialog(QDialog):
         layout.addWidget(self.delete_tpm_btn)
         
         # Warning label
-        warning = QLabel("⚠️ Deleting the TPM key will make all existing User Presence Only (U2F) credentials inaccessible")
+        warning = QLabel("⚠️ Deleting the TPM key will make all existing CTAP1 / user-presence-only credentials inaccessible")
         warning.setStyleSheet("color: #d9534f; font-style: italic;")
         warning.setWordWrap(True)
         layout.addWidget(warning)
@@ -146,7 +169,7 @@ class AdvancedConfigDialog(QDialog):
         layout.addWidget(self.delete_recreate_file_key_btn)
         
         # Warning label
-        warning = QLabel("⚠️ Deleting the file-based platform key will invalidate ALL existing credentials and registrations, including U2F User Presence (UP) only registrations which cannot be easily tracked or recovered")
+        warning = QLabel("⚠️ Deleting the file-based platform key will invalidate ALL existing credentials and registrations, including CTAP1 / user-presence-only registrations which cannot be easily tracked or recovered")
         warning.setStyleSheet("color: #d9534f; font-style: italic;")
         warning.setWordWrap(True)
         layout.addWidget(warning)
@@ -225,6 +248,9 @@ class AdvancedConfigDialog(QDialog):
     
     def _update_tpm_status(self):
         """Update TPM status label."""
+        if not self.tpm_status_label:
+            logging.warning("TPM div not found")
+            return
         if self.tpm_available:
             # Check if key exists using service layer
             try:
@@ -245,6 +271,9 @@ class AdvancedConfigDialog(QDialog):
     
     def _update_device_status(self):
         """Update device status label."""
+        if not self.device_status_label:
+            logging.warning("Device Status div not found")
+            return
         if self.device_manager and hasattr(self.device_manager, 'is_running') and self.device_manager.is_running():
             self.device_status_label.setText("✓ UHID device is running")
             self.device_status_label.setStyleSheet("color: green;")
@@ -253,6 +282,9 @@ class AdvancedConfigDialog(QDialog):
             self.device_status_label.setStyleSheet("color: red;")
 
     def _update_file_key_status(self):
+        if not self.file_key_status_label:
+            logging.warning("File Platform Key Label div not found")
+            return
         """Update file-based platform key status label."""
         # Use service layer to check key existence
         has_key = self.platform_key_service.check_key_exists('file')
@@ -284,7 +316,7 @@ class AdvancedConfigDialog(QDialog):
             
             if reply == QMessageBox.StandardButton.Yes:
                 try:
-                    from soft_fido2.platform.tpm_device import TPMDevice
+                    from ...platform import TPMDevice
                     tpm = TPMDevice()
                     tpm.delete_key()
 
@@ -328,7 +360,7 @@ class AdvancedConfigDialog(QDialog):
                 "Confirm File-based Platform Key Deletion",
                 "Are you sure you want to delete the file-based platform key?\n\n"
                 "WARNING: This will invalidate existing credentials generated by this key,\n"
-                "including U2F User Presence (UP) only registrations which cannot be easily\n"
+                "including CTAP1 / user-presence-only registrations which cannot be easily\n"
                 "tracked or recovered.\n\n"
                 "You will need to re-register with these services.\n\n"
                 "You can generate a new key using 'Create Platform Key (+)' in the main menu.\n\n"
@@ -387,6 +419,9 @@ class AdvancedConfigDialog(QDialog):
     
     def _handle_update_info(self):
         """Handle info string update."""
+        if not self.info_input:
+            logging.warning("Info input div not found")
+            return
         try:
             new_info = self.info_input.text().strip()
             
@@ -447,6 +482,9 @@ class AdvancedConfigDialog(QDialog):
     
     def _handle_restart_device(self):
         """Handle UHID device restart."""
+        if not self.restart_device_btn:
+            logging.warning("Restart Button div not found")
+            return
         try:
             if not self.device_manager:
                 QMessageBox.warning(
@@ -485,6 +523,9 @@ class AdvancedConfigDialog(QDialog):
                     
                     def on_restart_complete(result):
                         """Handle restart completion with result."""
+                        if not self.restart_device_btn:
+                            logging.warning("Restart Button div not found")
+                            return
                         try:
                             self.restart_device_btn.setEnabled(True)
                             self.restart_device_btn.setText("Restart UHID Device")
@@ -501,6 +542,9 @@ class AdvancedConfigDialog(QDialog):
                     
                     def on_restart_error(error_info):
                         """Handle restart error."""
+                        if not self.restart_device_btn:
+                            logging.warning("Restart Button div not found")
+                            return
                         try:
                             self.restart_device_btn.setEnabled(True)
                             self.restart_device_btn.setText("Restart UHID Device")
@@ -539,3 +583,50 @@ class AdvancedConfigDialog(QDialog):
                 "Unexpected Error",
                 f"An unexpected error occurred:\n{str(e)}"
             )
+
+    def _create_ctap_version_section(self):
+        """Create CTAP protocol version selection section."""
+        group = QGroupBox("CTAP Protocol Version")
+        layout = QVBoxLayout()
+
+        desc = QLabel(
+            "Select the FIDO2 protocol version advertised by this authenticator.\n"
+            "CTAP2 enables PIN/UV support (recommended). "
+            "CTAP1 is legacy U2F compatibility mode."
+        )
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        self._ctap2_radio = QRadioButton("CTAP2 — PIN / User Verification (default)")
+        self._ctap1_radio = QRadioButton("CTAP1 — User Presence only (compatibility)")
+
+        self._ctap_button_group = QButtonGroup(self)
+        self._ctap_button_group.addButton(self._ctap2_radio, 0)
+        self._ctap_button_group.addButton(self._ctap1_radio, 1)
+
+        if self.platform_config.ctap_version == 'ctap1':
+            self._ctap1_radio.setChecked(True)
+        else:
+            self._ctap2_radio.setChecked(True)
+
+        self._ctap_button_group.idClicked.connect(self._handle_ctap_version_changed)
+
+        layout.addWidget(self._ctap2_radio)
+        layout.addWidget(self._ctap1_radio)
+
+        warning = QLabel(
+            "⚠️ Switching to CTAP1 disables PIN support. "
+            "You will not be able to create credentials with relying parties that require UV."
+        )
+        warning.setStyleSheet("color: #d9534f; font-style: italic;")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+
+        group.setLayout(layout)
+        return group
+
+    def _handle_ctap_version_changed(self, button_id: int):
+        """Persist CTAP version selection."""
+        new_version = 'ctap1' if button_id == 1 else 'ctap2'
+        self.platform_config.ctap_version = new_version
+        logging.info(f"CTAP version changed to: {new_version}")

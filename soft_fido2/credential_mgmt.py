@@ -10,7 +10,6 @@ import logging
 from typing import Optional, Union
 
 from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives.asymmetric import ec
 from soft_fido2.authenticator import Fido2Authenticator
 from soft_fido2.symmetric_key import SymmetricKey
 from soft_fido2.key_pair import KeyPair
@@ -120,5 +119,5 @@ class CredentialIdMigrator:
         key_bytes_enc = cls._urlb64_decode(cred_id)
         key_bytes = key.decrypt(key_bytes_enc)
         kp = KeyPair.load_key_pair(key_bytes)
-        new_id_bytes = Fido2Authenticator(kp, fKey=key)._get_credential_id_bytes(kp)
+        new_id_bytes = Fido2Authenticator(kp, fKey=key)._get_credential_id_bytes(kp, None)
         return base64.urlsafe_b64encode(new_id_bytes).decode('utf-8')

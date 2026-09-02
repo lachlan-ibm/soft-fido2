@@ -8,3 +8,6 @@ __pycache__
 *.pyc
 *.swp
 *.log
+pyrightconfig.json
+.bob
+.vscode

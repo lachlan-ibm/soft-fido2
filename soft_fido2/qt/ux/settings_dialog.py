@@ -30,18 +30,12 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
 
-try:
-    from soft_fido2.qt.svc.platform_key_service import PlatformKeyService
-    from soft_fido2.qt.svc.passkey_service import PasskeyService
-    from soft_fido2.qt.svc.credential_service import CredentialService
-    from soft_fido2.qt.ux.advanced_dialog import AdvancedConfigDialog
-    from soft_fido2.qt.ux.config import PlatformConfig
-except ImportError:
-    from qt.svc.platform_key_service import PlatformKeyService
-    from qt.svc.passkey_service import PasskeyService
-    from qt.svc.credential_service import CredentialService
-    from qt.ux.advanced_dialog import AdvancedConfigDialog
-    from qt.ux.config import PlatformConfig
+
+from ..svc.platform_key_service import PlatformKeyService
+from ..svc.passkey_service import PasskeyService
+from ..svc.credential_service import CredentialService
+from .advanced_dialog import AdvancedConfigDialog
+from .config import PlatformConfig, APP_TITLE, AppState
 
             
 class SettingsDialog(QDialog):
@@ -63,7 +57,7 @@ class SettingsDialog(QDialog):
     """
     
     # UI Text Constants
-    TITLE = "Aye.Be.Key"
+    TITLE = APP_TITLE
     CACHE_GROUP_TITLE = "Platform Key Configuration"
     CACHE_GROUP_TOOLTIP = "Configure your platform authentication key"
     TPM_RADIO_TEXT = "Trusted Platform Module (TPM)"
@@ -418,23 +412,15 @@ class SettingsDialog(QDialog):
         """
         parent = self.parent()
         if parent and hasattr(parent, '_platform_key') and hasattr(parent, '_current_state'):
-            # Check if platform key exists and app is in unlocked state
-            try:
-                from soft_fido2.qt_app import SysTrayApp
-                app = cast(Any, parent)
-                return (app._platform_key is not None and
-                        app._current_state == SysTrayApp.AppState.UNLOCKED)
-            except ImportError:
-                from qt_app import SysTrayApp
-                app = cast(Any, parent)
-                return (app._platform_key is not None and
-                        app._current_state == SysTrayApp.AppState.UNLOCKED)
+            app = cast(Any, parent)
+            return (app._platform_key is not None and
+                    app._current_state == AppState.UNLOCKED)
         return False
     
     def _check_tpm_available(self):
         """Check if TPM is available on the system."""
         try:
-            from soft_fido2.platform.tpm_device import TPMDevice
+            from ...platform import TPMDevice
             tpm = TPMDevice()
             # Try to get key to verify TPM is actually functional
             try:
@@ -678,7 +664,7 @@ class SettingsDialog(QDialog):
             if parent and hasattr(parent, '_platform_key'):
                 app = cast(Any, parent)
                 app._platform_key = key_pair
-                app._set_state(app.AppState.UNLOCKED)
+                app._set_state(AppState.UNLOCKED)
                 self.logger.info("Platform key unlocked and main application state updated")
             
             QMessageBox.information(self, "Success", message)

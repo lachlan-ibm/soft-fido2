@@ -3,6 +3,8 @@
 
 import struct
 import os
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar
 import cbor2 as cbor
 import secrets
 import base64
@@ -14,81 +16,112 @@ from cryptography.hazmat.primitives import serialization, hashes
 from cryptography.hazmat.primitives.serialization import pkcs12
 from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF, HKDFExpand
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
-from soft_fido2.cert_utils import CertUtils
+from .cert_utils import CertUtils
 
+
+
+@dataclass(frozen=True)
+class _KeyConfig:
+    alg_id: int
+    extract_key: Callable[[Any], bytes]
+    recover_key: Callable[[bytes], Any]
+    requires_hash: bool
+
+
+# ---------------------------------------------------------------------------
+# Tell me your secrets
+# ---------------------------------------------------------------------------
+
+def _extract_ec_key(pk: ec.EllipticCurvePrivateKey) -> bytes:
+    return pk.private_numbers().private_value.to_bytes(
+        (pk.curve.key_size + 7) // 8, byteorder='big'
+    )
+
+
+def _recover_ec_p256(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP256R1(), default_backend())
+
+
+def _recover_ec_p384(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP384R1(), default_backend())
+
+
+def _recover_ec_p521(key_material: bytes) -> ec.EllipticCurvePrivateKey:
+    return ec.derive_private_key(int.from_bytes(key_material, 'big'), ec.SECP521R1(), default_backend())
+
+
+def _extract_raw_key(pk: Any) -> bytes:
+    return pk.private_bytes_raw()
+
+
+def _recover_ed25519(key_material: bytes) -> ed25519.Ed25519PrivateKey:
+    return ed25519.Ed25519PrivateKey.from_private_bytes(key_material)
+
+
+def _recover_mldsa44(key_material: bytes) -> mldsa.MLDSA44PrivateKey:
+    return mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material)
+
+
+def _recover_mldsa65(key_material: bytes) -> mldsa.MLDSA65PrivateKey:
+    return mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material)
+
+
+def _recover_mldsa87(key_material: bytes) -> mldsa.MLDSA87PrivateKey:
+    return mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material)
 
 
 class KeyUtils(object):
 
-    # Default KDF info for credential derivation
-    DEFAULT_CREDENTIAL_INFO = "CTAP2-CRED-INFO-v1"
+    # Default info for key derivation
     DEFAULT_PASSKEY_SEED_INFO = "FIDO2-PASSKEY-SEED"
 
     # Key type configuration for credential ID generation
     # Maps private key types to their COSE algorithm IDs and key extraction methods
-    _KEY_TYPE_CONFIG = {
-        (ec.EllipticCurvePrivateKey, hashes.SHA256): {
-            'alg_id': -7,  # ES256 (ECDSA with SHA-256)
-            'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            ),
-            'recover_key': lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'),
-                ec.SECP256R1(),
-                default_backend()
-            ),
-            'args': True
-        },
-        (ec.EllipticCurvePrivateKey, hashes.SHA384): {
-            'alg_id': -35,  # ES384 (ECDSA with SHA-384)
-            'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            ),
-            'recover_key': lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'),
-                ec.SECP384R1(),
-                default_backend()
-            ),
-            'args': True
-        },
-        (ec.EllipticCurvePrivateKey, hashes.SHA512): {
-            'alg_id': -36,  # ES512 (ECDSA with SHA-512)
-            'extract_key': lambda pk: pk.private_numbers().private_value.to_bytes(
-                (pk.curve.key_size + 7) // 8, byteorder='big'
-            ),
-            'recover_key': lambda key_material: ec.derive_private_key(
-                int.from_bytes(key_material, byteorder='big'),
-                ec.SECP521R1(),
-                default_backend()
-            ),
-            'args': True
-        },
-        ed25519.Ed25519PrivateKey: {
-            'alg_id': -8,  # ED25519
-            'extract_key': lambda pk: pk.private_bytes_raw(),
-            'recover_key': lambda key_material: ed25519.Ed25519PrivateKey.from_private_bytes(key_material),
-            'args': False
-        },
-        mldsa.MLDSA44PrivateKey: {
-            'alg_id': -48,  # ML-DSA-44
-            'extract_key': lambda pk: pk.private_bytes_raw(),
-            'recover_key': lambda key_material: mldsa.MLDSA44PrivateKey.from_seed_bytes(key_material),
-            'args': False
-        },
-        mldsa.MLDSA65PrivateKey: {
-            'alg_id': -49,  # ML-DSA-65
-            'extract_key': lambda pk: pk.private_bytes_raw(),
-            'recover_key': lambda key_material: mldsa.MLDSA65PrivateKey.from_seed_bytes(key_material),
-            'args': False
-        },
-        mldsa.MLDSA87PrivateKey: {
-            'alg_id': -50,  # ML-DSA-87
-            'extract_key': lambda pk: pk.private_bytes_raw(),
-            'recover_key': lambda key_material: mldsa.MLDSA87PrivateKey.from_seed_bytes(key_material),
-            'args': False
-        }
+    _KEY_TYPE_CONFIG: ClassVar[dict[Any, _KeyConfig]] = {
+        (ec.EllipticCurvePrivateKey, hashes.SHA256): _KeyConfig(
+            alg_id=-7,           # ES256 (ECDSA with SHA-256)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p256,
+            requires_hash=True,
+        ),
+        (ec.EllipticCurvePrivateKey, hashes.SHA384): _KeyConfig(
+            alg_id=-35,          # ES384 (ECDSA with SHA-384)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p384,
+            requires_hash=True,
+        ),
+        (ec.EllipticCurvePrivateKey, hashes.SHA512): _KeyConfig(
+            alg_id=-36,          # ES512 (ECDSA with SHA-512)
+            extract_key=_extract_ec_key,
+            recover_key=_recover_ec_p521,
+            requires_hash=True,
+        ),
+        ed25519.Ed25519PrivateKey: _KeyConfig(
+            alg_id=-8,           # EdDSA / Ed25519
+            extract_key=_extract_raw_key,
+            recover_key=_recover_ed25519,
+            requires_hash=False,
+        ),
+        mldsa.MLDSA44PrivateKey: _KeyConfig(
+            alg_id=-48,          # ML-DSA-44
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa44,
+            requires_hash=False,
+        ),
+        mldsa.MLDSA65PrivateKey: _KeyConfig(
+            alg_id=-49,          # ML-DSA-65
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa65,
+            requires_hash=False,
+        ),
+        mldsa.MLDSA87PrivateKey: _KeyConfig(
+            alg_id=-50,          # ML-DSA-87
+            extract_key=_extract_raw_key,
+            recover_key=_recover_mldsa87,
+            requires_hash=False,
+        ),
     }
 
     @classmethod
@@ -201,7 +234,7 @@ class KeyUtils(object):
         return base64.urlsafe_b64encode(seed_bytes)
 
     @classmethod
-    def _get_key_config(cls, private_key, hash_alg=None):
+    def _get_key_config(cls, private_key, hash_alg=None) -> "_KeyConfig":
         """Get configuration for a given private key type and hash algorithm.
         
         Args:
@@ -268,22 +301,18 @@ class KeyUtils(object):
         """
         # Find the config entry with matching alg_id
         for config in cls._KEY_TYPE_CONFIG.values():
-            if config['alg_id'] == alg_id:
-                if 'recover_key' not in config:
-                    raise ValueError(
-                        f"Algorithm {alg_id} does not have a recover_key function defined"
-                    )
-                return config['recover_key'](key_material)
-        
+            if config.alg_id == alg_id:
+                return config.recover_key(key_material)
+
         # If we get here, the algorithm is not supported
-        supported_algs = [config['alg_id'] for config in cls._KEY_TYPE_CONFIG.values()]
+        supported_algs = [config.alg_id for config in cls._KEY_TYPE_CONFIG.values()]
         raise ValueError(
             f"Unsupported algorithm ID: {alg_id}. "
             f"Supported: {supported_algs}"
         )
 
     @classmethod
-    def _extract_key_material(cls, private_key, hash_alg=None):
+    def _extract_key_material(cls, private_key, hash_alg=None) -> bytes:
         """Extract raw key material from private key.
         
         Args:
@@ -297,7 +326,9 @@ class KeyUtils(object):
             ValueError: If key type is unsupported
         """
         config = cls._get_key_config(private_key, hash_alg)
-        return config['extract_key'](private_key)
+        result = config.extract_key(private_key)
+        assert isinstance(result, bytes)
+        return result
 
     @classmethod
     def _long_to_bytes(cls, l):
@@ -380,10 +411,12 @@ class KeyUtils(object):
         :return:
         '''
         if isinstance(publicKey, rsa.RSAPublicKey):
+            pn = publicKey.public_numbers()
+            key_size_bytes = (publicKey.key_size + 7) // 8
             return {1: 3,
                     3: cls.get_alg_id_from_pubkey_and_hash(publicKey, alg),
-                   -1: cls._long_to_bytes(publicKey.public_numbers().n),
-                   -2: cls._long_to_bytes(publicKey.public_numbers().e)
+                   -1: pn.n.to_bytes(key_size_bytes, byteorder='big'),
+                   -2: pn.e.to_bytes((pn.e.bit_length() + 7) // 8, byteorder='big')
                  }
         elif isinstance(publicKey, ec.EllipticCurvePublicKey):
             return {1: 2,
@@ -445,7 +478,13 @@ class KeyUtils(object):
         Add a resident cred to a .passkey file
         '''
         passkey = cls._load_passkey(pinHash, passkeyFilename)
-        res_creds = [ *passkey.get('res.creds', []), resCred]
+        passkey_res_creds = passkey.get('res.creds', [])
+        if not isinstance(passkey_res_creds, list):
+            raise RuntimeError("Panic!")
+        for cred in passkey_res_creds:
+            if not isinstance(cred, dict):
+                raise RuntimeError("Panic!")
+        res_creds = [ *passkey_res_creds, resCred]
         cls._save_passkey(
             passkey['key'],
             passkey['x5c'],
@@ -711,17 +750,10 @@ class KeyUtils(object):
         it responds immediately. If not running (e.g., in tests), we want
         to fail fast and fall back to file-based key loading.
         """
-        import uuid
-        import time
-        try:
-            from soft_fido2.message_queues import (
-                MessageQueue, PlatformKeyRequest, PlatformKeyResponse
+        import uuid, time
+        from soft_fido2.message_queues import (
+                MessageQueue, PlatformKeyRequest
             )
-        except:
-            from message_queues import (
-                MessageQueue, PlatformKeyRequest, PlatformKeyResponse
-            )
-        
         request_id = str(uuid.uuid4())
         request = PlatformKeyRequest(request_id)
         
@@ -863,293 +895,6 @@ class KeyUtils(object):
         decryptor = Cipher(algorithms.AES256(shared),
                                      modes.GCM(iv, tag=tag)).decryptor()
         return decryptor.update(ciphertext[32:]) + decryptor.finalize()
-
-    @classmethod
-    def _get_platform_info_path(cls) -> str:
-        """
-        Get full path to platform.info file.
-        Uses FIDO_HOME environment variable.
-        If FIDO_HOME is not set, raise a RuntimeError.
-        """
-        fido_home = os.environ.get('FIDO_HOME')
-        if fido_home is None:
-            raise RuntimeError("FIDO_HOME environment variable is not set")
-        return os.path.join(fido_home, "platform.info")
-
-    @classmethod
-    def get_credential_kdf_info(cls) -> bytes:
-        """
-        Load and decrypt KDF info from platform.info file.
-        
-        Returns:
-            bytes: The KDF info value (UTF-8 encoded)
-            
-        Process:
-            1. Check if platform.info exists
-            2. If missing, return default value
-            3. Read file (base64 string)
-            4. Base64 decode → encrypted blob
-            5. Get platform key via _get_platform_kp()
-            6. Decrypt using ec_decrypt()
-            7. CBOR decode to get {"info": bytes}
-            8. Return the "info" value
-            
-        Error handling:
-            - FileNotFoundError: return default
-            - Decryption error: log warning, return default
-            - CBOR decode error: log warning, return default
-        """
-        try:
-            info_path = cls._get_platform_info_path()
-            
-            # Return default if file doesn't exist
-            if not os.path.exists(info_path):
-                return cls.DEFAULT_CREDENTIAL_INFO.encode('utf-8')
-            
-            # Read base64-encoded encrypted file
-            with open(info_path, 'r') as f:
-                b64_encrypted = f.read().strip()
-            
-            # Decode base64
-            encrypted_blob = base64.b64decode(b64_encrypted)
-            
-            # Get platform key
-            platform_key = cls._get_platform_kp()
-            
-            # ec_decrypt expects either an EllipticCurvePrivateKey or TPM wrapper with tpm_decrypt
-            if hasattr(platform_key, 'get_private'):
-                decrypt_key = platform_key.get_private()
-            else:
-                decrypt_key = platform_key
-            
-            cbor_bytes = cls.ec_decrypt(encrypted_blob, decrypt_key)
-            
-            # CBOR decode
-            config_map = cbor.loads(cbor_bytes)
-            
-            # Extract info value
-            return config_map.get("info", cls.DEFAULT_CREDENTIAL_INFO.encode('utf-8'))
-            
-        except Exception as e:
-            # Log warning and return default
-            logging.warning(f"Failed to load KDF info from platform.info: {e}")
-            return cls.DEFAULT_CREDENTIAL_INFO.encode('utf-8')
-
-    @classmethod
-    def set_credential_kdf_info(cls, value: str) -> None:
-        """
-        Encrypt and save KDF info to platform.info file.
-        
-        Args:
-            value: The KDF info string to save
-            
-        Process:
-            1. Validate value (non-empty, UTF-8 safe, length cap)
-            2. Encode value as UTF-8 bytes
-            3. Create CBOR map: {"info": value_bytes}
-            4. CBOR encode the map
-            5. Get platform key via _get_platform_kp()
-            6. Encrypt using ec_encrypt()
-            7. Base64 encode the encrypted blob
-            8. Write to platform.info with 0o600 permissions
-            
-        Raises:
-            ValueError: If value is invalid
-            Exception: If platform key unavailable or encryption fails
-        """
-        # Validation rules (Phase 1.2)
-        if not value or not value.strip():
-            raise ValueError("credential_kdf_info cannot be empty")
-        
-        if len(value) > 128:
-            raise ValueError("credential_kdf_info cannot exceed 128 characters")
-        
-        # Verify UTF-8 encoding
-        try:
-            value.encode('utf-8')
-        except UnicodeEncodeError:
-            raise ValueError("credential_kdf_info must be UTF-8 safe")
-        
-        # Encode value as UTF-8
-        value_bytes = value.encode('utf-8')
-        
-        # Create CBOR map
-        config_map = {"info": value_bytes}
-        
-        # CBOR encode
-        cbor_bytes = cbor.dumps(config_map)
-        
-        # Get platform key
-        platform_key = cls._get_platform_kp()
-        
-        # Encrypt using TPM-aware path when available
-        platform_private = platform_key.get_private()
-        if isinstance(platform_private, ec.EllipticCurvePrivateKey):
-            encrypted_blob = cls.ec_encrypt(cbor_bytes, platform_private)
-        else:
-            tpm_encrypt = getattr(platform_key, 'tpm_encrypt', None)
-            if tpm_encrypt is None:
-                raise ValueError(f"{platform_private} must be an EllipticCurvePrivateKey")
-            platform_public = platform_key.get_public()
-            if hasattr(platform_public, 'to_pem'):
-                platform_public = serialization.load_pem_public_key(
-                    platform_public.to_pem()
-                )
-            encrypted_blob = tpm_encrypt(cbor_bytes, platform_public)
-        
-        # Base64 encode
-        b64_encrypted = base64.b64encode(encrypted_blob).decode('ascii')
-        
-        # Write to file with secure permissions
-        info_path = cls._get_platform_info_path()
-        
-        # Write atomically using temp file
-        temp_path = info_path + ".tmp"
-        with open(temp_path, 'w') as f:
-            f.write(b64_encrypted)
-        
-        # Set permissions before moving (user read/write only)
-        os.chmod(temp_path, 0o600)
-        
-        # Atomic rename
-        os.rename(temp_path, info_path)
-
-    @classmethod
-    def get_default_credential_kdf_info(cls) -> str:
-        """Return the default KDF info constant."""
-        return cls.DEFAULT_CREDENTIAL_INFO
-
-    @classmethod
-    def derive_credential_key_material(
-        cls,
-        master_secret: bytes,
-        rp_id: bytes,
-        credential_nonce: bytes,
-        cose_alg: int,
-        length: int,
-        alg_suffix: bytes,
-    ) -> bytes:
-        """
-        Derive credential key material using HKDF.
-        
-        Args:
-            master_secret: Master secret (passkey seed)
-            rp_id: Relying Party ID as bytes (used as salt)
-            credential_nonce: Random nonce for this credential
-            cose_alg: COSE algorithm identifier
-            length: Desired output length in bytes
-            alg_suffix: Algorithm-specific suffix (e.g., b"|EC" or b"|MLDSA")
-            
-        Returns:
-            Derived key material of specified length
-        """
-        cose_alg_bytes = cose_alg.to_bytes(2, byteorder="big", signed=True)
-        base_info = cls.get_credential_kdf_info()
-        info = base_info + alg_suffix + credential_nonce + cose_alg_bytes
-        return HKDF(
-            algorithm=hashes.SHA256(),
-            length=length,
-            salt=rp_id,
-            info=info,
-            backend=default_backend(),
-        ).derive(master_secret)
-
-    @classmethod
-    def derive_p256_keypair(
-        cls,
-        master_secret: bytes,
-        rp_id: bytes,
-        credential_nonce: bytes,
-    ):
-        """
-        Derive a deterministic P-256 (ECDSA) keypair.
-        
-        Args:
-            master_secret: Master secret (passkey seed)
-            rp_id: Relying Party ID as bytes
-            credential_nonce: Random nonce for this credential
-            
-        Returns:
-            KeyPair: Deterministically derived EC P-256 keypair
-        """
-        material = cls.derive_credential_key_material(
-            master_secret=master_secret,
-            rp_id=rp_id,
-            credential_nonce=credential_nonce,
-            cose_alg=-7,
-            length=48,
-            alg_suffix=b"|EC",
-        )
-
-        order = int(
-            "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
-            16,
-        )
-        scalar = (int.from_bytes(material, "big") % (order - 1)) + 1
-        private_key = ec.derive_private_key(scalar, ec.SECP256R1(), default_backend())
-        return KeyPair(private_key, private_key.public_key())
-
-    @classmethod
-    def derive_mldsa44_keypair(
-        cls,
-        master_secret: bytes,
-        rp_id: bytes,
-        credential_nonce: bytes,
-    ):
-        """
-        Derive a deterministic ML-DSA-44 keypair.
-        
-        Args:
-            master_secret: Master secret (passkey seed)
-            rp_id: Relying Party ID as bytes
-            credential_nonce: Random nonce for this credential
-            cose_alg: COSE algorithm identifier
-            
-        Returns:
-            KeyPair: Deterministically derived ML-DSA-44 keypair
-        """
-        seed = cls.derive_credential_key_material(
-            master_secret=master_secret,
-            rp_id=rp_id,
-            credential_nonce=credential_nonce,
-            cose_alg=-48,
-            length=32,
-            alg_suffix=b"|MLDSA",
-        )
-        private_key = mldsa.MLDSA44PrivateKey.from_seed_bytes(seed)
-        return KeyPair(private_key, private_key.public_key())
-
-    @classmethod
-    def derive_keypair_from_context(
-        cls,
-        master_secret: bytes,
-        rp_id: bytes,
-        credential_nonce: bytes,
-        cose_alg: int,
-    ):
-        """
-        Derive a keypair based on the COSE algorithm identifier.
-        
-        This is a dispatch helper that routes to the appropriate
-        algorithm-specific derivation method.
-        
-        Args:
-            master_secret: Master secret (passkey seed)
-            rp_id: Relying Party ID as bytes
-            credential_nonce: Random nonce for this credential
-            cose_alg: COSE algorithm identifier
-            
-        Returns:
-            KeyPair: Deterministically derived keypair
-            
-        Raises:
-            ValueError: If the COSE algorithm is not supported
-        """
-        if cose_alg == -7:
-            return cls.derive_p256_keypair(master_secret, rp_id, credential_nonce)
-        if cose_alg == -48:
-            return cls.derive_mldsa44_keypair(master_secret, rp_id, credential_nonce)
-        raise ValueError(f"Unsupported COSE algorithm: {cose_alg}")
 
 
 class KeyPair(object):

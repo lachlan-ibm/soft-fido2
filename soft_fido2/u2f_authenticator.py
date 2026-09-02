@@ -9,16 +9,9 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives import hashes
 from cryptography import x509
 
-try:
-    from soft_fido2.key_pair import KeyPair, KeyUtils
-    from soft_fido2.cert_utils import CertUtils
-    from soft_fido2.symmetric_key import SymmetricKey
-except ImportError:
-    import sys, os
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from key_pair import KeyPair, KeyUtils
-    from cert_utils import CertUtils
-    from symmetric_key import SymmetricKey
+from .key_pair import KeyPair, KeyUtils
+from .cert_utils import CertUtils
+from .symmetric_key import SymmetricKey
 
 
 # Credential-ID prefix — same sentinel as Fido2Authenticator so that

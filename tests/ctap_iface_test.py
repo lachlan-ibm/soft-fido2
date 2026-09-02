@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from soft_fido2.cert_utils import CertUtils
 from soft_fido2.key_pair import KeyPair
-from soft_fido2.ctap_interface import (
+from soft_fido2.ctap import (
     AuthenticatorAPI, CBORCommand, CTAPHIDInitPkt, CTAPHIDSeqPkt, 
     KeepAliveWorker
 )
@@ -72,7 +72,7 @@ class TestCBORCommand:
     
     @pytest.fixture
     def mock_auth_api(self):
-        with patch('soft_fido2.ctap_interface.AuthenticatorAPI') as mock:
+        with patch('soft_fido2.ctap.cborcmd.AuthenticatorAPI') as mock:
             # Setup common mock methods
             mock._validate_pin.return_value = b'valid_token'
             mock.get_pin_auth_token.return_value = b'valid_token'
@@ -90,11 +90,12 @@ class TestCBORCommand:
         data = length + cmd_byte + bytes()
         return CBORCommand(cid, data)
 
-    def test_get_info_response_up_only(self, test_cid, mock_auth_api):
-        """GetInfo without prior UV: advertises U2F_V2, clientPin=False, no pin_protocols (0x06)"""
-        # mock_auth_api replaces AuthenticatorAPI in the module; configure get_user_state on it
-        mock_auth_api.get_user_state.return_value = 'present'
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True):
+    def test_get_info_response_ctap2_default(self, test_cid, mock_auth_api):
+        """GetInfo with default CTAP2 mode: FIDO_2_1 advertised, pinProtocols present, no U2F_V2"""
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True), \
+             patch('soft_fido2.ctap.cborcmd.PlatformConfig') as mock_cfg_cls:
+            mock_cfg_cls.return_value.ctap_version = 'ctap2'
+            mock_cfg_cls.CTAP_VERSION_CTAP1 = 'ctap1'
             cmd = self._make_get_info_cmd(test_cid)
             cmd.unpack()
 
@@ -110,39 +111,43 @@ class TestCBORCommand:
         assert 0x04 in response_cbor  # options
         assert 0x05 in response_cbor  # max_msg_size
 
-        # UP-only mode: U2F advertised, clientPin disabled, no pin_protocols
-        assert 'U2F_V2' in response_cbor[0x01]
-        assert response_cbor[0x04].get('clientPin') is False
-        assert 0x06 not in response_cbor  # pin_protocols NOT included
-
-    def test_get_info_response_uv_verified(self, test_cid, mock_auth_api):
-        """GetInfo after UV (PIN verified): clientPin=True, pin_protocols (0x06) present"""
-        # mock_auth_api replaces AuthenticatorAPI in the module; configure get_user_state on it
-        mock_auth_api.get_user_state.return_value = 'verified'
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True):
-            cmd = self._make_get_info_cmd(test_cid)
-            cmd.unpack()
-
-        assert cmd.response_ready
-        assert cmd.response[0] == CBORCommand.CBORStatusCode.CTAP2_OK
-
-        response_cbor = cbor.loads(bytes(cmd.response[1:]))
-
-        # Core fields always present
-        assert 0x01 in response_cbor  # versions
-        assert 0x02 in response_cbor  # extensions
-        assert 0x03 in response_cbor  # aaguid
-        assert 0x04 in response_cbor  # options
-        assert 0x05 in response_cbor  # max_msg_size
-
-        # UV mode: pin_protocols included, clientPin remains True
-        assert 0x06 in response_cbor  # pin_protocols
+        # CTAP2 default: FIDO_2_1 advertised, pinProtocols present, U2F_V2 absent
+        assert 'FIDO_2_1' in response_cbor[0x01]
+        assert 'U2F_V2' not in response_cbor[0x01]
+        assert 0x06 in response_cbor  # pin_protocols included
         assert response_cbor[0x06] == [1]
         assert response_cbor[0x04].get('clientPin') is True
+
+    def test_get_info_response_ctap1_mode(self, test_cid, mock_auth_api):
+        """GetInfo with CTAP1 mode: U2F_V2 advertised, no pinProtocols, no clientPin"""
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True), \
+             patch('soft_fido2.ctap.cborcmd.PlatformConfig') as mock_cfg_cls:
+            mock_cfg_cls.return_value.ctap_version = 'ctap1'
+            mock_cfg_cls.CTAP_VERSION_CTAP1 = 'ctap1'
+            cmd = self._make_get_info_cmd(test_cid)
+            cmd.unpack()
+
+        assert cmd.response_ready
+        assert cmd.response[0] == CBORCommand.CBORStatusCode.CTAP2_OK
+
+        response_cbor = cbor.loads(bytes(cmd.response[1:]))
+
+        # Core fields always present
+        assert 0x01 in response_cbor  # versions
+        assert 0x02 in response_cbor  # extensions
+        assert 0x03 in response_cbor  # aaguid
+        assert 0x04 in response_cbor  # options
+        assert 0x05 in response_cbor  # max_msg_size
+
+        # CTAP1 mode: U2F_V2 advertised, no pinProtocols, no clientPin
+        assert 'U2F_V2' in response_cbor[0x01]
+        assert 'FIDO_2_1' not in response_cbor[0x01]
+        assert 0x06 not in response_cbor  # pin_protocols NOT included
+        assert 'clientPin' not in response_cbor[0x04]
     
     def test_make_credential_missing_parameter(self, test_cid, mock_auth_api):
         """Test MakeCredential command with missing parameters"""
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True):
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True):
             # Create a MakeCredential command with incomplete parameters
             cmd_byte = CBORCommand.CommandByte.MAKE_CREDENTIAL.value.to_bytes(1, byteorder='big')
             
@@ -165,8 +170,8 @@ class TestCBORCommand:
     
     def test_make_credential_success(self, test_cid, mock_auth_api):
         """Test successful MakeCredential command"""
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True), \
-             patch('soft_fido2.ctap_interface.CBORCommand._verify_pin_token', return_value=True):
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True), \
+             patch('soft_fido2.ctap.cborcmd.CBORCommand._verify_pin_token', return_value=True):
             
             # Mock the attestation output directly on the mock_auth_api
             auth_data = bytes([0x01, 0x02, 0x03, 0x04])
@@ -209,8 +214,8 @@ class TestCBORCommand:
     
     def test_get_assertion_success(self, test_cid, mock_auth_api):
         """Test successful GetAssertion command"""
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True), \
-             patch('soft_fido2.ctap_interface.CBORCommand._verify_pin_token', return_value=True):
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True), \
+             patch('soft_fido2.ctap.cborcmd.CBORCommand._verify_pin_token', return_value=True):
             
             # Mock the assertion output directly on the mock_auth_api
             credential = {"id": b'cred_id', "type": "public-key"}
@@ -391,7 +396,7 @@ class TestCTAPHIDevice:
         event.data += bytes([0] * (64 - len(event.data)))
         
         # Process the event - mock gather_user_presence to avoid 15-second timeout
-        with patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True), \
+        with patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True), \
              patch.object(device, 'send_response_segments') as mock_send_response:
             device.ctaphid_cbor(event)
             
@@ -452,7 +457,7 @@ class TestSegmentedMessages:
         time_values = [0, 100]  # First call returns 0, second call returns 100 (exceeding any timeout)
         mock_time = MagicMock(side_effect=time_values)
         
-        with patch('soft_fido2.ctap_interface.AuthenticatorAPI._token_expiry_check'), \
+        with patch('soft_fido2.ctap.api.AuthenticatorAPI._token_expiry_check'), \
              patch('time.sleep', return_value=None), \
              patch('time.time', mock_time):
             yield
@@ -596,8 +601,8 @@ class TestSegmentedMessages:
             
             # Process the continuation packet - patch send_response_segments and verify_pin_token to avoid errors
             with patch.object(device, 'send_response_segments'), \
-                 patch('soft_fido2.ctap_interface.CBORCommand._verify_pin_token', return_value=True), \
-                 patch('soft_fido2.ctap_interface.KeepAliveWorker') as mock_worker_class:
+                 patch('soft_fido2.ctap.cborcmd.CBORCommand._verify_pin_token', return_value=True), \
+                 patch('soft_fido2.ctap.cborcmd.KeepAliveWorker') as mock_worker_class:
                 # Configure the mock worker to avoid the error
                 mock_worker_instance = MagicMock()
                 mock_worker_class.return_value = mock_worker_instance
@@ -614,13 +619,13 @@ class TestSegmentedMessages:
     
     def _patch_user_presence_and_keepalive(self):
         """Create a context manager for patching user presence and keep-alive worker."""
-        user_presence_patch = patch('soft_fido2.ctap_interface.CBORCommand.gather_user_presence', return_value=True)
-        pin_token_patch = patch('soft_fido2.ctap_interface.CBORCommand._verify_pin_token', return_value=True)
+        user_presence_patch = patch('soft_fido2.ctap.cborcmd.CBORCommand.gather_user_presence', return_value=True)
+        pin_token_patch = patch('soft_fido2.ctap.cborcmd.CBORCommand._verify_pin_token', return_value=True)
         
         # Create a mock worker instance
         mock_worker_instance = MagicMock()
         mock_worker_class = MagicMock(return_value=mock_worker_instance)
-        keepalive_patch = patch('soft_fido2.ctap_interface.KeepAliveWorker', mock_worker_class)
+        keepalive_patch = patch('soft_fido2.ctap.cborcmd.KeepAliveWorker', mock_worker_class)
         
         # Combine patches
         from contextlib import ExitStack
@@ -691,7 +696,7 @@ class TestAuthenticatorAPI:
                  patch('os.path.exists', return_value=True), \
                  patch('os.path.realpath', return_value=temp_dir), \
                  patch('os.listdir', return_value=['test.passkey', 'test.stash']), \
-                 patch('soft_fido2.ctap_interface.KeyUtils') as mock_key_utils, \
+                 patch('soft_fido2.ctap.api.KeyUtils') as mock_key_utils, \
                  patch('soft_fido2.cert_utils.CertUtils') as mock_cert_utils:
                 
                 # Yield the temporary directory and mock objects
@@ -750,7 +755,7 @@ class TestAuthenticatorAPI:
         # Mock the KeyUtils._bytes_to_long method
         with patch('soft_fido2.key_pair.KeyUtils._bytes_to_long', return_value=123456):
             # Mock the ec.EllipticCurvePublicNumbers constructor
-            with patch('soft_fido2.ctap_interface.ec.EllipticCurvePublicNumbers', return_value=MagicMock()) as mock_ec_pub_nums:
+            with patch('soft_fido2.ctap.api.ec.EllipticCurvePublicNumbers', return_value=MagicMock()) as mock_ec_pub_nums:
                 # Mock the public_key method
                 mock_ec_pub_nums.return_value.public_key.return_value = mock_public_key
                 
@@ -891,7 +896,7 @@ class TestAuthenticatorAPI:
        )
        
        # Add the Cipher patch
-       cipher_patch = patch('soft_fido2.ctap_interface.Cipher', mock_cipher_constructor)
+       cipher_patch = patch('soft_fido2.ctap.api.Cipher', mock_cipher_constructor)
        
        # Combine the patches
        from contextlib import ExitStack

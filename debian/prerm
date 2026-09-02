@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  remove)
+    # Package is being removed (not upgraded).
+    # dpkg auto-removes owned files (udev rule, modules-load snippet) so no
+    # manual rm -f is needed here — unlike the RPM %preun counterpart.
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=misc 2>/dev/null || true
+    ;;
+esac
+
+#DEBHELPER#
+exit 0

@@ -1,9 +1,7 @@
 """
 Custom implementation of symmetric encryption with AES-GCM.
-This replaces the dependency on cryptography.fernet with a custom implementation.
+This replaces the dependency on cryptography.fernet with a more modern implementation.
 
-This implementation provides authenticated encryption that guarantees a message
-cannot be manipulated or read without the key.
 """
 
 import base64

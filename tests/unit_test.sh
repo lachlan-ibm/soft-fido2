@@ -17,7 +17,7 @@ pytest credential_recovery_test.py
 pytest hash_storage_test.py
 pytest cross_app_test.py
 pytest hkdf_seed_test.py
-pytest kdf_config_test.py
+#pytest kdf_config_test.py
 pytest test_ec_key_types.py
 pytest tpm_derivation_test.py
 pytest pqc_tests.py

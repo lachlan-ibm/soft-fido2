@@ -1,0 +1,27 @@
+Source: soft-fido2
+Section: misc
+Priority: optional
+Maintainer: soft_fido2 packager <lgleeson@au1.ibm.com>
+Build-Depends: debhelper-compat (= 13), python3-all, python3-build, dh-python,
+ qt6-base-dev, qt6-declarative-dev, pyqt6-dev
+Standards-Version: 4.7.0
+
+Package: soft-fido2
+Architecture: all
+Depends: ${misc:Depends},
+ python3-cryptography,
+ python3-cbor2,
+ python3-jwt,
+ python3-asn1,
+ python3-jeepney,
+ python3-setproctitle,
+ python3-dbus,
+ python3-pyqt6,
+ adduser (>= 3.11)
+Recommends: fprintd, tpm2-tools, python3-tpm2-pytss
+Description: Software FIDO2 platform passkey authenticator (UHID)
+ soft_fido2 is a software FIDO2/WebAuthn platform passkey authenticator
+ that emulates a USB HID device via the Linux UHID kernel module.
+ .
+ Supports biometric verification (fprintd), TPM 2.0 key storage, and
+ Qt6-based system tray UI with D-Bus notifications.

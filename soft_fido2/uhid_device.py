@@ -2,57 +2,15 @@
 #IBM Confidential
 # Copyright IBM Corp. 2025
 
-import os, struct, fcntl, time, queue, threading, logging, re
+import os, struct, fcntl, time, queue, threading, logging
 
 from enum import Enum
 
-try:
-    from soft_fido2.message_queues import QueueMessageType, MessageQueue
-except:
-    from message_queues import QueueMessageType, MessageQueue
+from .message_queues import QueueMessageType, MessageQueue
+from .ctap.packet import BaseStructure
 
-# Assisted by watsonx Code Assistant 
+# Assisted by watsonx Code Assistant
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Thanks StackOverflow !
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    OKPINK = '\033[95m'
-    OKYELLOW = '\033[93m'
-    OKPURPLE = '\033[35m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
-
-
-def colour_print(colour=bcolors.OKBLUE, component='USB/IP', msg=''):
-    logging.debug('[' + colour + component + bcolors.ENDC + '] ' + msg)
-
-
-def print_bytes(*args):
-    result = ""
-    count = 0
-    for ba in args:
-        for x in ba:
-            result += "%02X " % x
-            count += 1
-            if count == 8 :
-                result += " "
-            elif count == 16:
-                logging.debug("\t" + result)
-                result = ""
-                count = 0
-    logging.debug('\t' + result + '\n')
-
-def dump_bytes(*args, colour=bcolors.OKPURPLE, component='UHID Device', msg=''):
-    #Print bytes in nice format
-    c = colour if colour != None else bcolors.OKPURPLE
-    colour_print(colour=colour, component=component, msg=msg)
-    print_bytes(*args)
 
 
 UHID_EVENT_TYPE_SIZE = 4
@@ -118,72 +76,6 @@ class UHIDReportType(Enum):
     FEATURE_REPORT = 0x00
     OUTPUT_REPORT = 0x01
     INPUT_REPORT = 0x02
-
-class BaseStructure(object):
-    _fields_ = []
-    base_pack_format = '<'
-
-    def __init__(self, **kwargs):
-        self.init_from_dict(**kwargs)
-        for field in self._fields_:
-            if len(field) > 2:
-                if not hasattr(self, field[0]):
-                    setattr(self, field[0], field[2])
-
-    def init_from_dict(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def size(self):
-        return struct.calcsize(self.format())
-
-    def format(self):
-        pack_format = self.base_pack_format
-        for field in self._fields_:
-            if isinstance(field[1], BaseStructure):
-                pack_format += str(field[1].size()) + 's'
-            elif 'si' == field[1]:
-                pack_format += 'c'
-            elif '<' in field[1] or '>' in field[1]:
-                pack_format += field[1][1:]
-            else:
-                pack_format += field[1]
-        #logging.debug(pack_format)
-        return pack_format.encode('utf-8')
-
-    def pack(self):
-        values = []
-        for field in self._fields_:
-            #logging.debug("Field: {}".format(field))
-            if isinstance(field[1], BaseStructure):
-                values.append(getattr(self, field[0], field[1]).pack())
-            elif re.match(r'\d*x', field[1]):
-                #Skip padding
-                continue
-            else:
-                if 'si' == field[1]:
-                    values.append(chr(getattr(self, field[0], 0)))
-                else:
-                    values.append(getattr(self, field[0], 0))
-        #Python 2 -> 3, str != bytestring so conditionally remap any strings we find.
-        values = [bytes(v, 'utf-8') if isinstance(v, str) else v for v in values]
-        #logging.debug(values)
-        packed = struct.pack(self.format(), *values)
-        #logging.debug("packed [{}]".format(packed))
-        return packed
-
-    def unpack(self, buf):
-        values = struct.unpack(self.format(), buf)
-        i=0
-        keys_vals = {}
-        for val in values:
-            if '<' in self._fields_[i][1][0]:
-                val = struct.unpack('<' +self._fields_[i][1][1], struct.pack('>' + self._fields_[i][1][1], val))[0]
-            keys_vals[self._fields_[i][0]]=val
-            i+=1
-        #logging.debug(keys_vals)
-        self.init_from_dict(**keys_vals)
-
 
 REPORT_DESCRIPTOR = bytes([
     0x06, 0xD0, 0xF1, # Usage Page (FIDO Alliance)

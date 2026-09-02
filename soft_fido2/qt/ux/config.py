@@ -14,6 +14,16 @@ import json
 import os
 import logging
 from datetime import datetime
+from enum import Enum
+
+
+APP_TITLE = "Aye.Be.Key"
+
+
+class AppState(Enum):
+    """Application state enumeration."""
+    LOCKED = "locked"
+    UNLOCKED = "unlocked"
 
 
 class PlatformConfig:
@@ -21,6 +31,8 @@ class PlatformConfig:
 
     VERSION = "1.0"
     DEFAULT_INFO = "FIDO2-PASSKEY-SEED"
+    CTAP_VERSION_CTAP2 = 'ctap2'
+    CTAP_VERSION_CTAP1 = 'ctap1'
 
     def __init__(self, fido_home):
         self.fido_home = fido_home
@@ -72,11 +84,26 @@ class PlatformConfig:
 
     @property
     def info_string(self):
-        return self._config.get('info_string', self.DEFAULT_INFO)
+        return str(self._config.get('info_string', self.DEFAULT_INFO))
 
     @info_string.setter
     def info_string(self, value):
         if not isinstance(value, str) or not value:
             raise ValueError("Info string must be non-empty string")
         self._config['info_string'] = value
+        self.save()
+
+    @property
+    def ctap_version(self) -> str:
+        # Absent key means CTAP2 (default) — only 'ctap1' is ever written to disk
+        return str(self._config.get('ctap_version', self.CTAP_VERSION_CTAP2))
+
+    @ctap_version.setter
+    def ctap_version(self, value: str):
+        if value not in (self.CTAP_VERSION_CTAP2, self.CTAP_VERSION_CTAP1):
+            raise ValueError(f"Invalid ctap_version: {value}")
+        if value == self.CTAP_VERSION_CTAP1:
+            self._config['ctap_version'] = value   # only persist when opting into CTAP1
+        else:
+            self._config.pop('ctap_version', None)  # remove key — absence means CTAP2
         self.save()

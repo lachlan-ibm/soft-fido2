@@ -2,22 +2,15 @@
 # IBM Confidential
 # Assisted by watsonx Code Assistant
 
-import datetime, os, sys, random, threading, logging
-from enum import Enum
+import datetime, random, threading, logging, time
 
-try:
-    from soft_fido2.uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from soft_fido2.ctap_interface import (
-        MAX_DATA_FRAME, AuthenticatorAPI, CBORCommand,
-        CTAPHIDInitPkt, CTAPHIDSeqPkt,
-    )
-except ImportError:
-    sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-    from uhid_device import UserDevice, BaseStructure, bcolors, dump_bytes, colour_print
-    from ctap_interface import (
-        MAX_DATA_FRAME, AuthenticatorAPI, CBORCommand,
-        CTAPHIDInitPkt, CTAPHIDSeqPkt,
-    )
+
+from .uhid_device import UserDevice
+from .ctap import (
+    MAX_DATA_FRAME, AuthenticatorAPI, CBORCommand,
+    CTAPHIDInitPkt, CTAPHIDSeqPkt, bcolors, dump_bytes, 
+    colour_print
+)
 
 
 class CTAPHIDevice(UserDevice):
@@ -82,7 +75,15 @@ class CTAPHIDevice(UserDevice):
             colour_print(colour=bcolors.FAIL, component='CTAPHIDevice.ctaphid_msg',
                          msg='Unknown CID {}'.format(cid))
 
-        rsp = CBORCommand(cid, None, skip_init=True)._u2f_req(cid, cmd_byte, usb_req.data[8:])
+        apdu = usb_req.data[8:]
+        bcnt = int.from_bytes(usb_req.data[6:8], 'big')
+        colour_print(colour=bcolors.OKPURPLE, component='CTAPHIDevice.ctaphid_msg',
+                     msg='CTAPHID_MSG CID={} cmd_byte=0x{:02x} bcnt={}'.format(
+                         self._bytes_to_str(cid), cmd_byte, bcnt))
+        dump_bytes(apdu[:bcnt], colour=bcolors.OKPURPLE,
+                   component='CTAPHIDevice.ctaphid_msg', msg='raw APDU bytes: ')
+
+        rsp = CBORCommand(cid, None, skip_init=True)._u2f_req(cid, cmd_byte, apdu)
         self.send_response_segments(cid, rsp)
 
     def ctaphid_init(self, usb_req):
@@ -157,7 +158,8 @@ class CTAPHIDevice(UserDevice):
     def ctaphid_keepalive(self, usb_req):
         return
 
-    def ctaphid_wink(self, usb_req):
+    def ctaphid_wink(self, usb_req):        
+        time.sleep(1)#s
         return self._ctap_ack(usb_req)
 
     def ctaphid_error(self, usb_req):

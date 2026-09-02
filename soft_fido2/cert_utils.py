@@ -193,14 +193,13 @@ class CertUtils(object):
     def __cert_builder(cls, subject=None, issuer=None, lifetime=265, serial=None, keyPair=None):
         if not issuer or not serial or not keyPair: #TPM subject is none
             raise ValueError("Missing required parameters")
-        return x509.CertificateBuilder() \
-                    .subject_name(subject) \
-                    .issuer_name(issuer) \
-                    .public_key(keyPair.get_public()) \
-                    .serial_number(serial) \
-                    .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1)) \
-                    .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=lifetime)) \
-
+        return (x509.CertificateBuilder()
+                    .subject_name(subject) # pyright: ignore[reportArgumentType]  # subject is None for TPM certs (subjectAltName carries the identity)
+                    .issuer_name(issuer)
+                    .public_key(keyPair.get_public())
+                    .serial_number(serial)
+                    .not_valid_before(datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=1))
+                    .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=lifetime)))
     @classmethod
     def __add_extensions(cls, certBuilder, extensions):
         for extension in extensions:

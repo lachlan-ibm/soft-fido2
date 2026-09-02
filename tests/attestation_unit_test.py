@@ -131,29 +131,161 @@ def test_Attestation_Object(fido2_server, fido2_user):
 
 #### Attestation format tests ####
 
-def test_Packed_RSA_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_Packed_RSA_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.packed import PackedAttestation
+    verifier = PackedAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_rsa())
+    attestation = authenticator.credential_create(attestation_options)
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
 
 
-def test_Packed_EC_Attestation(fido2_server, fido2_authenticator):
-    pass
+
+def test_Packed_EC_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.packed import PackedAttestation
+    verifier = PackedAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_ecdsa())
+    attestation = authenticator.credential_create(attestation_options)
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
+
+def test_EC_TPM_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.tpm import TpmAttestation
+    verifier = TpmAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    caKeyPair = KeyPair.generate_ecdsa()
+    caCert = CertUtils.gen_ca_cert(
+        subject=x509.Name([ x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "aye.be.key.tpm.ca") ]),
+        lifetime=999, keyPair=caKeyPair)
+    authenticator = Fido2Authenticator(
+        keyPair=KeyPair.generate_ecdsa(), caKeyPair=caKeyPair, caCert=caCert)
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="tpm")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
 
 
-def test_TPM_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_RSA_TPM_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.tpm import TpmAttestation
+    verifier = TpmAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    caKeyPair = KeyPair.generate_rsa()
+    caCert = CertUtils.gen_ca_cert(
+        subject=x509.Name([ x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "aye.be.key.tpm.ca") ]),
+        lifetime=999, keyPair=caKeyPair)
+    authenticator = Fido2Authenticator(
+                keyPair=KeyPair.generate_rsa(), caKeyPair=caKeyPair, caCert=caCert)
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="tpm")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
 
 
-def test_Android_Keystore_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_Android_Keystore_Attestation(fido2_server, fido2_user):
+    pass #TODO
 
 
-def test_Android_Safetynet_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_Android_Safetynet_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.android import AndroidSafetynetAttestation
+    verifier = AndroidSafetynetAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    caKeyPair = KeyPair.generate_rsa()
+    caCert = CertUtils.gen_ca_cert(
+        subject=x509.Name([ x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "aye.be.key.test.ca") ]),
+        lifetime=999, keyPair=caKeyPair)
+    authenticator = Fido2Authenticator(
+            keyPair=KeyPair.generate_rsa(), caKeyPair=caKeyPair, caCert=caCert)
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="android-safetynet")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
 
 
-def test_None_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_None_EC256_Attestation(fido2_server, fido2_user):
+    from fido2.attestation import NoneAttestation
+    verifier = NoneAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_rsa())
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="none")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
 
 
-def test_U2F_Attestation(fido2_server, fido2_authenticator):
-    pass
+def test_None_ML44_Attestation(fido2_server, fido2_user):
+    pass #TODO fido2 does not support MLDSA-44
+    from fido2.attestation import NoneAttestation
+    verifier = NoneAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_mldsa(alg="ML-DSA-44"))
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="none")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
+
+
+def test_U2F_Attestation(fido2_server, fido2_user):
+    from fido2.attestation import FidoU2FAttestation
+    verifier = FidoU2FAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_ecdsa())
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="fido-u2f")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
+
+
+def test_MLDSA44_Packed_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.packed import PackedAttestation
+    verifier = PackedAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    if 'pubKeyCredParams' not in attestation_options or not any(p['alg'] == -48 for p in attestation_options['pubKeyCredParams']):
+        print("SKIPPING") # maybe support eventually?
+        return
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    authenticator = Fido2Authenticator(keyPair=KeyPair.generate_mldsa(alg="ML-DSA-44"))
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="packed-self")
+    serverAttestationObject = AttestationObject(
+            authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(
+            base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
