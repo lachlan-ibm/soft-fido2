@@ -5,8 +5,6 @@
 user-presence, passkey resolution, attestation, and assertion output.
 """
 
-from _thread import lock
-
 from multiprocessing.synchronize import Lock
 
 import base64, multiprocessing, os, threading, time, secrets, typing, logging, math
@@ -47,7 +45,7 @@ class AuthenticatorAPI(object):
     
     # Biometric + TPM mode state
     _biometric_tpm_mode_enabled: bool = False
-    _biometric_tpm_mode_lock: lock = threading.Lock()
+    _biometric_tpm_mode_lock: threading.Lock = threading.Lock()
 
     def __new__(cls):
         cls._watchdog = threading.Thread(target=cls._token_expiry_check)

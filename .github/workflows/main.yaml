@@ -4,7 +4,7 @@ name: pypi-publish
 on:
   push:
     branches:
-    - stable
+    - '**'
 
 # This job installs dependencies, builds the project's doc, and pushes it to `gh-pages`
 jobs:
