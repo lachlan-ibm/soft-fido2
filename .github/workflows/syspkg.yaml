@@ -25,7 +25,7 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libtss2-dev libdbus-1-dev libglib2.0-dev qt6-base-dev \
           debhelper dh-python devscripts python3-build python3-pip python3-setuptools \
-          python3-wheel
+          build-essential:native python3-all qt6-declarative-dev pyqt6-dev python3-wheel
 
     - name: Build DEB package
       run: |
