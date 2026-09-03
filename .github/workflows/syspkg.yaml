@@ -9,6 +9,9 @@ on:
     branches:
     - stable
 
+permissions:
+  contents: write
+
 jobs:
   build-deb:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -26,9 +29,9 @@ jobs:
 
     - name: Build DEB package
       run: |
-        GITHUB_RUN_NUMBER=${{ github.run_number }} dpkg-buildpackage -us -uc -b \
-          --output-dir dist
         mkdir -p dist
+        GITHUB_RUN_NUMBER=${{ github.run_number }} dpkg-buildpackage -us -uc -b
+        mv ../*.deb ../*.buildinfo ../*.changes dist/ 2>/dev/null || true
 
     - name: Upload DEB to Release
       uses: softprops/action-gh-release@v2
