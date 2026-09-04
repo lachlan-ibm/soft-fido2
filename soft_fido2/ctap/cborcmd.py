@@ -18,7 +18,7 @@ from .pending import KeepAliveWorker
 from .packet import bcolors, colour_print, dump_bytes
 from .u2fapi import U2FHandler
 
-from ..message_queues import QueueMessageType, MessageQueue
+from ..platform.message_queues import QueueMessageType, MessageQueue
 from ..qt.ux.config import PlatformConfig
 
 

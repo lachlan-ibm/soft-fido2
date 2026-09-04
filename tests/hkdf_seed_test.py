@@ -4,8 +4,6 @@ Test to verify HKDF seed generation works correctly after migration.
 """
 
 import base64
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.backends import default_backend
 from soft_fido2.key_pair import KeyUtils, KeyPair
 
 

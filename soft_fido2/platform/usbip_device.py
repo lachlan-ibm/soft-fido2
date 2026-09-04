@@ -32,8 +32,8 @@ Update 2022 by Lachlan Gleeson for python 3
 import socketserver, datetime, struct, traceback, re, signal, threading, random, time
 from typing import Optional
 
-from .ctap.packet import BaseStructure as _BaseStructure, bcolors, colour_print, CTAPHIDInitPkt, CTAPHIDSeqPkt
-from .ctap import CBORCommand
+from ..ctap.packet import BaseStructure as _BaseStructure, bcolors, colour_print, CTAPHIDInitPkt, CTAPHIDSeqPkt
+from ..ctap import CBORCommand
 from enum import Enum
 
 def print_bytes(*args):

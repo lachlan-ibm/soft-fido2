@@ -4,6 +4,8 @@
 
 import logging, sys, os, argparse, threading
 
+
+
 # Set process title for better name and notification display
 try:
     from setproctitle import setproctitle
@@ -12,10 +14,10 @@ except ImportError:
     # setproctitle not available, notifications may show __main__.py
     pass
 
-from .passkey_device import CTAPHIDevice
+from .platform.passkey_device import CTAPHIDevice
 from .qt.app import SysTrayApp
-from .usbip_device import CTAP2USBIPDevice, USBContainer
-
+from .platform.usbip_device import CTAP2USBIPDevice, USBContainer
+from .platform.message_queues import MessageQueue, QueueMessageType
 
 class DeviceManager:
     """Manages UHID device lifecycle"""
@@ -63,9 +65,7 @@ class DeviceManager:
             
             logging.info("Stopping UHID device...")
             # Signal device to stop via message queue
-            from soft_fido2.message_queues import MessageQueue, QueueMessageType
             MessageQueue.notify_udev.put(QueueMessageType.QUIT)
-            
             # Wait for device thread to terminate
             self.device.join(timeout=timeout)
             

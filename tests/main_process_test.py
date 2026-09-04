@@ -31,7 +31,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from soft_fido2.__main__ import DeviceManager
-from soft_fido2.uhid_device import (
+from soft_fido2.platform.uhid_device import (
     REPORT_DESCRIPTOR,
     UHIDCreate2Event,
     UHIDOutputEvent,
@@ -163,7 +163,7 @@ def uhid_env(tmp_path, monkeypatch):
       kern_sock  <──── SOCK_STREAM ────>  dev_sock
       (test)                              (UserDevice.run fd)
 
-    Only os.open inside soft_fido2.uhid_device is patched — it returns
+    Only os.open inside soft_fido2.platform.uhid_device is patched — it returns
     dev_sock.fileno() instead of opening a real path.  All os.read /
     os.write calls in production code are untouched and operate on the
     real socket fd.  No PTY, no socat, no 4096-byte kernel buffer limit.
@@ -180,7 +180,7 @@ def uhid_env(tmp_path, monkeypatch):
 
     dev_fd = dev_sock.fileno()
 
-    import soft_fido2.uhid_device as _uhid_mod
+    import soft_fido2.platform.uhid_device as _uhid_mod
     real_os_open = os.open
 
     def _mock_open(path, flags, *args, **kwargs):

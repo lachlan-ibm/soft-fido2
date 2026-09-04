@@ -9,7 +9,7 @@ import cbor2 as cbor
 import secrets
 import base64
 import logging
-
+import uuid, time
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa, ec, ed25519, mldsa
 from cryptography.hazmat.primitives import serialization, hashes
@@ -750,13 +750,10 @@ class KeyUtils(object):
         it responds immediately. If not running (e.g., in tests), we want
         to fail fast and fall back to file-based key loading.
         """
-        import uuid, time
-        from soft_fido2.message_queues import (
-                MessageQueue, PlatformKeyRequest
-            )
         request_id = str(uuid.uuid4())
+        # Hide this import from circular dependency import error with tpm_device.py
+        from .platform.message_queues import MessageQueue, PlatformKeyRequest
         request = PlatformKeyRequest(request_id)
-        
         MessageQueue.platform_key_requests.put(request)
         
         # Wait for response

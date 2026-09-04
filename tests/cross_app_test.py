@@ -1,7 +1,6 @@
 
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePrivateKey
 from cryptography.x509 import Certificate
-from soft_fido2.key_pair import KeyPair
 
 
 java_passkey = '''AAAAsi0tLS0tQkVHSU4gUFVCTElDIEtFWS0tLS0tCk1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpq

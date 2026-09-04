@@ -17,10 +17,10 @@ class SymmetricKey:
     SymmetricKey implements symmetric encryption using AES-GCM.
     
     This class provides methods to generate keys, encrypt, and decrypt messages
-    using AES-GCM for authenticated encryption.
+    using AES-GCM.
     """
     
-    # Version byte for our GCM-based tokens (different from standard Fernet)
+    # Version byte for GCM-based tokens (different from standard Fernet)
     VERSION = b'\x81'  # Using 0x81 to distinguish from standard Fernet's 0x80
     
     # Minimum token size: Version (1) + Timestamp (8) + Nonce (12) + Tag (16) + min ciphertext (1)
@@ -72,10 +72,9 @@ class SymmetricKey:
         # Current time in seconds since the epoch, as a 64-bit integer
         current_time = int(time.time())
         
-        # Generate a random 96-bit nonce (recommended size for GCM)
+        # Generate a random 96-bit nonce
         nonce = os.urandom(12)
         
-        # Encrypt the data with AES-GCM
         encryptor = Cipher(
             algorithms.AES(self._key),
             modes.GCM(nonce),
@@ -97,7 +96,6 @@ class SymmetricKey:
             ciphertext
         )
         
-        # Return URL-safe base64 encoded token
         return base64.urlsafe_b64encode(token)
     
     def _parse_token(self, token_bytes):
@@ -180,7 +178,6 @@ class SymmetricKey:
         # Verify timestamp if TTL is provided
         self._verify_timestamp(timestamp_bytes, ttl)
         
-        # Decrypt the ciphertext with AES-GCM
         try:
             decryptor = Cipher(
                 algorithms.AES(self._key),
@@ -197,7 +194,4 @@ class SymmetricKey:
             return plaintext
         except Exception as e:
             # Catch any other exceptions, including cryptography.exceptions.InvalidTag
-            # This is important for the test_invalid_token test case
             raise ValueError(f"Decryption failed: {str(e)}")
-
-# Made with Bob
