@@ -6,7 +6,7 @@ import datetime, random, threading, logging, time
 
 
 from .uhid_device import UserDevice
-from .ctap import (
+from ..ctap import (
     MAX_DATA_FRAME, AuthenticatorAPI, CBORCommand,
     CTAPHIDInitPkt, CTAPHIDSeqPkt, bcolors, dump_bytes, 
     colour_print

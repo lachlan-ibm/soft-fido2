@@ -384,7 +384,7 @@ class TestFileDiscovery:
     
     def test_discovery_requires_both_files(self, sample_passkey, temp_fido_home):
         """Test that file discovery only returns passkeys with both files"""
-        from soft_fido2.passkey_device import AuthenticatorAPI
+        from soft_fido2.platform.passkey_device import AuthenticatorAPI
         
         # Create complete passkey (both files)
         KeyUtils._save_passkey(
@@ -410,7 +410,7 @@ class TestFileDiscovery:
     
     def test_discovery_ignores_stash_files(self, temp_fido_home):
         """Test that .stash files are not treated as invalid passkeys"""
-        from soft_fido2.passkey_device import AuthenticatorAPI
+        from soft_fido2.platform.passkey_device import AuthenticatorAPI
         
         # Create orphaned .stash file
         stash_path = os.path.join(temp_fido_home, 'orphaned.stash')

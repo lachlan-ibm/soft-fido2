@@ -18,7 +18,7 @@ import os, time, sys, threading, logging, signal
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QThreadPool, QTimer
 
-from ..message_queues import QueueMessageType, MessageQueue, PlatformKeyRequest, PlatformKeyResponse
+from ..platform.message_queues import QueueMessageType, MessageQueue, PlatformKeyRequest, PlatformKeyResponse
 from .ux.config import PlatformConfig, AppState
 from .ux.workers import Worker
 from .ux.settings_dialog import SettingsDialog

@@ -7,7 +7,7 @@ import os, struct, fcntl, time, queue, threading, logging
 from enum import Enum
 
 from .message_queues import QueueMessageType, MessageQueue
-from .ctap.packet import BaseStructure
+from ..ctap.packet import BaseStructure
 
 # Assisted by watsonx Code Assistant
 #logging.basicConfig(filename='passkey.log', filemode='a', level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')

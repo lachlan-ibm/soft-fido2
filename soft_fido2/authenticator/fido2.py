@@ -11,9 +11,9 @@ from cryptography.hazmat.backends import default_backend
 from cryptography import x509
 from cryptography.fernet import Fernet
 
-from .key_pair import KeyPair, KeyUtils
-from .attestation import process_attestation_statement  as _build_att_stmt
-from .symmetric_key import SymmetricKey
+from ..key_pair import KeyPair, KeyUtils
+from ..attestation import process_attestation_statement  as _build_att_stmt
+from ..symmetric_key import SymmetricKey
 
 
 class Fido2Authenticator(object):

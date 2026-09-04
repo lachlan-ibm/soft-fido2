@@ -1,8 +1,6 @@
 import os
 import sys
-from cryptography.hazmat.primitives import serialization
 from cryptography import x509
-from cryptography.hazmat.primitives.asymmetric import ec
 import pytest
 import cbor2 as cbor
 import tempfile
@@ -20,7 +18,7 @@ from soft_fido2.ctap import (
     AuthenticatorAPI, CBORCommand, CTAPHIDInitPkt, CTAPHIDSeqPkt, 
     KeepAliveWorker
 )
-from soft_fido2.passkey_device import CTAPHIDevice
+from soft_fido2.platform.passkey_device import CTAPHIDevice
 
 
 class TestCTAPHIDPackets:
@@ -263,7 +261,7 @@ class TestCTAPHIDevice:
     
     @pytest.fixture
     def mock_device(self):
-        with patch('soft_fido2.passkey_device.UserDevice') as mock_user_device:
+        with patch('soft_fido2.platform.passkey_device.UserDevice') as mock_user_device:
             # Create a mock device path
             dev_path = "/dev/hidraw0"
             
@@ -464,7 +462,7 @@ class TestSegmentedMessages:
     
     @pytest.fixture
     def mock_device(self):
-        with patch('soft_fido2.passkey_device.UserDevice') as mock_user_device:
+        with patch('soft_fido2.platform.passkey_device.UserDevice') as mock_user_device:
             # Create a mock device path
             dev_path = "/dev/hidraw0"
             

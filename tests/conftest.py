@@ -1,6 +1,6 @@
 import pytest
 from fido2.webauthn import PublicKeyCredentialRpEntity
-from soft_fido2.passkey_device import AuthenticatorAPI
+from soft_fido2.ctap import AuthenticatorAPI
 
 
 user = {"id": b"example_user", "name": "Example User"}

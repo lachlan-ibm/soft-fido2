@@ -16,7 +16,7 @@ from PyQt6.QtGui import QIcon, QAction
 from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
 from PyQt6.QtCore import QTimer
 
-from ...message_queues import QueueMessageType, MessageQueue
+from ...platform.message_queues import QueueMessageType, MessageQueue
 from .config import APP_TITLE, AppState
 
 try:

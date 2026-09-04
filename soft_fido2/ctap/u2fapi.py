@@ -12,9 +12,7 @@ from .packet import bcolors, colour_print
 
 from ..key_pair import KeyUtils
 from ..symmetric_key import SymmetricKey
-from ..u2f_authenticator import U2FAuthenticator
-from ..authenticator import Fido2Authenticator
-
+from ..authenticator import Fido2Authenticator, U2FAuthenticator
 
 class U2FHandler:
     """Stateless U2F (CTAP1) APDU dispatcher."""
