@@ -144,3 +144,6 @@ assertion_response = authenticator.credential_request(assertion_options)
 print(json.dumps(assertion_response, indent=4))
 
 EOF
+
+echo "OS integration tests..."
+PYTHONPATH="$PYTHONPATH:./build/lib" pytest -v tests/main_process_test.py

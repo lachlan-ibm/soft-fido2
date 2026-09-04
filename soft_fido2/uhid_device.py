@@ -357,7 +357,7 @@ class UserDevice(threading.Thread):
         fd = None
         started = False
         try:
-            fd = os.open('/dev/uhid', os.O_RDWR)  #| os.O_CLOEXEC| os.O_NONBLOCK
+            fd = os.open(self.device_path, os.O_RDWR)  #| os.O_CLOEXEC| os.O_NONBLOCK
             fcntl.fcntl(fd, fcntl.F_SETFL, os.O_NONBLOCK)
         except OSError as e:
             logging.exception(f"OSError with uhid fd: {e}")

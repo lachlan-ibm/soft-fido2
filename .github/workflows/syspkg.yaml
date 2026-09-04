@@ -30,17 +30,17 @@ jobs:
     - name: Build DEB package
       run: |
         mkdir -p dist
-        GITHUB_RUN_NUMBER=${{ github.run_number }} dpkg-buildpackage -us -uc -b
+        GITHUB_RUN_NUMBER=${{ github.event.workflow_run.run_number }} dpkg-buildpackage -us -uc -b
         mv ../*.deb ../*.buildinfo ../*.changes dist/ 2>/dev/null || true
 
     - name: Upload DEB to Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v0.4.${{ github.run_number }}
+        tag_name: v0.4.${{ github.event.workflow_run.run_number }}
         files: dist/soft-fido2_*.deb
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: github.ref == 'refs/heads/stable'
+      if: github.event.workflow_run.head_branch == 'stable'
 
   build-rpm:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -71,7 +71,7 @@ jobs:
 
     - name: Build RPM
       run: |
-        GITHUB_RUN_NUMBER=${{ github.run_number }} \
+        GITHUB_RUN_NUMBER=${{ github.event.workflow_run.run_number }} \
         rpmbuild -ba rpmbuild/soft_fido2.spec \
             --define "_topdir $(pwd)/.rpmbuild" \
             --define "_rpmdir $(pwd)/dist" \
@@ -80,10 +80,10 @@ jobs:
     - name: Upload RPM to Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v0.4.${{ github.run_number }}
+        tag_name: v0.4.${{ github.event.workflow_run.run_number }}
         files: |
           dist/noarch/soft_fido2-*.rpm
           dist/soft_fido2-*.src.rpm
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: github.ref == 'refs/heads/stable'
+      if: github.event.workflow_run.head_branch == 'stable'
