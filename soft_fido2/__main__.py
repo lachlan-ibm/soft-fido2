@@ -131,6 +131,11 @@ Examples:
         """
     )
     _ = parser.add_argument(
+        '--settings',
+        action='store_true',
+        help='Open the settings dialog (connects to running instance via IPC)'
+    )
+    _ = parser.add_argument(
         '--transport',
         choices=['uhid', 'usbip'],
         default='uhid',
@@ -149,9 +154,18 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Setup logging
-    if os.environ.get("FIDO_HOME") == None:
+
+    # Handle --settings: signal the running instance and exit
+    if args.settings:
+        from soft_fido2.qt.svc.ipc_client import IpcClient
+        if IpcClient().send("open_settings"):
+            sys.exit(0)
+        else:
+            print("AyeBeKey service is not running.", file=sys.stderr)
+            sys.exit(1)
+
+    # Setup logging — FIDO_HOME is required for the service, not for --settings
+    if os.environ.get("FIDO_HOME") is None:
         sys.exit(1)
     ll = logging.INFO
     if "SOFT_FIDO2_DEBUG_LEVEL" in os.environ:

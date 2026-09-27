@@ -17,6 +17,7 @@ import os, time, sys, threading, logging, signal
 
 from PyQt6.QtWidgets import QApplication, QDialog, QMessageBox
 from PyQt6.QtCore import QThreadPool, QTimer
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 
 from ..platform.message_queues import QueueMessageType, MessageQueue, PlatformKeyRequest, PlatformKeyResponse
 from .ux.config import PlatformConfig, AppState
@@ -24,6 +25,7 @@ from .ux.workers import Worker
 from .ux.settings_dialog import SettingsDialog
 from .ux.main_window import SysTrayMainWindow
 from .svc.platform_key_service import PlatformKeyService
+from .svc.ipc_client import ipc_socket_path
 
 
 class SysTrayApp(QDialog):
@@ -50,6 +52,8 @@ class SysTrayApp(QDialog):
             device_manager: Optional device manager instance
         """
         self.app = QApplication(sys.argv)
+        self.app.setApplicationName("AyeBeKey")
+        self.app.setDesktopFileName("ayebekey")   # no .desktop suffix — Qt appends it
         self.device_manager = device_manager
         super().__init__()
         
@@ -73,6 +77,9 @@ class SysTrayApp(QDialog):
         # Track active dialog to prevent multiple dialogs
         self._active_dialog = None
         
+        # === IPC Server ===
+        self._setup_ipc_server()
+
         # === Signal Handling ===
         self._setup_signal_handling()
         
@@ -147,6 +154,35 @@ class SysTrayApp(QDialog):
     # SIGNAL HANDLING
     # ============================================================================
     
+    # ============================================================================
+    # IPC SERVER
+    # ============================================================================
+
+    def _setup_ipc_server(self):
+        """Listen for IPC commands from --settings invocations."""
+        self._ipc_server = QLocalServer(self.app)
+        path = ipc_socket_path()
+        QLocalServer.removeServer(path)   # clean stale socket
+        self._ipc_server.listen(path)
+        self._ipc_server.newConnection.connect(self._handle_ipc_connection)
+
+    def _handle_ipc_connection(self):
+        """Handle an incoming IPC connection and dispatch the command."""
+        conn = self._ipc_server.nextPendingConnection()
+        if not conn:
+            logging.warning("IPC: newConnection signal but no pending connection")
+            return
+        conn.waitForReadyRead(200)
+        cmd = conn.readAll().data().decode("utf-8", errors="ignore").strip()
+        logging.debug(f"IPC received command: '{cmd}' active_dialog={self._active_dialog}")
+        if cmd == "open_settings":
+            self.open_settings_public()
+        conn.disconnectFromServer()
+
+    # ============================================================================
+    # SIGNAL HANDLING
+    # ============================================================================
+
     def _setup_signal_handling(self):
         """Set up signal handling for graceful shutdown."""
         # Set up the signal handlers
@@ -177,7 +213,7 @@ class SysTrayApp(QDialog):
         """Check if a signal has been received and handle it."""
         if SysTrayApp._received_signal:
             sig_name = "SIGINT" if SysTrayApp._signal_num == signal.SIGINT else "SIGTERM"
-            logging.info(f"Qt event loop detected {sig_name}, shutting down gracefully")
+            logging.debug(f"Qt event loop detected {sig_name}, shutting down gracefully")
             # Stop the timer first to prevent re-entry
             self._signal_timer.stop()
             self._exit()
@@ -186,28 +222,32 @@ class SysTrayApp(QDialog):
     # EVENT HANDLERS
     # ============================================================================
     
+    def open_settings_public(self):
+        """Public entry point for opening settings — used by --settings IPC."""
+        logging.info("open_settings_public called")
+        self.__open_settings()
+
     def __open_settings(self):
-        """Open the settings dialog.
-        
-        Prevents multiple dialogs from being opened simultaneously.
-        """
-        # Check if another dialog is already active
+        """Open the settings dialog."""
         if self._active_dialog is not None:
+            logging.debug("open_settings: dialog already active, ignoring")
             QMessageBox.information(
                 self,
                 "Operation in Progress",
                 "Please complete the current operation before starting a new one."
             )
             return
-            
-        dialog = SettingsDialog(self, device_manager=self.device_manager)
-        dialog.finished.connect(lambda: self.__handle_dialog_closed(dialog))
-        
-        # Set as active dialog
-        self._active_dialog = dialog
-        dialog.exec()
-        # Clean up after dialog closes
-        self.__handle_dialog_closed(dialog)
+
+        logging.info("open_settings: creating SettingsDialog")
+        try:
+            dialog = SettingsDialog(self, device_manager=self.device_manager)
+            dialog.finished.connect(lambda: self.__handle_dialog_closed(dialog))
+            self._active_dialog = dialog
+            dialog.exec()
+            self.__handle_dialog_closed(dialog)
+        except Exception as e:
+            logging.error(f"open_settings: exception: {e}", exc_info=True)
+            self._active_dialog = None
         
     def __handle_dialog_closed(self, dialog):
         """Handle dialog closed event.

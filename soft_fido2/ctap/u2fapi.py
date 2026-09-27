@@ -1,11 +1,11 @@
 # Copyright IBM Corp. 2022, 2025
 # IBM Confidential
 
-"""CTAP1 / U2F APDU handlers, isolated from CTAP2 framing.
+"""CTAP1 / U2F APDU handlers.
 
 U2FHandler is stateless — all methods are @staticmethod.  A
 ``cbor_cmd_factory`` callable is passed in so this module does not need
-to import CBORCommand (avoids a circular dependency).
+to import CBORCommand.
 """
 
 from .packet import bcolors, colour_print
