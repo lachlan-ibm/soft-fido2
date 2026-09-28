@@ -1,11 +1,8 @@
 #!/bin/python3
 
-from hmac import new
 from soft_fido2 import Fido2Authenticator, KeyPair
-from soft_fido2.key_pair import KeyUtils
 import uuid
 import base64
-import secrets
 from cryptography.fernet import Fernet
 
 from soft_fido2.symmetric_key import SymmetricKey

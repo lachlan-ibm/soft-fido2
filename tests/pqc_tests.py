@@ -1,9 +1,4 @@
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric.mldsa import (
-    MLDSA44PublicKey,
-    MLDSA65PublicKey,
-    MLDSA87PublicKey
-)
 from soft_fido2 import Fido2Authenticator, KeyPair
 import os, json, base64, uuid, struct, cbor2
 

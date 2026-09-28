@@ -83,6 +83,10 @@ case "$1" in
     udevadm control --reload-rules
     udevadm trigger --subsystem-match=misc
 
+    # ── Update XDG icon and desktop caches ────────────────────────────────────
+    gtk-update-icon-cache /usr/share/icons/hicolor 2>/dev/null || true
+    update-desktop-database /usr/share/applications 2>/dev/null || true
+
     echo ""
     echo "soft-fido2 installed. Log out and back in for group membership to take effect."
     echo "The passkey service will start automatically at your next graphical login."

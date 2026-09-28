@@ -20,11 +20,15 @@ override_dh_auto_test:
 override_dh_install:
 	dh_install
 	install -Dm644 rpmbuild/passkey.env debian/soft-fido2/etc/skel/.fido2/passkey.env
+	install -Dm644 \
+		$(shell find debian/soft-fido2 -path '*/soft_fido2/icons/main_icon.svg' | head -1) \
+		debian/soft-fido2/usr/share/icons/hicolor/scalable/apps/ayebekey.svg
 
 override_dh_auto_install:
 	DEB_PYTHON_INSTALL_LAYOUT=deb_system python3 -m pip install \
 	    --no-deps \
 	    --no-build-isolation \
+	    --force-reinstall \
 	    --root debian/soft-fido2 \
 	    --prefix $(shell python3 -c 'import sys; print(sys.prefix)') \
 	    --no-warn-script-location \

@@ -25,22 +25,23 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libtss2-dev libdbus-1-dev libglib2.0-dev qt6-base-dev \
           debhelper dh-python devscripts python3-build python3-pip python3-setuptools \
-          build-essential:native python3-all qt6-declarative-dev pyqt6-dev python3-wheel
+          build-essential:native python3-all qt6-declarative-dev pyqt6-dev python3-wheel \
+          desktop-file-utils libgtk-3-bin
 
     - name: Build DEB package
       run: |
         mkdir -p dist
-        GITHUB_RUN_NUMBER=${{ github.run_number }} dpkg-buildpackage -us -uc -b
+        GITHUB_RUN_NUMBER=${{ github.event.workflow_run.run_number }} dpkg-buildpackage -us -uc -b
         mv ../*.deb ../*.buildinfo ../*.changes dist/ 2>/dev/null || true
 
     - name: Upload DEB to Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v0.4.${{ github.run_number }}
+        tag_name: v0.4.${{ github.event.workflow_run.run_number }}
         files: dist/soft-fido2_*.deb
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: github.ref == 'refs/heads/stable'
+      if: github.event.workflow_run.head_branch == 'stable'
 
   build-rpm:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -54,6 +55,7 @@ jobs:
       run: |
         dnf install -y \
           rpmdevtools \
+          desktop-file-utils \
           python3-build \
           python3-setuptools \
           python3-wheel \
@@ -71,7 +73,7 @@ jobs:
 
     - name: Build RPM
       run: |
-        GITHUB_RUN_NUMBER=${{ github.run_number }} \
+        GITHUB_RUN_NUMBER=${{ github.event.workflow_run.run_number }} \
         rpmbuild -ba rpmbuild/soft_fido2.spec \
             --define "_topdir $(pwd)/.rpmbuild" \
             --define "_rpmdir $(pwd)/dist" \
@@ -80,10 +82,10 @@ jobs:
     - name: Upload RPM to Release
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: v0.4.${{ github.run_number }}
+        tag_name: v0.4.${{ github.event.workflow_run.run_number }}
         files: |
           dist/noarch/soft_fido2-*.rpm
           dist/soft_fido2-*.src.rpm
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      if: github.ref == 'refs/heads/stable'
+      if: github.event.workflow_run.head_branch == 'stable'

@@ -111,9 +111,9 @@ def test_Client_Data_JSON(fido2_server, fido2_user):
     authenticator = Fido2Authenticator()
     assert isinstance(authenticator.kp, KeyPair)
     _register(fido2_server, fido2_user, authenticator)
-    attested_data = AttestedCredentialData( authenticator.process_attested_credential_data(
+    attested_data = AttestedCredentialData( bytes(authenticator.process_attested_credential_data(
                                  authenticator.kp.get_public(),
-                                 authenticator._get_credential_id_bytes(authenticator.kp) ))
+                                 authenticator._get_credential_id_bytes(authenticator.kp) )))
     assertion_options, state = fido2_server.authenticate_begin(credentials=[attested_data])
     assertion_options = dict(assertion_options)['publicKey']
     assertion = authenticator.credential_request(assertion_options)

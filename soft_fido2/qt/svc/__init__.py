@@ -7,4 +7,5 @@ Services are organized by domain:
 - platform_key_service: Platform key operations
 - passkey_service: Passkey wallet operations
 - credential_service: Credential management operations
+- ipc_client: IPC command delivery to a running instance
 """

@@ -9,9 +9,9 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils
 from cryptography.hazmat.primitives import hashes
 from cryptography import x509
 
-from .key_pair import KeyPair, KeyUtils
-from .cert_utils import CertUtils
-from .symmetric_key import SymmetricKey
+from ..key_pair import KeyPair, KeyUtils
+from ..cert_utils import CertUtils
+from ..symmetric_key import SymmetricKey
 
 
 # Credential-ID prefix — same sentinel as Fido2Authenticator so that

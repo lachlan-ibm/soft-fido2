@@ -4,6 +4,8 @@
 
 import logging, sys, os, argparse, threading
 
+
+
 # Set process title for better name and notification display
 try:
     from setproctitle import setproctitle
@@ -12,10 +14,10 @@ except ImportError:
     # setproctitle not available, notifications may show __main__.py
     pass
 
-from .passkey_device import CTAPHIDevice
+from .platform.passkey_device import CTAPHIDevice
 from .qt.app import SysTrayApp
-from .usbip_device import CTAP2USBIPDevice, USBContainer
-
+from .platform.usbip_device import CTAP2USBIPDevice, USBContainer
+from .platform.message_queues import MessageQueue, QueueMessageType
 
 class DeviceManager:
     """Manages UHID device lifecycle"""
@@ -63,9 +65,7 @@ class DeviceManager:
             
             logging.info("Stopping UHID device...")
             # Signal device to stop via message queue
-            from soft_fido2.message_queues import MessageQueue, QueueMessageType
             MessageQueue.notify_udev.put(QueueMessageType.QUIT)
-            
             # Wait for device thread to terminate
             self.device.join(timeout=timeout)
             
@@ -131,6 +131,11 @@ Examples:
         """
     )
     _ = parser.add_argument(
+        '--settings',
+        action='store_true',
+        help='Open the settings dialog (connects to running instance via IPC)'
+    )
+    _ = parser.add_argument(
         '--transport',
         choices=['uhid', 'usbip'],
         default='uhid',
@@ -149,9 +154,18 @@ Examples:
     )
     
     args = parser.parse_args()
-    
-    # Setup logging
-    if os.environ.get("FIDO_HOME") == None:
+
+    # Handle --settings: signal the running instance and exit
+    if args.settings:
+        from soft_fido2.qt.svc.ipc_client import IpcClient
+        if IpcClient().send("open_settings"):
+            sys.exit(0)
+        else:
+            print("AyeBeKey service is not running.", file=sys.stderr)
+            sys.exit(1)
+
+    # Setup logging — FIDO_HOME is required for the service, not for --settings
+    if os.environ.get("FIDO_HOME") is None:
         sys.exit(1)
     ll = logging.INFO
     if "SOFT_FIDO2_DEBUG_LEVEL" in os.environ:

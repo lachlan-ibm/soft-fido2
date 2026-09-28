@@ -16,7 +16,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.serialization import load_pem_public_key
 
-from soft_fido2.key_pair import KeyPair
+from ...key_pair import KeyPair
 
 
 @contextmanager

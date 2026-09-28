@@ -4,7 +4,6 @@
 
 import os
 import base64
-import secrets
 import pytest
 from cryptography.fernet import Fernet
 

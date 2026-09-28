@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Aye.Be.Key
+GenericName=FIDO2 Authenticator
+Comment=Software FIDO2 Passkey Authenticator
+Icon=ayebekey
+Exec=python3 -m soft_fido2 --settings
+Terminal=false
+Categories=Utility;Security;
+StartupWMClass=AyeBeKey
+NoDisplay=false
+Actions=Settings;

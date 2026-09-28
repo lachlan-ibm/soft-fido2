@@ -12,6 +12,7 @@ BuildRequires:  python3-pip
 BuildRequires:  python3-build
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
+BuildRequires:  desktop-file-utils
 
 # Fedora 43 ships python3-cryptography 46.x; the wheel metadata auto-generates
 # a python3.14dist(cryptography) >= 48 requirement that blocks installation.
@@ -87,6 +88,17 @@ install -Dm644 rpmbuild/passkey.env \
 install -Dm600 rpmbuild/passkey.env \
     %{buildroot}/etc/skel/.fido2/passkey.env
 
+# Desktop entry (XDG — system-wide)
+install -Dm644 packaging/ayebekey.desktop \
+    %{buildroot}/usr/share/applications/ayebekey.desktop
+
+# HiColor scalable icon — copy from installed Python package
+install -Dm644 \
+    %{buildroot}/%{python3_sitelib}/soft_fido2/icons/main_icon.svg \
+    %{buildroot}/usr/share/icons/hicolor/scalable/apps/ayebekey.svg
+
+desktop-file-validate %{buildroot}/usr/share/applications/ayebekey.desktop
+
 %files
 %license LICENSE
 %{python3_sitelib}/soft_fido2/
@@ -96,6 +108,8 @@ install -Dm600 rpmbuild/passkey.env \
 /etc/modules-load.d/uhid.conf
 %{_datadir}/soft_fido2/passkey.env.example
 %{_sysconfdir}/skel/.fido2/passkey.env
+/usr/share/applications/ayebekey.desktop
+/usr/share/icons/hicolor/scalable/apps/ayebekey.svg
 
 %post
 # ── UHID kernel module ───────────────────────────────────────────────────────
@@ -153,9 +167,17 @@ systemctl --global enable passkey.service 2>/dev/null || true
 udevadm control --reload-rules
 udevadm trigger --subsystem-match=misc
 
+# ── Update XDG icon and desktop caches ───────────────────────────────────────
+gtk-update-icon-cache /usr/share/icons/hicolor &>/dev/null || true
+update-desktop-database /usr/share/applications &>/dev/null || true
+
 echo ""
 echo "soft_fido2 installed. Log out and back in for group membership to take effect."
 echo "The passkey service will start automatically at your next graphical login."
+
+%postun
+gtk-update-icon-cache /usr/share/icons/hicolor &>/dev/null || true
+update-desktop-database /usr/share/applications &>/dev/null || true
 
 %preun
 if [ $1 -eq 0 ]; then

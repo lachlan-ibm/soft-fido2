@@ -3,3 +3,4 @@ rpmbuild/10-uhid.rules               etc/udev/rules.d/
 rpmbuild/11-soft-fido2-snap.rules    etc/udev/rules.d/
 rpmbuild/uhid.conf          etc/modules-load.d/
 rpmbuild/passkey.env        usr/share/soft-fido2/
+packaging/ayebekey.desktop  usr/share/applications/

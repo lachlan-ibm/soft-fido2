@@ -7,6 +7,7 @@ from soft_fido2 import Fido2Authenticator, KeyPair, CertUtils
 from fido2.webauthn import CollectedClientData, AttestationObject
 import base64
 import hashlib
+import json
 import cbor2 as cbor
 from cryptography import x509
 from cryptography.hazmat.backends import default_backend
@@ -202,8 +203,44 @@ def test_RSA_TPM_Attestation(fido2_server, fido2_user):
 
 
 def test_Android_Keystore_Attestation(fido2_server, fido2_user):
-    pass #TODO
-
+    #TODO not really verified
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    caKeyPair = KeyPair.generate_rsa()
+    caCert = CertUtils.gen_ca_cert(
+        subject=x509.Name([ x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "aye.be.key.test.ca") ]),
+        lifetime=999, keyPair=caKeyPair)
+    authenticator = Fido2Authenticator(
+            keyPair=KeyPair.generate_rsa(), caKeyPair=caKeyPair, caCert=caCert)
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="android-key")
+    assert isinstance(attestation, dict), attestation
+    id = attestation['id']
+    rawid = attestation['rawId']
+    assert id == rawid, attestation
+    rsp = attestation['response']
+    assert isinstance(rsp, dict), rsp
+    b64attobj = rsp['attestationObject']
+    b64cdj = rsp['clientDataJSON']
+    import cbor2
+    attobj = cbor2.loads(base64.urlsafe_b64decode(b64attobj))
+    assert isinstance(attobj, dict)
+    stmt = attobj['attStmt']
+    fmt = attobj['fmt']
+    authdata = attobj['authData']
+    assert fmt == 'android-key', fmt
+    assert isinstance(stmt, dict)
+    assert stmt['alg'] == -257 # RSASHA256 only
+    x5clist = stmt['x5c']
+    assert len(x5clist) == 2, x5clist # authenticator + ca certs
+    assert x5clist[1] == CertUtils.get_encoded( caCert ), "unexpected cert as ca"
+    hasher = hashes.Hash(hashes.SHA256())
+    hasher.update(base64.urlsafe_b64decode(b64cdj))
+    cdh = hasher.finalize()
+    toSign = authdata + cdh
+    assert isinstance(authenticator.kp, KeyPair)
+    pubkey = authenticator.kp.get_public()
+    assert isinstance(pubkey, RSAPublicKey)
+    pubkey.verify(stmt['sig'], toSign, padding.PKCS1v15(), hashes.SHA256())
 
 def test_Android_Safetynet_Attestation(fido2_server, fido2_user):
     from fido2.attestation.android import AndroidSafetynetAttestation
@@ -219,6 +256,26 @@ def test_Android_Safetynet_Attestation(fido2_server, fido2_user):
     authenticator = Fido2Authenticator(
             keyPair=KeyPair.generate_rsa(), caKeyPair=caKeyPair, caCert=caCert)
     attestation = authenticator.credential_create(attestation_options, atteStmtFmt="android-safetynet")
+    serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
+    serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
+    verifier.verify(serverAttestationObject.att_stmt,
+            serverAttestationObject.auth_data, serverClientData.hash)
+
+
+def test_Apple_AnonCA_Attestation(fido2_server, fido2_user):
+    from fido2.attestation.apple import AppleAttestation
+    verifier = AppleAttestation()
+    attestation_options, _ = fido2_server.register_begin(fido2_user)
+    attestation_options = dict(attestation_options)['publicKey']
+    #attestation_options['challenge'] = base64.urlsafe_b64encode(attestation_options['challenge']).decode('utf-8')
+    #attestation_options['user']['id'] = base64.urlsafe_b64encode(attestation_options['user']['id']).decode('utf-8')
+    caKeyPair = KeyPair.generate_rsa()
+    caCert = CertUtils.gen_ca_cert(
+        subject=x509.Name([ x509.NameAttribute(x509.oid.NameOID.COMMON_NAME, "aye.be.key.test.ca") ]),
+        lifetime=999, keyPair=caKeyPair)
+    authenticator = Fido2Authenticator(
+            keyPair=KeyPair.generate_rsa(), caKeyPair=caKeyPair, caCert=caCert)
+    attestation = authenticator.credential_create(attestation_options, atteStmtFmt="apple")
     serverAttestationObject = AttestationObject(authenticator._urlb64_decode(attestation.get('response', {}).get('attestationObject')))
     serverClientData = CollectedClientData(base64.urlsafe_b64decode(attestation["response"]["clientDataJSON"]))
     verifier.verify(serverAttestationObject.att_stmt,

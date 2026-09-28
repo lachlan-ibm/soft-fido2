@@ -17,6 +17,8 @@ Depends: ${misc:Depends},
  python3-setproctitle,
  python3-dbus,
  python3-pyqt6,
+ libgtk-3-bin | libgtk-4-bin,
+ desktop-file-utils,
  adduser (>= 3.11)
 Recommends: fprintd, tpm2-tools, python3-tpm2-pytss
 Description: Software FIDO2 platform passkey authenticator (UHID)

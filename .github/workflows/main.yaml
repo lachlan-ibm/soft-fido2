@@ -13,14 +13,13 @@ jobs:
     steps:
     - uses: actions/checkout@v3
 
-    # Install system dependencies for TPM2, D-Bus, Qt6, and DEB build tools
+    # Install worker TPM2, D-Bus, Qt6, and DEB build tools
     - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libtss2-dev libdbus-1-dev libglib2.0-dev qt6-base-dev \
           debhelper dh-python devscripts
 
-    # Install dependencies
     - name: Set up Python 3.10.5
       uses: actions/setup-python@v3
       with:
@@ -31,13 +30,11 @@ jobs:
         pip install -r dev-requirements.txt
         pip install -e .
 
-    # Run tests
     - name: Run tests
       run: |
         ./tests/unit_test.sh
         ./tests/scenario_test.sh
 
-    # Build and publish to PyPI
     - name: Build and publish to PyPI
       run: |
         python -m build
