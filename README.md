@@ -93,6 +93,8 @@ assertion_result = requests.post("https://my.relying.party/assertion/result", js
 
 This module can be run as main to provide a system CTAP2 authenticator service. This allows the module to integrate with systemd via the UHID kernel module. For information on how to set up this python module as a system authenticator, see the [PASSKEY](PASSKEY.md) documentation.
 
+Alternatively, you can try install the `.deb` or .`rpm` [system package](https://github.com/lachlan-ibm/soft-fido2/releases) to install the module and its required dependencies. Note this will add your `$USER` to the `uhid` group, which will require you to log out-then-in of your graphical session.
+
 <img src="https://raw.githubusercontent.com/lachlan-ibm/soft-fido2/refs/heads/development/soft_fido2/icons/main_icon.svg" alt="AyeBeKey Authenticator Icon" width="128" height="128" /> <img src="https://raw.githubusercontent.com/lachlan-ibm/soft-fido2/refs/heads/development/soft_fido2/icons/main_icon_unlocked.svg" alt="AyeBeKey Authenticator Icon Green" width="128" height="128" />
 
 For advanced users the optional extras allow you to use your device's biometric reader to perform User Presence; and the TPM to store credentials issued by the authenticator.
