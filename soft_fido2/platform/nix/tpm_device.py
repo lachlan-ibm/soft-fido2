@@ -72,23 +72,24 @@ class TPMDevice(object):
         Returns:
             bool: True if TPM device is available, False otherwise
         """
-        if cls._has_tpm is not None:
-            return cls._has_tpm
-        try:
-            with redirect_tcti_to_logging():
-                esapi = ESAPI()
-                esapi.get_capability(
-                    capability=TPM2_CAP.ALGS,
-                    prop=0,
-                    property_count=1
-                )
-            logging.info("TPM device available")
-            cls._has_tpm = True
-            return True
-        except Exception as e:
-            logging.warning(f"TPM device not available: {e}")
-            cls._has_tpm = True
+
+        if not _TPM2_PYTSS_AVAILABLE:
             return False
+        if not cls._has_tpm:
+            try:
+                with redirect_tcti_to_logging():
+                    esapi = ESAPI()
+                    esapi.get_capability(
+                        capability=TPM2_CAP.ALGS,
+                        prop=0,
+                        property_count=1
+                    )
+                logging.info("TPM device available")
+                cls._has_tpm = True
+            except Exception as e:
+                logging.warning(f"TPM device not available: {e}")
+                cls._has_tpm = False
+        return cls._has_tpm
 
     def is_handle_available(self, candidate):
         """Check if a persistent handle is available (not in use)

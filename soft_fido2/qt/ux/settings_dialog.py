@@ -297,7 +297,7 @@ class SettingsDialog(QDialog):
         # First, check if there's a saved preference in platform.cfg
         saved_key_type = self.plat_cfg.key_type
         
-        if saved_key_type == 'tpm':
+        if saved_key_type == 'tpm' and self.tpm_available:
             self.tpm_radio.setChecked(True)
         elif saved_key_type == 'file':
             self.file_radio.setChecked(True)
@@ -305,7 +305,7 @@ class SettingsDialog(QDialog):
             # No saved preference, check which key actually exists
             key_type = self.platform_key_service.get_key_type()
             
-            if key_type == 'tpm':
+            if key_type == 'tpm' and self.tpm_available:
                 self.tpm_radio.setChecked(True)
             elif key_type == 'file':
                 self.file_radio.setChecked(True)
@@ -421,14 +421,7 @@ class SettingsDialog(QDialog):
         """Check if TPM is available on the system."""
         try:
             from ...platform import TPMDevice
-            tpm = TPMDevice()
-            # Try to get key to verify TPM is actually functional
-            try:
-                tpm.get_key()
-                return True
-            except:
-                # TPM exists but no key yet, still available
-                return True
+            return TPMDevice.is_available()
         except Exception as e:
             self.logger.debug(f"TPM not available: {e}")
             return False
