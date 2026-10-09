@@ -60,7 +60,9 @@ jobs:
           python3-setuptools \
           python3-wheel \
           python3-devel \
-          python3-pip
+          python3-pip \
+          qt6-qtbase-devel \
+          python3-pyqt6-devel
 
     - name: Build source tarball
       run: |
