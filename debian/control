@@ -19,9 +19,10 @@ Depends: ${misc:Depends},
  python3-pyqt6,
  libgtk-3-bin | libgtk-4-bin,
  desktop-file-utils,
- adduser (>= 3.11)
+ adduser (>= 3.11),
+ libxcursor1
 Recommends: fprintd, tpm2-tools, python3-tpm2-pytss
-Description: Software FIDO2 platform passkey authenticator (UHID)
+Description: Software passkey authenticator.
  soft_fido2 is a software FIDO2/WebAuthn platform passkey authenticator
  that emulates a USB HID device via the Linux UHID kernel module.
  .

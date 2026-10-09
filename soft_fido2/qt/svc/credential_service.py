@@ -1,28 +1,7 @@
 """Credential Service for managing FIDO2 credentials within passkey wallets.
 
-This service encapsulates all business logic for credential management operations,
+This service encapsulates logic for credential management operations,
 including loading, deleting, and querying credentials stored in passkey wallets.
-It provides a clean interface for credential operations without coupling to
-UI components.
-
-Features:
-    - Load credentials from passkey wallets
-    - Delete credentials from passkey wallets
-    - Get credential counts
-    - Format credentials for display
-    - Manage credential lifecycle
-
-Example:
-    service = CredentialService(fido_home="/path/to/.fido")
-    
-    # Load credentials
-    success, creds, msg = service.load_credentials("wallet.passkey", "1234")
-    
-    # Delete a credential
-    success, msg = service.delete_credential("wallet.passkey", "1234", 0)
-    
-    # Get credential count
-    count = service.get_credential_count("wallet.passkey", "1234")
 """
 
 import os
@@ -367,3 +346,52 @@ class CredentialService:
                 'user_id': 'error',
                 'user_id_full': 'error'
             }
+
+
+    def update_pin(
+        self,
+        passkey_file: str,
+        current_pin: str,
+        new_pin: str,
+    ) -> Tuple[bool, str]:
+        """Re-encrypt the passkey wallet under a new PIN.
+
+        Loads the wallet with the current PIN then re-saves it encrypted
+        under the new PIN hash.  Credentials are unchanged.
+
+        Args:
+            passkey_file: Wallet filename (with or without .passkey extension).
+            current_pin:  PIN used to decrypt the wallet.
+            new_pin:      Replacement PIN.
+
+        Returns:
+            Tuple[bool, str]: (success, human-readable message)
+        """
+        try:
+            if not passkey_file.endswith('.passkey'):
+                passkey_file += '.passkey'
+
+            passkey_path = os.path.join(self.fido_home, passkey_file)
+
+            if not os.path.exists(passkey_path):
+                return False, f"Passkey file {passkey_file} does not exist"
+
+            current_nonce = KeyUtils.get_pin_hash(current_pin)
+            passkey_data = KeyUtils._load_passkey(current_nonce, passkey_path)
+
+            new_nonce = KeyUtils.get_pin_hash(new_pin)
+            KeyUtils._save_passkey(
+                passkey_data['key'],
+                passkey_data['x5c'],
+                passkey_data['res.creds'],
+                new_nonce,
+                passkey_path,
+            )
+
+            msg = f"PIN updated successfully for {passkey_file}"
+            self.logger.info(msg)
+            return True, msg
+
+        except Exception:
+            self.logger.exception("Failed to update PIN")
+            return False, "Failed to update PIN. Please check your current PIN and try again."
