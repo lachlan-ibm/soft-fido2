@@ -25,7 +25,7 @@ from typing import cast, Any
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QRadioButton, QButtonGroup, QGroupBox, QComboBox, QListWidget,
-    QMessageBox
+    QMessageBox, QInputDialog
 )
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QIcon
@@ -611,10 +611,52 @@ class SettingsDialog(QDialog):
         if success:
             self.credentials = credentials
             self._display_credentials()
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Success")
+            msg_box.setText(message)
+            msg_box.addButton(QMessageBox.StandardButton.Ok)
+            update_pin_btn = msg_box.addButton("Update PIN", QMessageBox.ButtonRole.ActionRole)
+            msg_box.exec()
+
+            if msg_box.clickedButton() == update_pin_btn:
+                self._handle_update_pin(passkey_file, pin)
+        else:
+            QMessageBox.warning(self, "Error", message)
+
+    def _handle_update_pin(self, passkey_file: str, current_pin: str):
+        """Prompt for a new PIN and re-encrypt the selected passkey wallet."""
+        new_pin, ok = QInputDialog.getText(
+            self, "Update PIN", "Enter new PIN (8+ characters):", QLineEdit.EchoMode.Password
+        )
+        if not ok:
+            return
+
+        if not new_pin or len(new_pin) < 8:
+            QMessageBox.warning(self, "Invalid PIN", "PIN must be 8 or more characters.")
+            return
+
+        confirm_pin, ok2 = QInputDialog.getText(
+            self, "Confirm PIN", "Confirm new PIN:", QLineEdit.EchoMode.Password
+        )
+        if not ok2:
+            return
+
+        if new_pin != confirm_pin:
+            QMessageBox.warning(self, "PIN Mismatch", "The new PINs do not match. PIN was not updated!")
+            return
+
+        success, message = self.credential_service.update_pin(
+            passkey_file, current_pin, new_pin
+        )
+
+        if success:
+            self.credentials_pin_input.clear()
+            self.credentials = []
+            self.credentials_list.clear()
             QMessageBox.information(self, "Success", message)
         else:
             QMessageBox.warning(self, "Error", message)
-    
+
     def _display_credentials(self):
         """Display loaded credentials in the list widget."""
         self.credentials_list.clear()
@@ -670,7 +712,7 @@ class SettingsDialog(QDialog):
             self.platform_key_unlocked = False
             self._update_unlock_button_style()
             QMessageBox.warning(self, "Error", message)
-    
+
     def _create_tpm_cache_key(self):
         """Create TPM-based platform key using service."""
         reply = QMessageBox.question(

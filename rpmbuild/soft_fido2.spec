@@ -1,7 +1,7 @@
 Name:           soft_fido2
 Version:        0.4.0
 Release:        1%{?dist}
-Summary:        Software FIDO2 platform passkey authenticator (UHID)
+Summary:        Software passkey authenticator
 License:        MIT
 URL:            https://github.com/lachlan-ibm/soft-fido2
 Source0:        %{name}-%{version}.tar.gz
@@ -13,11 +13,10 @@ BuildRequires:  python3-build
 BuildRequires:  python3-setuptools
 BuildRequires:  python3-wheel
 BuildRequires:  desktop-file-utils
+BuildRequires:  qt6-qtbase-devel
+BuildRequires:  python3-pyqt6-devel
 
-# Fedora 43 ships python3-cryptography 46.x; the wheel metadata auto-generates
-# a python3.14dist(cryptography) >= 48 requirement that blocks installation.
-# Filter it out until the repo catches up — the Requires: python3-cryptography
-# below still ensures the package is present at the RPM level.
+# python3-cryptography will take a while to catch up with PQC support
 %global __requires_exclude ^python3\\.14dist\\(cryptography\\).*$
 
 # ── Core Python deps (from pyproject.toml) ──────────────────────────────────
@@ -25,10 +24,10 @@ Requires:       python3-cryptography
 Requires:       python3-cbor2
 Requires:       python3-asn1
 Requires:       python3-jwt
+Requires:       qt6-qtbase
+Requires:       libxcursor
 
 # ── UX / D-Bus / notifications ──────────────────────────────────────────────
-# python3-pyqt6 hard-requires python3-pyqt6-base which carries the Qt6 runtime
-# shared-library deps — RPM auto-dep resolves them; do not add qt6-* here.
 Requires:       python3-pyqt6
 Requires:       python3-jeepney
 Requires:       python3-setproctitle
@@ -40,9 +39,6 @@ Requires:       python3-dbus
 Recommends:     fprintd
 
 # ── TPM 2.0 — Recommends ────────────────────────────────────────────────────
-# Installed by dnf by default; skipped silently on machines with no TPM chip.
-# tpm2-abrmd is the userspace resource manager daemon required by tpm2-pytss
-# to communicate with the TPM device (/dev/tpmrm0).
 Recommends:     tpm2-tss
 Recommends:     tpm2-abrmd
 Recommends:     python3-tpm2-pytss
@@ -66,7 +62,7 @@ python3 -m pip install \
     --no-build-isolation \
     --root %{buildroot} \
     --prefix /usr \
-    dist/*.whl
+    dist/*.whl[ux]
 
 # Ship the rpmbuild user unit into the system-wide user unit drop-in dir
 install -Dm644 rpmbuild/passkey.service \

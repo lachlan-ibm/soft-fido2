@@ -32,4 +32,4 @@ override_dh_auto_install:
 	    --root debian/soft-fido2 \
 	    --prefix $(shell python3 -c 'import sys; print(sys.prefix)') \
 	    --no-warn-script-location \
-	    dist/*.whl
+	    dist/*.whl[ux]
