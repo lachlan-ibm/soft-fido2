@@ -18,7 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-
+      with:
+        ref: stable
     # Install system dependencies for TPM2, D-Bus, Qt6, and DEB build tools
     - name: Install system dependencies
       run: |
