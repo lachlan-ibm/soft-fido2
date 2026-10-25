@@ -25,6 +25,7 @@ override_dh_install:
 		debian/soft-fido2/usr/share/icons/hicolor/scalable/apps/ayebekey.svg
 
 override_dh_auto_install:
+	WHEEL=$$(ls dist/*.whl) && \
 	DEB_PYTHON_INSTALL_LAYOUT=deb_system python3 -m pip install \
 	    --no-deps \
 	    --no-build-isolation \
@@ -32,4 +33,4 @@ override_dh_auto_install:
 	    --root debian/soft-fido2 \
 	    --prefix $(shell python3 -c 'import sys; print(sys.prefix)') \
 	    --no-warn-script-location \
-	    dist/*.whl[ux]
+		"$${WHEEL}[ux]"

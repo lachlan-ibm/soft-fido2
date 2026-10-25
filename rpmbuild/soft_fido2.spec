@@ -57,12 +57,13 @@ Qt6-based system tray UI with D-Bus notifications.
 GITHUB_RUN_NUMBER=0 python3 -m build --wheel --no-isolation
 
 %install
+WHEEL=$(ls dist/*.whl)
 python3 -m pip install \
     --no-deps \
     --no-build-isolation \
     --root %{buildroot} \
     --prefix /usr \
-    dist/*.whl[ux]
+    "${WHEEL}[ux]"
 
 # Ship the rpmbuild user unit into the system-wide user unit drop-in dir
 install -Dm644 rpmbuild/passkey.service \
