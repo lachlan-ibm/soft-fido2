@@ -7,6 +7,7 @@ user-presence, passkey resolution, attestation, and assertion output.
 
 from multiprocessing.synchronize import Lock
 
+from re import sub
 import base64, multiprocessing, os, threading, time, secrets, typing, logging, math
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -527,10 +528,16 @@ class AuthenticatorAPI(object):
             for param in pubKeyCredParams
             if param.get("type") == "public-key"
         ]
-        if -7 in supported_algs:
-            return -7
+        logging.debug(f"[_select_algorithm] supporetd alg ids: {supported_algs}")
+
         if -48 in supported_algs:
-            return -48 #TODO check support for cert chain EC -> PQC
+            return -48 #TODO support for cert chain EC -> PQC
+        elif -49 in supported_algs:
+            return -49
+        elif -50 in supported_algs:
+            return -50
+        elif -7 in supported_algs:
+            return -7
         # Fallback to ES256 if nothing matches
         return -7
 
@@ -563,8 +570,12 @@ class AuthenticatorAPI(object):
             info=cls._get_hkdf_info()
         )
         skey = SymmetricKey(seed.decode())
-        
+        kp = {-48: KeyPair.generate_mldsa,
+                       -49: KeyPair.generate_mldsa,
+                       -50: KeyPair.generate_mldsa}.get(
+                            cls._select_algorithm(pubKeyCredParams), KeyPair.generate_ecdsa)()
         authenticator = Fido2Authenticator(
+            keyPair=kp,
             caKeyPair=ca_kp,
             caCert=passkey.get('x5c'),
             sKey=skey
@@ -572,8 +583,9 @@ class AuthenticatorAPI(object):
         
         cred_id = authenticator._get_credential_id_bytes(authenticator.kp)
 
-        logging.debug(f"RP ID: {rp_id}")
-        logging.debug(f"Credential ID (hex): {cred_id.hex()}")
+        logging.debug(f"[_create_authenticator] RP ID: {rp_id}")
+        logging.debug(f"[_create_authenticator] Credential ID (hex): {cred_id.hex()}")
+        logging.debug(f"[_create_authenticator] Key Type: {kp.get_private().__class__.__name__}")
         
         return authenticator, cred_id
 

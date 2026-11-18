@@ -6,6 +6,7 @@ from .fido_u2f        import build_fido_u2f_attestation_statement
 from .tpm             import build_tpm_attestation_statement
 from .android         import build_android_safetynet_attestation_statement, build_android_key_attestation_statement
 from .apple           import build_apple_attestation_statement
+from .mtc             import build_merkle_tree_attestation_statement
 
 def _error(fmt, *_, **__):
     raise ValueError(f"Unsupported attestation statement format: {fmt}")
@@ -20,6 +21,7 @@ _DISPATCH = {
     "android-safetynet":  build_android_safetynet_attestation_statement,
     "android-key":        build_android_key_attestation_statement,
     "apple":              build_apple_attestation_statement,
+    "mtc":                build_merkle_tree_attestation_statement,
     "anon":               build_apple_attestation_statement #alias for apple/AnonCA
 }
 
